@@ -143,9 +143,7 @@ export default function PersonDetailScreen() {
 
   const handleGoHome = useCallback(() => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    while (router.canGoBack()) {
-      router.back();
-    }
+    router.replace('/');
   }, [router]);
 
   const handlePersonPress = useCallback(
