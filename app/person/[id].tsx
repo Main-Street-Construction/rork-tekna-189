@@ -1,4 +1,4 @@
-import React, { useMemo, useCallback, useRef, useEffect, useState } from 'react';
+import React, { useMemo, useCallback, useRef, useEffect } from 'react';
 import {
   View,
   Text,
@@ -23,9 +23,6 @@ import {
   UserPlus,
   HeartHandshake,
   Link,
-  Home,
-  Maximize2,
-  Minimize2,
 } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import Colors from '@/constants/colors';
@@ -42,16 +39,11 @@ import PersonCard from '@/components/PersonCard';
 import SectionHeader from '@/components/SectionHeader';
 import { GedcomIndividual, GedcomFamily } from '@/types/genealogy';
 
-type TreeGeneration = {
-  people: { person: GedcomIndividual; label: string }[];
-};
-
 export default function PersonDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
   const { treeData, getPerson } = useFamilyTree();
   const { profile } = useProfile();
-  const [treeExpanded, setTreeExpanded] = useState<boolean>(false);
   const fadeAnim = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
@@ -112,78 +104,6 @@ export default function PersonDetailScreen() {
     return gps;
   }, [parents, treeData]);
 
-  const expandedAncestors = useMemo((): TreeGeneration[] => {
-    if (!treeExpanded || !treeData) return [];
-    const generations: TreeGeneration[] = [];
-    const seen = new Set<string>();
-    if (id) seen.add(id);
-
-    const getAncestorLabel = (p: GedcomIndividual, genIndex: number): string => {
-      const prefixes = ['', 'Grand', 'Great-Grand', '2x Great-Grand', '3x Great-Grand', '4x Great-Grand'];
-      const prefix = genIndex < prefixes.length ? prefixes[genIndex] : `${genIndex - 1}x Great-Grand`;
-      return p.sex === 'F' ? `${prefix}mother` : `${prefix}father`;
-    };
-
-    let currentGen = parents;
-    let genIndex = 0;
-    while (currentGen.length > 0 && genIndex < 6) {
-      const genPeople: { person: GedcomIndividual; label: string }[] = [];
-      const nextGen: GedcomIndividual[] = [];
-      for (const p of currentGen) {
-        if (!seen.has(p.id)) {
-          seen.add(p.id);
-          genPeople.push({ person: p, label: getAncestorLabel(p, genIndex) });
-          const pParents = getParents(p.id, treeData);
-          for (const pp of pParents) {
-            if (!seen.has(pp.id)) {
-              nextGen.push(pp);
-            }
-          }
-        }
-      }
-      if (genPeople.length > 0) {
-        generations.unshift({ people: genPeople });
-      }
-      currentGen = nextGen;
-      genIndex++;
-    }
-    return generations;
-  }, [treeExpanded, treeData, parents, id]);
-
-  const expandedDescendants = useMemo((): TreeGeneration[] => {
-    if (!treeExpanded || !treeData || children.length === 0) return [];
-    const generations: TreeGeneration[] = [];
-    const seen = new Set<string>();
-    if (id) seen.add(id);
-    for (const c of children) seen.add(c.id);
-
-    let currentGen = children;
-    let genIndex = 0;
-    while (currentGen.length > 0 && genIndex < 4) {
-      const nextGen: GedcomIndividual[] = [];
-      const nextGenPeople: { person: GedcomIndividual; label: string }[] = [];
-      for (const c of currentGen) {
-        const grandchildren = getChildren(c.id, treeData);
-        for (const gc of grandchildren) {
-          if (!seen.has(gc.id)) {
-            seen.add(gc.id);
-            const prefixes = ['Grand', 'Great-Grand', '2x Great-Grand', '3x Great-Grand'];
-            const prefix = genIndex < prefixes.length ? prefixes[genIndex] : `${genIndex}x Great-Grand`;
-            const label = gc.sex === 'F' ? `${prefix}daughter` : `${prefix}son`;
-            nextGenPeople.push({ person: gc, label });
-            nextGen.push(gc);
-          }
-        }
-      }
-      if (nextGenPeople.length > 0) {
-        generations.push({ people: nextGenPeople.slice(0, 12) });
-      }
-      currentGen = nextGen;
-      genIndex++;
-    }
-    return generations;
-  }, [treeExpanded, treeData, children, id]);
-
   const handlePersonPress = useCallback(
     (p: { id: string }) => {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
@@ -219,16 +139,6 @@ export default function PersonDetailScreen() {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     router.push('/link-spouses');
   }, [router]);
-
-  const handleGoHome = useCallback(() => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    router.dismissAll();
-  }, [router]);
-
-  const toggleTreeExpanded = useCallback(() => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    setTreeExpanded((prev) => !prev);
-  }, []);
 
   const spouseFamilies = useMemo(() => {
     if (!id || !treeData) return [];
@@ -304,14 +214,9 @@ export default function PersonDetailScreen() {
           headerTintColor: Colors.text,
           headerShadowVisible: false,
           headerRight: () => (
-            <View style={styles.headerRightRow}>
-              <TouchableOpacity onPress={handleGoHome} style={styles.editHeaderBtn} testID="go-home-btn">
-                <Home size={18} color={Colors.accent} />
-              </TouchableOpacity>
-              <TouchableOpacity onPress={handleEdit} style={styles.editHeaderBtn}>
-                <Pencil size={18} color={Colors.accent} />
-              </TouchableOpacity>
-            </View>
+            <TouchableOpacity onPress={handleEdit} style={styles.editHeaderBtn}>
+              <Pencil size={18} color={Colors.accent} />
+            </TouchableOpacity>
           ),
         }}
       />
@@ -395,43 +300,9 @@ export default function PersonDetailScreen() {
 
           {hasTreeData && (
             <View style={styles.miniTreeSection}>
-              <View style={styles.treeSectionHeader}>
-                <SectionHeader title="Family Tree" />
-                <TouchableOpacity
-                  style={styles.expandToggle}
-                  onPress={toggleTreeExpanded}
-                  activeOpacity={0.7}
-                  testID="tree-expand-toggle"
-                >
-                  {treeExpanded ? (
-                    <Minimize2 size={16} color={Colors.accent} />
-                  ) : (
-                    <Maximize2 size={16} color={Colors.accent} />
-                  )}
-                  <Text style={styles.expandToggleText}>
-                    {treeExpanded ? 'Compact' : 'Expand'}
-                  </Text>
-                </TouchableOpacity>
-              </View>
+              <SectionHeader title="Family Tree" />
               <View style={styles.miniTree}>
-                {treeExpanded && expandedAncestors.length > 0 && (
-                  <>
-                    {expandedAncestors.map((gen, gi) => (
-                      <React.Fragment key={`ancestor-gen-${gi}`}>
-                        <View style={styles.treeRow}>
-                          {gen.people.map(({ person: ap, label: al }) =>
-                            renderMiniTreeNode(ap, al)
-                          )}
-                        </View>
-                        <View style={styles.treeConnectorDown}>
-                          <ChevronDown size={16} color={Colors.cardBorder} />
-                        </View>
-                      </React.Fragment>
-                    ))}
-                  </>
-                )}
-
-                {!treeExpanded && grandparents.length > 0 && (
+                {grandparents.length > 0 && (
                   <>
                     <View style={styles.treeRow}>
                       {grandparents.map((gp) =>
@@ -447,7 +318,7 @@ export default function PersonDetailScreen() {
                   </>
                 )}
 
-                {!treeExpanded && parents.length > 0 && (
+                {parents.length > 0 && (
                   <>
                     <View style={styles.treeRow}>
                       {parents.map((p) =>
@@ -500,50 +371,18 @@ export default function PersonDetailScreen() {
                       <ChevronDown size={16} color={Colors.cardBorder} />
                     </View>
                     <View style={styles.treeRow}>
-                      {(treeExpanded ? children : children.slice(0, 5)).map((c) =>
+                      {children.slice(0, 5).map((c) =>
                         renderMiniTreeNode(
                           c,
                           c.sex === 'F' ? 'Daughter' : 'Son'
                         )
                       )}
-                      {!treeExpanded && children.length > 5 && (
+                      {children.length > 5 && (
                         <View style={styles.treeMoreNode}>
                           <Text style={styles.treeMoreText}>
                             +{children.length - 5}
                           </Text>
                         </View>
-                      )}
-                    </View>
-                  </>
-                )}
-
-                {treeExpanded && expandedDescendants.length > 0 && (
-                  <>
-                    {expandedDescendants.map((gen, gi) => (
-                      <React.Fragment key={`desc-gen-${gi}`}>
-                        <View style={styles.treeConnectorDown}>
-                          <ChevronDown size={16} color={Colors.cardBorder} />
-                        </View>
-                        <View style={styles.treeRow}>
-                          {gen.people.map(({ person: dp, label: dl }) =>
-                            renderMiniTreeNode(dp, dl)
-                          )}
-                        </View>
-                      </React.Fragment>
-                    ))}
-                  </>
-                )}
-
-                {treeExpanded && siblings.length > 0 && (
-                  <>
-                    <View style={styles.treeDivider} />
-                    <Text style={styles.treeSiblingLabel}>Siblings</Text>
-                    <View style={styles.treeRow}>
-                      {siblings.map((s) =>
-                        renderMiniTreeNode(
-                          s,
-                          s.sex === 'F' ? 'Sister' : 'Brother'
-                        )
                       )}
                     </View>
                   </>
@@ -999,44 +838,5 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: Colors.accent,
     fontWeight: '500' as const,
-  },
-  headerRightRow: {
-    flexDirection: 'row' as const,
-    alignItems: 'center' as const,
-    gap: 4,
-  },
-  treeSectionHeader: {
-    flexDirection: 'row' as const,
-    alignItems: 'center' as const,
-    justifyContent: 'space-between' as const,
-    paddingRight: 16,
-  },
-  expandToggle: {
-    flexDirection: 'row' as const,
-    alignItems: 'center' as const,
-    gap: 5,
-    backgroundColor: Colors.overlay,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 16,
-  },
-  expandToggleText: {
-    fontSize: 12,
-    fontWeight: '600' as const,
-    color: Colors.accent,
-  },
-  treeDivider: {
-    width: '80%' as const,
-    height: 1,
-    backgroundColor: Colors.cardBorder,
-    marginVertical: 14,
-  },
-  treeSiblingLabel: {
-    fontSize: 11,
-    fontWeight: '600' as const,
-    color: Colors.textSecondary,
-    marginBottom: 8,
-    textTransform: 'uppercase' as const,
-    letterSpacing: 0.5,
   },
 });
