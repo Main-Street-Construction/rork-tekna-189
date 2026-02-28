@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useRef, useMemo } from 'react';
+import React, { useState, useCallback, useRef, useMemo, useEffect } from 'react';
 import {
   View,
   Text,
@@ -93,26 +93,47 @@ export default function SearchScreen() {
     router.push('/import-data');
   }, [router]);
 
-  const relationshipMap = useMemo(() => {
-    if (!hasClaimed || !profile?.rootPersonId || !treeData || results.length === 0) return new Map<string, string>();
-    const map = new Map<string, string>();
-    const myId = profile.rootPersonId;
-    for (const person of results.slice(0, 30)) {
-      if (person.id === myId) {
-        map.set(person.id, 'You');
-        continue;
-      }
-      try {
-        const rel = calculateRelationship(myId, person.id, treeData);
-        if (rel && rel.relationship && rel.relationship !== 'No blood relation found') {
-          map.set(person.id, `Your ${rel.relationship}`);
-        }
-      } catch (e) {
-        console.log('[SearchScreen] Relationship calc error for', person.id, e);
-      }
+  const [relationshipMap, setRelationshipMap] = useState<Map<string, string>>(new Map());
+  const relationshipTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    if (relationshipTimerRef.current) {
+      clearTimeout(relationshipTimerRef.current);
     }
-    console.log('[SearchScreen] Computed relationships for', map.size, 'of', results.length, 'results');
-    return map;
+
+    if (!hasClaimed || !profile?.rootPersonId || !treeData || results.length === 0) {
+      setRelationshipMap(new Map());
+      return;
+    }
+
+    const myId = profile.rootPersonId;
+    const currentResults = results;
+
+    relationshipTimerRef.current = setTimeout(() => {
+      const map = new Map<string, string>();
+      for (const person of currentResults.slice(0, 30)) {
+        if (person.id === myId) {
+          map.set(person.id, 'You');
+          continue;
+        }
+        try {
+          const rel = calculateRelationship(myId, person.id, treeData);
+          if (rel && rel.relationship && rel.relationship !== 'No blood relation found') {
+            map.set(person.id, `Your ${rel.relationship}`);
+          }
+        } catch (e) {
+          console.log('[SearchScreen] Relationship calc error for', person.id, e);
+        }
+      }
+      console.log('[SearchScreen] Computed relationships for', map.size, 'of', currentResults.length, 'results');
+      setRelationshipMap(map);
+    }, 300);
+
+    return () => {
+      if (relationshipTimerRef.current) {
+        clearTimeout(relationshipTimerRef.current);
+      }
+    };
   }, [hasClaimed, profile?.rootPersonId, treeData, results]);
 
   const renderItem = useCallback(({ item }: { item: GedcomIndividual }) => {

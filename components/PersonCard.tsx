@@ -42,7 +42,6 @@ export default React.memo(function PersonCard({
   };
 
   const handlePress = () => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     onPress(person);
   };
 

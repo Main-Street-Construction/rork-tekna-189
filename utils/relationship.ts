@@ -23,7 +23,8 @@ const MAX_GENERATIONS = 20;
 
 function getAncestorMap(
   personId: string,
-  data: FamilyTreeData
+  data: FamilyTreeData,
+  earlyExitId?: string
 ): Map<string, { generations: number; path: string[] }> {
   const ancestors = new Map<string, { generations: number; path: string[] }>();
   const queue: { id: string; generations: number; path: string[] }[] = [
@@ -38,6 +39,10 @@ function getAncestorMap(
       generations: current.generations,
       path: [...current.path],
     });
+
+    if (earlyExitId && current.id === earlyExitId && current.generations > 0) {
+      return ancestors;
+    }
 
     if (current.generations >= MAX_GENERATIONS) continue;
 

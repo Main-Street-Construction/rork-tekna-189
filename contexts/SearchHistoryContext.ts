@@ -40,11 +40,13 @@ export const [SearchHistoryProvider, useSearchHistory] = createContextHook(() =>
         id: Date.now().toString(),
         timestamp: Date.now(),
       };
-      const updated = [newEntry, ...history].slice(0, MAX_HISTORY);
-      setHistory(updated);
-      saveMutation.mutate(updated);
+      setHistory((prev) => {
+        const updated = [newEntry, ...prev].slice(0, MAX_HISTORY);
+        saveMutation.mutate(updated);
+        return updated;
+      });
     },
-    [history, saveMutation]
+    [saveMutation]
   );
 
   const addRelationshipEntry = useCallback(
@@ -69,11 +71,13 @@ export const [SearchHistoryProvider, useSearchHistory] = createContextHook(() =>
         relationshipResult: params.relationshipResult,
         pathCount: params.pathCount,
       };
-      const updated = [newEntry, ...history].slice(0, MAX_HISTORY);
-      setHistory(updated);
-      saveMutation.mutate(updated);
+      setHistory((prev) => {
+        const updated = [newEntry, ...prev].slice(0, MAX_HISTORY);
+        saveMutation.mutate(updated);
+        return updated;
+      });
     },
-    [history, saveMutation]
+    [saveMutation]
   );
 
   const clearHistory = useCallback(() => {

@@ -646,7 +646,7 @@ export function searchIndividuals(
   });
 
   console.log('[Search] Query:', query, '| Checked:', checked, '| Filtered:', filtered, '| Matched:', scored.length);
-  if (scored.length === 0 && checked > 0) {
+  if (__DEV__ && scored.length === 0 && checked > 0) {
     const sample = Array.from(data.individuals.values()).slice(0, 3);
     sample.forEach((p, i) => {
       console.log(`[Search] Sample person ${i}:`, JSON.stringify({

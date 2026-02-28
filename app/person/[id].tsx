@@ -1,4 +1,4 @@
-import React, { useMemo, useCallback, useRef, useEffect } from 'react';
+import React, { useMemo, useCallback, useRef, useEffect, useState } from 'react';
 import {
   View,
   Text,
@@ -23,6 +23,9 @@ import {
   UserPlus,
   HeartHandshake,
   Link,
+  Home,
+  Maximize2,
+  Minimize2,
 } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import Colors from '@/constants/colors';
@@ -45,6 +48,7 @@ export default function PersonDetailScreen() {
   const { treeData, getPerson } = useFamilyTree();
   const { profile } = useProfile();
   const fadeAnim = useRef(new Animated.Value(0)).current;
+  const [treeExpanded, setTreeExpanded] = useState<boolean>(false);
 
   useEffect(() => {
     Animated.timing(fadeAnim, {
@@ -52,7 +56,7 @@ export default function PersonDetailScreen() {
       duration: 300,
       useNativeDriver: true,
     }).start();
-  }, [fadeAnim]);
+  }, []);
 
   const person = useMemo(() => {
     if (!id) return undefined;
@@ -104,9 +108,48 @@ export default function PersonDetailScreen() {
     return gps;
   }, [parents, treeData]);
 
+  const greatGrandparents = useMemo(() => {
+    if (!treeData || !treeExpanded) return [];
+    const ggps: GedcomIndividual[] = [];
+    for (const gp of grandparents) {
+      const gpParents = getParents(gp.id, treeData);
+      for (const ggp of gpParents) {
+        if (!ggps.some((g) => g.id === ggp.id)) {
+          ggps.push(ggp);
+        }
+      }
+    }
+    return ggps;
+  }, [grandparents, treeData, treeExpanded]);
+
+  const grandchildren = useMemo(() => {
+    if (!treeData || !treeExpanded) return [];
+    const gcs: GedcomIndividual[] = [];
+    for (const child of children) {
+      const cChildren = getChildren(child.id, treeData);
+      for (const gc of cChildren) {
+        if (!gcs.some((g) => g.id === gc.id)) {
+          gcs.push(gc);
+        }
+      }
+    }
+    return gcs;
+  }, [children, treeData, treeExpanded]);
+
+  const toggleTreeExpand = useCallback(() => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    setTreeExpanded((prev) => !prev);
+  }, []);
+
+  const handleGoHome = useCallback(() => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    while (router.canGoBack()) {
+      router.back();
+    }
+  }, [router]);
+
   const handlePersonPress = useCallback(
     (p: { id: string }) => {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
       router.push(`/person/${p.id}`);
     },
     [router]
@@ -214,9 +257,14 @@ export default function PersonDetailScreen() {
           headerTintColor: Colors.text,
           headerShadowVisible: false,
           headerRight: () => (
-            <TouchableOpacity onPress={handleEdit} style={styles.editHeaderBtn}>
-              <Pencil size={18} color={Colors.accent} />
-            </TouchableOpacity>
+            <View style={styles.headerRightRow}>
+              <TouchableOpacity onPress={handleGoHome} style={styles.editHeaderBtn}>
+                <Home size={18} color={Colors.accent} />
+              </TouchableOpacity>
+              <TouchableOpacity onPress={handleEdit} style={styles.editHeaderBtn}>
+                <Pencil size={18} color={Colors.accent} />
+              </TouchableOpacity>
+            </View>
           ),
         }}
       />
@@ -302,6 +350,22 @@ export default function PersonDetailScreen() {
             <View style={styles.miniTreeSection}>
               <SectionHeader title="Family Tree" />
               <View style={styles.miniTree}>
+                {treeExpanded && greatGrandparents.length > 0 && (
+                  <>
+                    <View style={styles.treeRow}>
+                      {greatGrandparents.map((ggp) =>
+                        renderMiniTreeNode(
+                          ggp,
+                          ggp.sex === 'F' ? 'Gt-Grandmother' : 'Gt-Grandfather'
+                        )
+                      )}
+                    </View>
+                    <View style={styles.treeConnectorDown}>
+                      <ChevronDown size={16} color={Colors.cardBorder} />
+                    </View>
+                  </>
+                )}
+
                 {grandparents.length > 0 && (
                   <>
                     <View style={styles.treeRow}>
@@ -365,19 +429,33 @@ export default function PersonDetailScreen() {
                   )}
                 </View>
 
+                {treeExpanded && siblings.length > 0 && (
+                  <View style={styles.siblingsRow}>
+                    <Text style={styles.siblingsLabel}>Siblings</Text>
+                    <View style={styles.treeRow}>
+                      {siblings.map((s) =>
+                        renderMiniTreeNode(
+                          s,
+                          s.sex === 'F' ? 'Sister' : 'Brother'
+                        )
+                      )}
+                    </View>
+                  </View>
+                )}
+
                 {children.length > 0 && (
                   <>
                     <View style={styles.treeConnectorDown}>
                       <ChevronDown size={16} color={Colors.cardBorder} />
                     </View>
                     <View style={styles.treeRow}>
-                      {children.slice(0, 5).map((c) =>
+                      {(treeExpanded ? children : children.slice(0, 5)).map((c) =>
                         renderMiniTreeNode(
                           c,
                           c.sex === 'F' ? 'Daughter' : 'Son'
                         )
                       )}
-                      {children.length > 5 && (
+                      {!treeExpanded && children.length > 5 && (
                         <View style={styles.treeMoreNode}>
                           <Text style={styles.treeMoreText}>
                             +{children.length - 5}
@@ -387,6 +465,37 @@ export default function PersonDetailScreen() {
                     </View>
                   </>
                 )}
+
+                {treeExpanded && grandchildren.length > 0 && (
+                  <>
+                    <View style={styles.treeConnectorDown}>
+                      <ChevronDown size={16} color={Colors.cardBorder} />
+                    </View>
+                    <View style={styles.treeRow}>
+                      {grandchildren.map((gc) =>
+                        renderMiniTreeNode(
+                          gc,
+                          gc.sex === 'F' ? 'Granddaughter' : 'Grandson'
+                        )
+                      )}
+                    </View>
+                  </>
+                )}
+
+                <TouchableOpacity
+                  style={styles.expandTreeBtn}
+                  onPress={toggleTreeExpand}
+                  activeOpacity={0.7}
+                >
+                  {treeExpanded ? (
+                    <Minimize2 size={14} color={Colors.accent} />
+                  ) : (
+                    <Maximize2 size={14} color={Colors.accent} />
+                  )}
+                  <Text style={styles.expandTreeBtnText}>
+                    {treeExpanded ? 'Collapse Tree' : 'Expand Tree'}
+                  </Text>
+                </TouchableOpacity>
               </View>
             </View>
           )}
@@ -732,6 +841,37 @@ const styles = StyleSheet.create({
     fontWeight: '600' as const,
     color: Colors.textSecondary,
   },
+  siblingsRow: {
+    marginTop: 8,
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: Colors.cardBorder,
+    alignItems: 'center' as const,
+    width: '100%' as const,
+  },
+  siblingsLabel: {
+    fontSize: 10,
+    fontWeight: '600' as const,
+    color: Colors.textSecondary,
+    marginBottom: 6,
+    textTransform: 'uppercase' as const,
+    letterSpacing: 0.5,
+  },
+  expandTreeBtn: {
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+    gap: 6,
+    marginTop: 14,
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    borderRadius: 20,
+    backgroundColor: 'rgba(200, 149, 108, 0.1)',
+  },
+  expandTreeBtnText: {
+    fontSize: 13,
+    fontWeight: '600' as const,
+    color: Colors.accent,
+  },
   relationSection: {
     marginTop: 8,
   },
@@ -767,6 +907,11 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: Colors.text,
     lineHeight: 21,
+  },
+  headerRightRow: {
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+    gap: 12,
   },
   editHeaderBtn: {
     padding: 6,
