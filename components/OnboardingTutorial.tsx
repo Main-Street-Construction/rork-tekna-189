@@ -9,7 +9,7 @@ import {
   Platform,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Search, GitFork, Clock, User, ArrowRight, TreePine, ChevronRight } from 'lucide-react-native';
+import { Search, GitFork, Clock, User, ArrowRight, TreePine, ChevronRight, UserPlus, Heart, Shield, Edit3, MessageSquare, ShieldCheck } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import Colors from '@/constants/colors';
 
@@ -32,24 +32,45 @@ const STEPS: TutorialStep[] = [
   },
   {
     icon: <Search size={36} color={Colors.male} />,
-    title: 'Search Individuals',
+    title: 'Search & Explore',
     description:
-      'Use the Search tab to find anyone in your family tree. Tap on a person to see their full details, family connections, and notes.',
+      'Use the Search tab to find anyone in your family tree. Tap a person to view their details, family connections, notes, and expandable tree view. Use the Home button to jump back quickly.',
     accent: Colors.male,
   },
   {
     icon: <GitFork size={36} color={Colors.success} />,
     title: 'Calculate Relationships',
     description:
-      'The Relations tab lets you pick any two people and discover every path that connects them — from parent-child to distant cousins.',
+      'The Relations tab lets you pick any two people and discover every path that connects them. Once you claim your identity, search results will also show how each person is related to you.',
     accent: Colors.success,
   },
   {
-    icon: <User size={36} color={Colors.female} />,
+    icon: <Shield size={36} color={Colors.female} />,
     title: 'Claim Your Identity',
     description:
-      'Head to the Profile tab to link yourself to someone in the database. This lets you auto-fill yourself into relationship calculations quickly.',
+      'In the Profile tab, link yourself to a person in the database. This is a one-time setup — choose carefully! It powers auto-fill in relationship searches and shows your relation to others.',
     accent: Colors.female,
+  },
+  {
+    icon: <UserPlus size={36} color={'#5B8FA8'} />,
+    title: 'Add Children & Spouses',
+    description:
+      'From any person\'s detail page, you can add children or spouses. You can also create new marriage relationships between people already in the database.',
+    accent: '#5B8FA8',
+  },
+  {
+    icon: <Edit3 size={36} color={'#C49A6C'} />,
+    title: 'Edit People & Marriages',
+    description:
+      'Tap the edit button on any person to update their name, dates, and notes. Marriage details like date and place can also be edited from the family view.',
+    accent: '#C49A6C',
+  },
+  {
+    icon: <ShieldCheck size={36} color={'#7A9E7E'} />,
+    title: 'Admin & Approvals',
+    description:
+      'Non-admin edits are submitted for review. Admins can approve or reject changes from the Profile tab. Use the Feedback section to report bugs or suggest features.',
+    accent: '#7A9E7E',
   },
 ];
 

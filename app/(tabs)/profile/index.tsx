@@ -181,7 +181,7 @@ export default function ProfileScreen() {
       if (!personStillExists) {
         Alert.alert(
           'Identity Not Found',
-          'Your previously claimed identity could not be found in the current data. Would you like to re-claim?',
+          'Your previously claimed identity could not be found in the current database. This may be due to a data update. Would you like to re-claim?',
           [
             { text: 'Cancel', style: 'cancel' },
             {
@@ -195,18 +195,8 @@ export default function ProfileScreen() {
         );
       } else {
         Alert.alert(
-          'Change Identity',
-          `You are currently linked to "${profile?.rootPersonName}". Would you like to change your identity?`,
-          [
-            { text: 'Cancel', style: 'cancel' },
-            {
-              text: 'Change',
-              onPress: async () => {
-                await resetClaim();
-                setShowClaimSearch(true);
-              },
-            },
-          ]
+          'Identity Locked',
+          `You are permanently linked to "${profile?.rootPersonName}". Your identity can only be changed if there is a database error.`
         );
       }
       return;
@@ -364,18 +354,18 @@ export default function ProfileScreen() {
           <View style={styles.identitySection}>
             <Text style={styles.sectionTitle}>Your Identity</Text>
             {hasClaimed ? (
-              <TouchableOpacity style={styles.claimedCard} onPress={handleStartClaim} activeOpacity={0.7}>
+              <View style={styles.claimedCard}>
                 <View style={styles.claimedCardIcon}>
                   <Shield size={20} color={Colors.success} />
                 </View>
                 <View style={styles.claimedCardContent}>
                   <Text style={styles.claimedCardName}>{profile?.rootPersonName}</Text>
                   <Text style={styles.claimedCardDesc}>
-                    Tap to change your linked identity.
+                    Your identity is permanently linked.
                   </Text>
                 </View>
-                <ChevronRight size={16} color={Colors.textLight} />
-              </TouchableOpacity>
+                <Lock size={16} color={Colors.textLight} />
+              </View>
             ) : showClaimSearch ? (
               <View style={styles.claimSearchContainer}>
                 <View style={styles.claimWarning}>
