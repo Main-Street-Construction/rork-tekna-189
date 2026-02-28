@@ -217,31 +217,30 @@ export default function PersonDetailScreen() {
         : Colors.textSecondary;
   const initials = (person.givenName?.[0] ?? '') + (person.surname?.[0] ?? '');
 
-  const renderMiniTreeNode = (
-    p: GedcomIndividual,
-    label: string,
-    isCenter?: boolean
-  ) => {
-    const color =
-      p.sex === 'F' ? Colors.female : p.sex === 'M' ? Colors.male : Colors.textSecondary;
-    const ini = (p.givenName?.[0] ?? '') + (p.surname?.[0] ?? '');
-    return (
-      <TouchableOpacity
-        key={p.id}
-        style={[styles.treeNode, isCenter && styles.treeNodeCenter]}
-        onPress={() => handlePersonPress(p)}
-        activeOpacity={0.7}
-      >
-        <View style={[styles.treeNodeAvatar, { backgroundColor: color }]}>
-          <Text style={styles.treeNodeAvatarText}>{ini}</Text>
-        </View>
-        <Text style={styles.treeNodeName} numberOfLines={1}>
-          {p.givenName}
-        </Text>
-        <Text style={styles.treeNodeLabel}>{label}</Text>
-      </TouchableOpacity>
-    );
-  };
+  const renderMiniTreeNode = useCallback(
+    (p: GedcomIndividual, label: string, isCenter?: boolean) => {
+      const color =
+        p.sex === 'F' ? Colors.female : p.sex === 'M' ? Colors.male : Colors.textSecondary;
+      const ini = (p.givenName?.[0] ?? '') + (p.surname?.[0] ?? '');
+      return (
+        <TouchableOpacity
+          key={p.id}
+          style={[styles.treeNode, isCenter && styles.treeNodeCenter]}
+          onPress={() => handlePersonPress(p)}
+          activeOpacity={0.7}
+        >
+          <View style={[styles.treeNodeAvatar, { backgroundColor: color }]}>
+            <Text style={styles.treeNodeAvatarText}>{ini}</Text>
+          </View>
+          <Text style={styles.treeNodeName} numberOfLines={1}>
+            {p.givenName}
+          </Text>
+          <Text style={styles.treeNodeLabel}>{label}</Text>
+        </TouchableOpacity>
+      );
+    },
+    [handlePersonPress]
+  );
 
   const hasTreeData =
     parents.length > 0 || spouses.length > 0 || children.length > 0;

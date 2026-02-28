@@ -1,4 +1,5 @@
 import React, { useState, useCallback, useEffect } from 'react';
+import { useMutation } from '@tanstack/react-query';
 import {
   View,
   Text,
@@ -60,12 +61,33 @@ export default function ProfileScreen() {
   const [claimResults, setClaimResults] = useState<GedcomIndividual[]>([]);
   const [showClaimSearch, setShowClaimSearch] = useState<boolean>(false);
   const [feedbackMessage, setFeedbackMessage] = useState<string>('');
-  const [feedbackSending, setFeedbackSending] = useState<boolean>(false);
   const [feedbackSent, setFeedbackSent] = useState<boolean>(false);
   const [adminPassword, setAdminPassword] = useState<string>('');
   const [showAdminLogin, setShowAdminLogin] = useState<boolean>(false);
   const [adminLoginError, setAdminLoginError] = useState<boolean>(false);
-  const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
+  const feedbackMutation = useMutation({
+    mutationFn: async (message: string) => {
+      const result = await submitFeedback(message, profile?.displayName || undefined);
+      if (!result.success) throw new Error(result.error ?? 'Failed to send feedback.');
+      return result;
+    },
+    onSuccess: () => {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      setFeedbackMessage('');
+      setFeedbackSent(true);
+      setTimeout(() => setFeedbackSent(false), 4000);
+    },
+    onError: (error: Error) => {
+      Alert.alert('Error', error.message || 'Something went wrong sending feedback.');
+    },
+  });
+
+  const refreshMutation = useMutation({
+    mutationFn: async () => {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+      return refreshFromCloud();
+    },
+  });
 
   useEffect(() => {
     if (isAdmin) {
@@ -147,33 +169,14 @@ export default function ProfileScreen() {
     [claimIdentity]
   );
 
-  const handleSendFeedback = useCallback(async () => {
+  const handleSendFeedback = useCallback(() => {
     if (!feedbackMessage.trim()) {
       Alert.alert('Empty Message', 'Please write a message before sending.');
       return;
     }
     Keyboard.dismiss();
-    setFeedbackSending(true);
-    try {
-      const result = await submitFeedback(
-        feedbackMessage.trim(),
-        profile?.displayName || undefined
-      );
-      if (result.success) {
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-        setFeedbackMessage('');
-        setFeedbackSent(true);
-        setTimeout(() => setFeedbackSent(false), 4000);
-      } else {
-        Alert.alert('Error', result.error ?? 'Failed to send feedback. Please try again.');
-      }
-    } catch (e) {
-      console.log('[Feedback] Error sending feedback:', e);
-      Alert.alert('Error', 'Something went wrong sending feedback.');
-    } finally {
-      setFeedbackSending(false);
-    }
-  }, [feedbackMessage, profile?.displayName]);
+    feedbackMutation.mutate(feedbackMessage.trim());
+  }, [feedbackMessage, feedbackMutation]);
 
   const handleStartClaim = useCallback(() => {
     if (isClaimed) {
@@ -233,12 +236,9 @@ export default function ProfileScreen() {
     ]);
   }, [logoutAdmin]);
 
-  const handleRefresh = useCallback(async () => {
-    setIsRefreshing(true);
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    await refreshFromCloud();
-    setIsRefreshing(false);
-  }, [refreshFromCloud]);
+  const handleRefresh = useCallback(() => {
+    refreshMutation.mutate();
+  }, [refreshMutation]);
 
   return (
     <KeyboardAvoidingView
@@ -602,16 +602,16 @@ export default function ProfileScreen() {
               <TouchableOpacity
                 style={styles.refreshRow}
                 onPress={handleRefresh}
-                disabled={isRefreshing || isLoadingFromCloud}
+                disabled={refreshMutation.isPending || isLoadingFromCloud}
                 activeOpacity={0.7}
               >
-                {isRefreshing || isLoadingFromCloud ? (
+                {refreshMutation.isPending || isLoadingFromCloud ? (
                   <ActivityIndicator size="small" color={Colors.accent} />
                 ) : (
                   <RefreshCw size={16} color={Colors.accent} />
                 )}
                 <Text style={styles.refreshRowText}>
-                  {isRefreshing || isLoadingFromCloud ? 'Refreshing...' : 'Refresh from Database'}
+                  {refreshMutation.isPending || isLoadingFromCloud ? 'Refreshing...' : 'Refresh from Database'}
                 </Text>
                 <ChevronRight size={14} color={Colors.textLight} />
               </TouchableOpacity>
@@ -644,13 +644,13 @@ export default function ProfileScreen() {
               />
             </View>
             <TouchableOpacity
-              style={[styles.feedbackSendButton, (!feedbackMessage.trim() || feedbackSending) && styles.feedbackSendDisabled]}
+              style={[styles.feedbackSendButton, (!feedbackMessage.trim() || feedbackMutation.isPending) && styles.feedbackSendDisabled]}
               onPress={handleSendFeedback}
-              disabled={feedbackSending || !feedbackMessage.trim()}
+              disabled={feedbackMutation.isPending || !feedbackMessage.trim()}
               activeOpacity={0.7}
             >
               <Send size={16} color={Colors.white} />
-              <Text style={styles.feedbackSendText}>{feedbackSending ? 'Sending...' : 'Send Feedback'}</Text>
+              <Text style={styles.feedbackSendText}>{feedbackMutation.isPending ? 'Sending...' : 'Send Feedback'}</Text>
             </TouchableOpacity>
           </View>
         </View>

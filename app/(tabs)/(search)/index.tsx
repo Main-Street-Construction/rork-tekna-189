@@ -37,8 +37,6 @@ export default function SearchScreen() {
   const isLoading = !isReady || isAutoLoading;
   const canSearch = hasData && !isLoading;
 
-  console.log('[SearchScreen] Render - isReady:', isReady, 'isAutoLoading:', isAutoLoading, 'hasData:', hasData, 'canSearch:', canSearch);
-
   const handleSearch = useCallback(
     (text: string) => {
       console.log('[SearchScreen] handleSearch called with:', text);

@@ -113,7 +113,7 @@ export const [ProfileProvider, useProfile] = createContextHook(() => {
       setIsClaimed(true);
       saveMutation.mutate(updated);
     },
-    [isClaimed, profile, saveMutation]
+    [profile, saveMutation]
   );
 
   const hasProfile = profile !== null && profile.displayName.length > 0;

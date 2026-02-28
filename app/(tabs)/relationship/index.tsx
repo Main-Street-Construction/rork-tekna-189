@@ -34,7 +34,6 @@ import {
 } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import * as Print from 'expo-print';
-import { shareAsync } from 'expo-sharing';
 import Colors from '@/constants/colors';
 import { useFamilyTree } from '@/contexts/FamilyTreeContext';
 import { useProfile } from '@/contexts/ProfileContext';
@@ -311,7 +310,9 @@ export default function RelationshipScreen() {
 
   const handleToggleExpand = useCallback((index: number) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    if (Platform.OS !== 'web') {
+      LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    }
     setExpandedIndex((prev) => (prev === index ? null : index));
   }, []);
 
@@ -781,7 +782,8 @@ const RelationshipEntryCard = React.memo(function RelationshipEntryCard({
         URL.revokeObjectURL(url);
       } else {
         const { uri } = await Print.printToFileAsync({ html });
-        await shareAsync(uri, {
+        const Sharing = await import('expo-sharing');
+        await Sharing.shareAsync(uri, {
           mimeType: 'application/pdf',
           dialogTitle: `${person1.givenName} & ${person2.givenName} - Relationship`,
           UTI: 'com.adobe.pdf',
