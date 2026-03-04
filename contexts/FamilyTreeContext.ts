@@ -51,6 +51,7 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
   const [isLoadingFromCloud, setIsLoadingFromCloud] = useState<boolean>(false);
   const [cloudError, setCloudError] = useState<string | null>(null);
   const autoLoadAttempted = useRef(false);
+  const [loadFailed, setLoadFailed] = useState<boolean>(false);
 
   const loadQuery = useQuery({
     queryKey: ['familyTree'],
@@ -99,6 +100,7 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
       console.log('[FamilyTree] No local cache, loading from cloud...');
       setIsLoadingFromCloud(true);
       setCloudError(null);
+      setLoadFailed(false);
       try {
         const cloudResult = await loadAllFromSupabase();
         if (cloudResult.data && cloudResult.data.individuals.size > 0) {
@@ -113,10 +115,12 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
         if (cloudResult.error) {
           console.warn('[FamilyTree] Supabase load error:', cloudResult.error);
           setCloudError(cloudResult.error);
+          setLoadFailed(true);
         }
       } catch (e) {
         console.warn('[FamilyTree] Supabase load failed:', e);
         setCloudError(String(e));
+        setLoadFailed(true);
       }
       setIsLoadingFromCloud(false);
 
@@ -186,6 +190,7 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
         if (!content.includes('INDI') && !content.includes('HEAD')) {
           console.warn('[FamilyTree] Fetched content does not look like valid GEDCOM');
           setIsAutoLoading(false);
+          setLoadFailed(true);
           return;
         }
 
@@ -197,9 +202,11 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
         await AsyncStorage.setItem(AUTO_LOADED_VERSION_KEY, DEFAULT_GEDCOM_VERSION);
 
         setTreeData(parsed);
+        setLoadFailed(false);
         console.log('[FamilyTree] Default GEDCOM auto-loaded successfully');
       } catch (e) {
         console.error('[FamilyTree] Auto-load error:', e);
+        setLoadFailed(true);
       } finally {
         setIsAutoLoading(false);
       }
@@ -288,6 +295,75 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
     };
     loadCount();
   }, [isAdmin]);
+
+  const forceReloadData = useCallback(async (): Promise<{ success: boolean; error?: string }> => {
+    console.log('[FamilyTree] Force reloading all data from server...');
+    setLoadFailed(false);
+    setCloudError(null);
+    setIsLoadingFromCloud(true);
+    autoLoadAttempted.current = false;
+
+    try {
+      await AsyncStorage.removeItem(STORAGE_KEY);
+      await AsyncStorage.removeItem(RAW_GEDCOM_KEY);
+      await AsyncStorage.removeItem(AUTO_LOADED_KEY);
+      await AsyncStorage.removeItem(AUTO_LOADED_VERSION_KEY);
+      await AsyncStorage.removeItem(LAST_CLOUD_SYNC_KEY);
+      await AsyncStorage.removeItem(DATA_FORMAT_VERSION_KEY);
+      console.log('[FamilyTree] Cleared all cached data');
+    } catch (e) {
+      console.warn('[FamilyTree] Error clearing cache:', e);
+    }
+
+    try {
+      const cloudResult = await loadAllFromSupabase();
+      if (cloudResult.data && cloudResult.data.individuals.size > 0) {
+        console.log('[FamilyTree] Force reload from Supabase success:', cloudResult.data.individuals.size, 'individuals');
+        const serialized = serializeFamilyTreeData(cloudResult.data);
+        await AsyncStorage.setItem(STORAGE_KEY, serialized);
+        await AsyncStorage.setItem(LAST_CLOUD_SYNC_KEY, String(Date.now()));
+        await AsyncStorage.setItem(DATA_FORMAT_VERSION_KEY, CURRENT_DATA_FORMAT_VERSION);
+        setTreeData(cloudResult.data);
+        setIsLoadingFromCloud(false);
+        return { success: true };
+      }
+      if (cloudResult.error) {
+        console.warn('[FamilyTree] Supabase force reload error:', cloudResult.error);
+        setCloudError(cloudResult.error);
+      }
+    } catch (e) {
+      console.warn('[FamilyTree] Supabase force reload failed:', e);
+      setCloudError(String(e));
+    }
+
+    if (HAS_DEFAULT_GEDCOM) {
+      console.log('[FamilyTree] Falling back to GEDCOM file download...');
+      try {
+        const response = await fetch(DEFAULT_GEDCOM_URL);
+        if (response.ok) {
+          const content = await response.text();
+          if (content.includes('INDI') || content.includes('HEAD')) {
+            const parsed = parseGedcom(content);
+            const serialized = serializeFamilyTreeData(parsed);
+            await AsyncStorage.setItem(STORAGE_KEY, serialized);
+            await AsyncStorage.setItem(RAW_GEDCOM_KEY, content);
+            await AsyncStorage.setItem(AUTO_LOADED_KEY, 'true');
+            await AsyncStorage.setItem(AUTO_LOADED_VERSION_KEY, DEFAULT_GEDCOM_VERSION);
+            setTreeData(parsed);
+            setIsLoadingFromCloud(false);
+            console.log('[FamilyTree] Force reload from GEDCOM file success');
+            return { success: true };
+          }
+        }
+      } catch (e) {
+        console.warn('[FamilyTree] GEDCOM file fallback failed:', e);
+      }
+    }
+
+    setLoadFailed(true);
+    setIsLoadingFromCloud(false);
+    return { success: false, error: 'Failed to reload data from server. Please check your connection and try again.' };
+  }, []);
 
   const refreshFromCloud = useCallback(async (): Promise<{ success: boolean; error?: string }> => {
     setIsLoadingFromCloud(true);
@@ -766,5 +842,7 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
     isLoadingFromCloud,
     cloudError,
     refreshFromCloud,
+    loadFailed,
+    forceReloadData,
   };
 });
