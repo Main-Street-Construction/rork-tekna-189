@@ -33,6 +33,30 @@ const DATA_FORMAT_VERSION_KEY = 'data_format_version';
 const CURRENT_DATA_FORMAT_VERSION = '6';
 const CLOUD_SYNC_INTERVAL = 4 * 60 * 60 * 1000;
 
+async function safeSetItem(key: string, value: string): Promise<boolean> {
+  try {
+    await AsyncStorage.setItem(key, value);
+    return true;
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.warn('[FamilyTree] AsyncStorage write failed for key', key, ':', msg);
+    if (msg.includes('SQLITE_FULL') || msg.includes('disk is full')) {
+      console.warn('[FamilyTree] Storage full, attempting to clear old data and retry...');
+      try {
+        await AsyncStorage.removeItem(STORAGE_KEY);
+        await AsyncStorage.removeItem(RAW_GEDCOM_KEY);
+        await AsyncStorage.removeItem(LAST_CLOUD_SYNC_KEY);
+        await AsyncStorage.setItem(key, value);
+        console.log('[FamilyTree] Retry after cleanup succeeded for key', key);
+        return true;
+      } catch (retryErr) {
+        console.error('[FamilyTree] Retry after cleanup also failed:', retryErr);
+      }
+    }
+    return false;
+  }
+}
+
 async function getDeviceId(): Promise<string> {
   let deviceId = await AsyncStorage.getItem(DEVICE_ID_KEY);
   if (!deviceId) {
@@ -104,9 +128,9 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
         if (cloudResult.data && cloudResult.data.individuals.size > 0) {
           console.log('[FamilyTree] Loaded from Supabase:', cloudResult.data.individuals.size, 'individuals');
           const serialized = serializeFamilyTreeData(cloudResult.data);
-          await AsyncStorage.setItem(STORAGE_KEY, serialized);
-          await AsyncStorage.setItem(LAST_CLOUD_SYNC_KEY, String(Date.now()));
-          await AsyncStorage.setItem(DATA_FORMAT_VERSION_KEY, CURRENT_DATA_FORMAT_VERSION);
+          await safeSetItem(STORAGE_KEY, serialized);
+          await safeSetItem(LAST_CLOUD_SYNC_KEY, String(Date.now()));
+          await safeSetItem(DATA_FORMAT_VERSION_KEY, CURRENT_DATA_FORMAT_VERSION);
           setIsLoadingFromCloud(false);
           return cloudResult.data;
         }
@@ -133,8 +157,8 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
       if (cloudResult.data && cloudResult.data.individuals.size > 0) {
         console.log('[FamilyTree] Background sync complete:', cloudResult.data.individuals.size, 'individuals');
         const serialized = serializeFamilyTreeData(cloudResult.data);
-        await AsyncStorage.setItem(STORAGE_KEY, serialized);
-        await AsyncStorage.setItem(LAST_CLOUD_SYNC_KEY, String(Date.now()));
+        await safeSetItem(STORAGE_KEY, serialized);
+        await safeSetItem(LAST_CLOUD_SYNC_KEY, String(Date.now()));
         setTreeData(cloudResult.data);
       } else if (cloudResult.error) {
         console.warn('[FamilyTree] Background sync error:', cloudResult.error);
@@ -191,10 +215,10 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
 
         const parsed = parseGedcom(content);
         const serialized = serializeFamilyTreeData(parsed);
-        await AsyncStorage.setItem(STORAGE_KEY, serialized);
-        await AsyncStorage.setItem(RAW_GEDCOM_KEY, content);
-        await AsyncStorage.setItem(AUTO_LOADED_KEY, 'true');
-        await AsyncStorage.setItem(AUTO_LOADED_VERSION_KEY, DEFAULT_GEDCOM_VERSION);
+        await safeSetItem(STORAGE_KEY, serialized);
+        await safeSetItem(RAW_GEDCOM_KEY, content);
+        await safeSetItem(AUTO_LOADED_KEY, 'true');
+        await safeSetItem(AUTO_LOADED_VERSION_KEY, DEFAULT_GEDCOM_VERSION);
 
         setTreeData(parsed);
         console.log('[FamilyTree] Default GEDCOM auto-loaded successfully');
@@ -213,8 +237,8 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
       console.log('[FamilyTree] Importing GEDCOM data...');
       const parsed = parseGedcom(gedcomContent);
       const serialized = serializeFamilyTreeData(parsed);
-      await AsyncStorage.setItem(STORAGE_KEY, serialized);
-      await AsyncStorage.setItem(RAW_GEDCOM_KEY, gedcomContent);
+      await safeSetItem(STORAGE_KEY, serialized);
+      await safeSetItem(RAW_GEDCOM_KEY, gedcomContent);
       console.log('[FamilyTree] Import complete');
       return parsed;
     },
@@ -296,8 +320,8 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
       const result = await loadAllFromSupabase();
       if (result.data && result.data.individuals.size > 0) {
         const serialized = serializeFamilyTreeData(result.data);
-        await AsyncStorage.setItem(STORAGE_KEY, serialized);
-        await AsyncStorage.setItem(LAST_CLOUD_SYNC_KEY, String(Date.now()));
+        await safeSetItem(STORAGE_KEY, serialized);
+        await safeSetItem(LAST_CLOUD_SYNC_KEY, String(Date.now()));
         setTreeData(result.data);
         setIsLoadingFromCloud(false);
         console.log('[FamilyTree] Refreshed from Supabase');
@@ -341,7 +365,7 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
     async (newTree: FamilyTreeData) => {
       setTreeData(newTree);
       const serialized = serializeFamilyTreeData(newTree);
-      await AsyncStorage.setItem(STORAGE_KEY, serialized);
+      await safeSetItem(STORAGE_KEY, serialized);
     },
     []
   );

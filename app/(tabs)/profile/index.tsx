@@ -251,12 +251,28 @@ export default function ProfileScreen() {
         keyboardShouldPersistTaps="handled"
       >
         <View style={styles.avatarSection}>
-          <View style={[styles.avatar, hasClaimed && styles.avatarClaimed]}>
-            {hasProfile && profile?.avatarInitials ? (
-              <Text style={styles.avatarText}>{profile.avatarInitials}</Text>
-            ) : (
-              <User size={36} color={Colors.white} />
-            )}
+          <View style={styles.avatarRow}>
+            <View style={[styles.avatar, hasClaimed && styles.avatarClaimed]}>
+              {hasProfile && profile?.avatarInitials ? (
+                <Text style={styles.avatarText}>{profile.avatarInitials}</Text>
+              ) : (
+                <User size={36} color={Colors.white} />
+              )}
+            </View>
+            <TouchableOpacity
+              style={styles.forceRefreshBtn}
+              onPress={handleRefresh}
+              disabled={refreshMutation.isPending || isLoadingFromCloud}
+              activeOpacity={0.6}
+              hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+              testID="force-refresh-btn"
+            >
+              {refreshMutation.isPending || isLoadingFromCloud ? (
+                <ActivityIndicator size="small" color={Colors.textLight} />
+              ) : (
+                <RefreshCw size={16} color={Colors.textLight} />
+              )}
+            </TouchableOpacity>
           </View>
           {hasClaimed && (
             <View style={styles.claimedBadge}>
@@ -705,6 +721,22 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingTop: 24,
     paddingBottom: 20,
+  },
+  avatarRow: {
+    width: '100%',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  forceRefreshBtn: {
+    position: 'absolute' as const,
+    right: 20,
+    top: 4,
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: Colors.overlay,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   avatar: {
     width: 88,
