@@ -86,7 +86,7 @@ export default function SearchScreen() {
 
   const handlePersonPress = useCallback(
     (person: GedcomIndividual) => {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
       addEntry({
         type: 'search',
         query: query,
@@ -217,17 +217,13 @@ export default function SearchScreen() {
     }
 
     return (
-      <TouchableOpacity
-        style={styles.center}
-        onPress={() => inputRef.current?.focus()}
-        activeOpacity={0.7}
-      >
+      <View style={styles.center}>
         <View style={styles.iconCircleSm}>
           <Search size={28} color={Colors.accent} />
         </View>
         <Text style={styles.bigTitle}>Find an Ancestor</Text>
         <Text style={styles.desc}>Tap the search bar above to search by first or last name.</Text>
-      </TouchableOpacity>
+      </View>
     );
   };
 

@@ -6,6 +6,8 @@ import {
   ScrollView,
   TouchableOpacity,
   Animated,
+  Modal,
+  Pressable,
 } from 'react-native';
 import { useLocalSearchParams, useRouter, Stack } from 'expo-router';
 import {
@@ -15,7 +17,7 @@ import {
   Users,
   ArrowLeft,
   GitBranch,
-  ChevronUp,
+
   Heart,
   ChevronDown,
   FileText,
@@ -49,6 +51,7 @@ export default function PersonDetailScreen() {
   const { profile } = useProfile();
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const [treeExpanded, setTreeExpanded] = useState<boolean>(false);
+  const [spouseMenuVisible, setSpouseMenuVisible] = useState<boolean>(false);
 
   useEffect(() => {
     Animated.timing(fadeAnim, {
@@ -137,12 +140,12 @@ export default function PersonDetailScreen() {
   }, [children, treeData, treeExpanded]);
 
   const toggleTreeExpand = useCallback(() => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     setTreeExpanded((prev) => !prev);
   }, []);
 
   const handleGoHome = useCallback(() => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     router.replace('/');
   }, [router]);
 
@@ -155,29 +158,29 @@ export default function PersonDetailScreen() {
 
   const handleEdit = useCallback(() => {
     if (!id) return;
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     router.push(`/edit-person/${id}`);
   }, [id, router]);
 
   const handleAddChild = useCallback(() => {
     if (!id) return;
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     router.push(`/add-child/${id}`);
   }, [id, router]);
 
   const handleAddSpouse = useCallback(() => {
     if (!id) return;
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     router.push(`/add-spouse/${id}`);
   }, [id, router]);
 
   const handleEditMarriage = useCallback((familyId: string) => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     router.push(`/edit-marriage/${familyId}`);
   }, [router]);
 
   const handleLinkSpouses = useCallback(() => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     router.push('/link-spouses');
   }, [router]);
 
@@ -254,14 +257,9 @@ export default function PersonDetailScreen() {
           headerTintColor: Colors.text,
           headerShadowVisible: false,
           headerRight: () => (
-            <View style={styles.headerRightRow}>
-              <TouchableOpacity onPress={handleGoHome} style={styles.editHeaderBtn}>
-                <Home size={18} color={Colors.accent} />
-              </TouchableOpacity>
-              <TouchableOpacity onPress={handleEdit} style={styles.editHeaderBtn}>
-                <Pencil size={18} color={Colors.accent} />
-              </TouchableOpacity>
-            </View>
+            <TouchableOpacity onPress={handleGoHome} style={styles.editHeaderBtn}>
+              <Home size={18} color={Colors.accent} />
+            </TouchableOpacity>
           ),
         }}
       />
@@ -617,16 +615,53 @@ export default function PersonDetailScreen() {
               <UserPlus size={18} color={Colors.accent} />
               <Text style={styles.addChildBtnText}>Child</Text>
             </TouchableOpacity>
-            <TouchableOpacity style={styles.addChildBtn} onPress={handleAddSpouse} activeOpacity={0.7}>
+            <TouchableOpacity style={styles.addChildBtn} onPress={() => { void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); setSpouseMenuVisible(true); }} activeOpacity={0.7}>
               <HeartHandshake size={18} color={Colors.accent} />
               <Text style={styles.addChildBtnText}>Spouse</Text>
             </TouchableOpacity>
           </View>
 
-          <TouchableOpacity style={styles.linkSpousesBtn} onPress={handleLinkSpouses} activeOpacity={0.7}>
-            <Link size={16} color={Colors.accent} />
-            <Text style={styles.linkSpousesBtnText}>Link Existing People as Spouses</Text>
-          </TouchableOpacity>
+          <Modal
+            visible={spouseMenuVisible}
+            transparent
+            animationType="fade"
+            onRequestClose={() => setSpouseMenuVisible(false)}
+          >
+            <Pressable style={styles.modalOverlay} onPress={() => setSpouseMenuVisible(false)}>
+              <View style={styles.menuSheet}>
+                <Text style={styles.menuTitle}>Add Spouse</Text>
+                <TouchableOpacity
+                  style={styles.menuOption}
+                  onPress={() => { setSpouseMenuVisible(false); handleAddSpouse(); }}
+                  activeOpacity={0.7}
+                >
+                  <UserPlus size={20} color={Colors.accent} />
+                  <View style={styles.menuOptionTextWrap}>
+                    <Text style={styles.menuOptionTitle}>Create New Person</Text>
+                    <Text style={styles.menuOptionDesc}>Add a new spouse to the tree</Text>
+                  </View>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.menuOption}
+                  onPress={() => { setSpouseMenuVisible(false); handleLinkSpouses(); }}
+                  activeOpacity={0.7}
+                >
+                  <Link size={20} color={Colors.accent} />
+                  <View style={styles.menuOptionTextWrap}>
+                    <Text style={styles.menuOptionTitle}>Link Existing People</Text>
+                    <Text style={styles.menuOptionDesc}>Connect two people already in the tree</Text>
+                  </View>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.menuCancel}
+                  onPress={() => setSpouseMenuVisible(false)}
+                  activeOpacity={0.7}
+                >
+                  <Text style={styles.menuCancelText}>Cancel</Text>
+                </TouchableOpacity>
+              </View>
+            </Pressable>
+          </Modal>
         </ScrollView>
       </Animated.View>
     </View>
@@ -967,18 +1002,61 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: Colors.textSecondary,
   },
-  linkSpousesBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 12,
-    marginHorizontal: 16,
-    marginTop: 12,
-    gap: 8,
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+    justifyContent: 'flex-end' as const,
   },
-  linkSpousesBtnText: {
-    fontSize: 14,
-    color: Colors.accent,
-    fontWeight: '500' as const,
+  menuSheet: {
+    backgroundColor: Colors.background,
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    paddingTop: 20,
+    paddingBottom: 34,
+    paddingHorizontal: 20,
+  },
+  menuTitle: {
+    fontSize: 18,
+    fontWeight: '700' as const,
+    color: Colors.text,
+    marginBottom: 16,
+    textAlign: 'center' as const,
+  },
+  menuOption: {
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+    gap: 14,
+    paddingVertical: 14,
+    paddingHorizontal: 12,
+    borderRadius: 12,
+    backgroundColor: Colors.card,
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: Colors.cardBorder,
+  },
+  menuOptionTextWrap: {
+    flex: 1,
+  },
+  menuOptionTitle: {
+    fontSize: 15,
+    fontWeight: '600' as const,
+    color: Colors.text,
+  },
+  menuOptionDesc: {
+    fontSize: 12,
+    color: Colors.textSecondary,
+    marginTop: 2,
+  },
+  menuCancel: {
+    alignItems: 'center' as const,
+    paddingVertical: 14,
+    marginTop: 4,
+    borderRadius: 12,
+    backgroundColor: Colors.overlay,
+  },
+  menuCancelText: {
+    fontSize: 15,
+    fontWeight: '600' as const,
+    color: Colors.textSecondary,
   },
 });
