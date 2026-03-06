@@ -1,6 +1,48 @@
 import { supabase } from './supabase';
 import { GedcomIndividual, GedcomFamily, FamilyTreeData, PendingEdit, PendingEditType } from '@/types/genealogy';
 
+const FETCH_TIMEOUT_MS = 30000;
+const MAX_RETRIES = 3;
+const RETRY_DELAY_MS = 2000;
+
+interface SupabaseQueryResult<T> {
+  data: T[] | null;
+  error: { message: string; code?: string } | null;
+}
+
+async function fetchWithRetry<T>(
+  queryFn: () => PromiseLike<SupabaseQueryResult<T>>,
+  retries: number = MAX_RETRIES,
+  delayMs: number = RETRY_DELAY_MS
+): Promise<SupabaseQueryResult<T>> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt < retries; attempt++) {
+    try {
+      const result = await Promise.race([
+        Promise.resolve(queryFn()),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error(`Request timed out after ${FETCH_TIMEOUT_MS}ms`)), FETCH_TIMEOUT_MS)
+        ),
+      ]);
+      if (!result.error) return result;
+      lastError = new Error(result.error.message);
+      console.warn(`[Supabase] Attempt ${attempt + 1}/${retries} returned error: ${result.error.message}`);
+      if (attempt === retries - 1) return result;
+    } catch (e) {
+      lastError = e;
+      const msg = e instanceof Error ? e.message : String(e);
+      console.warn(`[Supabase] Attempt ${attempt + 1}/${retries} failed: ${msg}`);
+      if (attempt === retries - 1) {
+        return { data: null, error: { message: msg } };
+      }
+    }
+    const backoff = delayMs * Math.pow(1.5, attempt);
+    console.log(`[Supabase] Retrying in ${Math.round(backoff)}ms...`);
+    await new Promise(resolve => setTimeout(resolve, backoff));
+  }
+  return { data: null, error: { message: lastError instanceof Error ? lastError.message : String(lastError) } };
+}
+
 export interface SupabaseIndividual {
   id: string;
   gedcom_id: string;
@@ -33,7 +75,7 @@ export interface SupabaseFamilyMember {
   role: string;
 }
 
-function cleanGedcomName(raw: string): { full: string; given: string; surname: string } {
+function _cleanGedcomName(raw: string): { full: string; given: string; surname: string } {
   if (!raw || !raw.trim()) return { full: '', given: '', surname: '' };
   const surnameMatch = raw.match(/\/([^/]*)\//);  
   if (surnameMatch) {
@@ -125,7 +167,7 @@ async function resolveGedcomIdToUuid(gedcomId: string): Promise<string | null> {
   }
 }
 
-async function resolveFamilyGedcomIdToUuid(gedcomId: string): Promise<string | null> {
+async function _resolveFamilyGedcomIdToUuid(gedcomId: string): Promise<string | null> {
   try {
     const { data, error } = await supabase
       .from('families')
@@ -153,10 +195,12 @@ export async function loadAllFromSupabase(): Promise<{
     const PAGE_SIZE = 1000;
 
     while (true) {
-      const { data: rows, error: indError } = await supabase
-        .from('individuals')
-        .select('*')
-        .range(indOffset, indOffset + PAGE_SIZE - 1);
+      const { data: rows, error: indError } = await fetchWithRetry<SupabaseIndividual>(() =>
+        supabase
+          .from('individuals')
+          .select('*')
+          .range(indOffset, indOffset + PAGE_SIZE - 1)
+      );
 
       if (indError) {
         console.error('[Supabase] Error fetching individuals:', indError);
@@ -192,10 +236,12 @@ export async function loadAllFromSupabase(): Promise<{
     let famOffset = 0;
 
     while (true) {
-      const { data: rows, error: famError } = await supabase
-        .from('families')
-        .select('*')
-        .range(famOffset, famOffset + PAGE_SIZE - 1);
+      const { data: rows, error: famError } = await fetchWithRetry<SupabaseFamily>(() =>
+        supabase
+          .from('families')
+          .select('*')
+          .range(famOffset, famOffset + PAGE_SIZE - 1)
+      );
 
       if (famError) {
         console.error('[Supabase] Error fetching families:', famError);
@@ -219,10 +265,12 @@ export async function loadAllFromSupabase(): Promise<{
     let fmOffset = 0;
 
     while (true) {
-      const { data: rows, error: fmError } = await supabase
-        .from('family_members')
-        .select('*')
-        .range(fmOffset, fmOffset + PAGE_SIZE - 1);
+      const { data: rows, error: fmError } = await fetchWithRetry<SupabaseFamilyMember>(() =>
+        supabase
+          .from('family_members')
+          .select('*')
+          .range(fmOffset, fmOffset + PAGE_SIZE - 1)
+      );
 
       if (fmError) {
         console.error('[Supabase] Error fetching family_members:', fmError);

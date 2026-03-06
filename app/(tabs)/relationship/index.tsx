@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useRef, useMemo, useEffect } from 'react';
+import React, { useState, useCallback, useRef, useEffect } from 'react';
 import {
   View,
   Text,
@@ -21,19 +21,17 @@ import {
   X,
   GitFork,
   ArrowRight,
-  RotateCcw,
   TreePine,
   Upload,
   ChevronDown,
   ChevronUp,
-  Crown,
   Heart,
-  Shield,
   User,
   Share2,
 } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
-import * as Print from 'expo-print';
+import { captureRef } from 'react-native-view-shot';
+
 import Colors from '@/constants/colors';
 import { useFamilyTree } from '@/contexts/FamilyTreeContext';
 import { useProfile } from '@/contexts/ProfileContext';
@@ -103,6 +101,7 @@ export default function RelationshipScreen() {
     [search, hasData]
   );
 
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const handleClearSearch = useCallback(() => {
     setQuery('');
     setResults([]);
@@ -129,7 +128,7 @@ export default function RelationshipScreen() {
 
   const handleSelectPerson = useCallback(
     (person: GedcomIndividual) => {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
       Keyboard.dismiss();
 
       if (selectingSlot === 1) {
@@ -164,7 +163,7 @@ export default function RelationshipScreen() {
             console.log('[RelationshipScreen] Found', result?.entries.length, 'relationship paths');
             setMultiResult(result);
             setIsCalculating(false);
-            Haptics.notificationAsync(
+            void Haptics.notificationAsync(
               Haptics.NotificationFeedbackType.Success
             );
             if (result) {
@@ -188,7 +187,7 @@ export default function RelationshipScreen() {
         setIsCalculating(false);
       }
     },
-    [treeData, person1, selectingSlot, addRelationshipEntry]
+    [treeData, person1, selectingSlot, addRelationshipEntry, animateTransition]
   );
 
   const handleAutofillMe = useCallback(() => {
@@ -206,7 +205,7 @@ export default function RelationshipScreen() {
       );
       return;
     }
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
 
     if (selectingSlot === 1) {
       animateTransition(() => {
@@ -236,7 +235,7 @@ export default function RelationshipScreen() {
             console.log('[RelationshipScreen] Found', result?.entries.length, 'relationship paths');
             setMultiResult(result);
             setIsCalculating(false);
-            Haptics.notificationAsync(
+            void Haptics.notificationAsync(
               Haptics.NotificationFeedbackType.Success
             );
             if (result) {
@@ -260,10 +259,10 @@ export default function RelationshipScreen() {
         setIsCalculating(false);
       }
     }
-  }, [hasClaimed, profile?.rootPersonId, getPerson, selectingSlot, treeData, person1, addRelationshipEntry]);
+  }, [hasClaimed, profile?.rootPersonId, getPerson, selectingSlot, treeData, person1, addRelationshipEntry, animateTransition]);
 
   const handleReset = useCallback(() => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     animateTransition(() => {
       setPerson1(null);
       setPerson2(null);
@@ -277,9 +276,9 @@ export default function RelationshipScreen() {
     });
   }, [animateTransition]);
 
-  const handleSwapAndRecalculate = useCallback(() => {
+  const _handleSwapAndRecalculate = useCallback(() => {
     if (!person1 || !person2 || !treeData) return;
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     const oldP1 = person1;
     const oldP2 = person2;
     setPerson1(oldP2);
@@ -311,7 +310,7 @@ export default function RelationshipScreen() {
 
   const handlePersonPress = useCallback(
     (person: GedcomIndividual) => {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
       router.push(`/person/${person.id}`);
     },
     [router]
@@ -322,7 +321,7 @@ export default function RelationshipScreen() {
   }, [router]);
 
   const handleToggleExpand = useCallback((index: number) => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     if (Platform.OS !== 'web') {
       LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
     }
@@ -330,7 +329,7 @@ export default function RelationshipScreen() {
   }, []);
 
   const handleChangePerson1 = useCallback(() => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     animateTransition(() => {
       setPerson1(null);
       setSelectingSlot(1);
@@ -672,7 +671,7 @@ function generatePathHtml(
     return '#7A7168';
   };
 
-  const renderPathColumn = (path: string[], label: string, targetName: string) => {
+  const renderPathColumn = (path: string[], _label: string, _targetName: string) => {
     if (path.length <= 1) return `<div style="text-align:center;color:#7A7168;font-style:italic;padding:12px 0;">Same person</div>`;
     return path.slice(1).map((id) => {
       const name = getPersonName(id);
@@ -778,14 +777,15 @@ const RelationshipEntryCard = React.memo(function RelationshipEntryCard({
   isClosest,
 }: RelationshipEntryCardProps) {
   const [isSharing, setIsSharing] = useState<boolean>(false);
+  const pathViewRef = useRef<View>(null);
 
   const handleShare = useCallback(async () => {
     try {
       setIsSharing(true);
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-      const html = generatePathHtml(person1, person2, entry, treeData);
+      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
 
       if (Platform.OS === 'web') {
+        const html = generatePathHtml(person1, person2, entry, treeData);
         const blob = new Blob([html], { type: 'text/html' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
@@ -794,16 +794,26 @@ const RelationshipEntryCard = React.memo(function RelationshipEntryCard({
         a.click();
         URL.revokeObjectURL(url);
       } else {
-        const { uri } = await Print.printToFileAsync({ html });
+        if (!pathViewRef.current) {
+          Alert.alert('Share Error', 'Please expand the path view first and try again.');
+          return;
+        }
+        const uri = await captureRef(pathViewRef, {
+          format: 'png',
+          quality: 1,
+          result: 'tmpfile',
+        });
+        console.log('[RelationshipScreen] Captured image at:', uri);
         const Sharing = await import('expo-sharing');
         await Sharing.shareAsync(uri, {
-          mimeType: 'application/pdf',
+          mimeType: 'image/png',
           dialogTitle: `${person1.givenName} & ${person2.givenName} - Relationship`,
-          UTI: 'com.adobe.pdf',
+          UTI: 'public.png',
         });
       }
     } catch (e) {
       console.error('[RelationshipScreen] Share error:', e);
+      Alert.alert('Share Failed', 'Could not generate the relationship image. Please try again.');
     } finally {
       setIsSharing(false);
     }
@@ -847,13 +857,27 @@ const RelationshipEntryCard = React.memo(function RelationshipEntryCard({
 
       {isExpanded && treeData && (
         <View style={styles.entryPathContainer}>
-          <RelationshipPathView
-            person1={person1}
-            person2={person2}
-            commonAncestor={entry.commonAncestor}
-            data={treeData}
-            onPersonPress={onPersonPress}
-          />
+          <View ref={pathViewRef} collapsable={false} style={styles.captureContainer}>
+            <View style={styles.captureHeader}>
+              <View style={styles.capturePersonRow}>
+                <Text style={styles.capturePersonName} numberOfLines={1}>{person1.name}</Text>
+                <ArrowRight size={14} color={Colors.textLight} />
+                <Text style={styles.capturePersonName} numberOfLines={1}>{person2.name}</Text>
+              </View>
+              <View style={styles.captureBadge}>
+                <Text style={styles.captureBadgeText}>{entry.relationship}</Text>
+              </View>
+              <Text style={styles.captureAncestorLabel}>via {entry.commonAncestor.ancestor.name}</Text>
+            </View>
+            <RelationshipPathView
+              person1={person1}
+              person2={person2}
+              commonAncestor={entry.commonAncestor}
+              data={treeData}
+              onPersonPress={onPersonPress}
+            />
+            <Text style={styles.captureFooter}>Family Tree App</Text>
+          </View>
           <TouchableOpacity
             style={styles.sharePathButton}
             onPress={handleShare}
@@ -1281,6 +1305,50 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '600' as const,
     color: Colors.textSecondary,
+  },
+  captureContainer: {
+    backgroundColor: Colors.background,
+    paddingBottom: 12,
+  },
+  captureHeader: {
+    alignItems: 'center' as const,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+  },
+  capturePersonRow: {
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+    gap: 8,
+    marginBottom: 10,
+  },
+  capturePersonName: {
+    fontSize: 14,
+    fontWeight: '600' as const,
+    color: Colors.text,
+  },
+  captureBadge: {
+    backgroundColor: Colors.primary,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 20,
+    marginBottom: 6,
+  },
+  captureBadgeText: {
+    fontSize: 15,
+    fontWeight: '700' as const,
+    color: Colors.white,
+  },
+  captureAncestorLabel: {
+    fontSize: 12,
+    color: Colors.textSecondary,
+    fontStyle: 'italic' as const,
+  },
+  captureFooter: {
+    fontSize: 10,
+    color: Colors.textLight,
+    textAlign: 'center' as const,
+    paddingTop: 8,
+    paddingBottom: 4,
   },
   noAncestorNote: {
     alignItems: 'center',
