@@ -1,5 +1,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { File, Directory, Paths } from 'expo-file-system';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import createContextHook from '@nkzw/create-context-hook';
 import { FamilyTreeData, GedcomIndividual, GedcomFamily } from '@/types/genealogy';
@@ -32,9 +34,45 @@ const LAST_CLOUD_SYNC_KEY = 'last_cloud_sync';
 const DATA_FORMAT_VERSION_KEY = 'data_format_version';
 const CURRENT_DATA_FORMAT_VERSION = '6';
 const CLOUD_SYNC_INTERVAL = 4 * 60 * 60 * 1000;
-const MAX_STORAGE_BYTES = 4 * 1024 * 1024;
+const MAX_ASYNC_STORAGE_BYTES = 4 * 1024 * 1024;
 
 let storageDisabled = false;
+
+function getFileCacheDir(): Directory {
+  return new Directory(Paths.document, 'tree_cache');
+}
+
+function readFileCache(key: string): string | null {
+  if (Platform.OS === 'web') return null;
+  try {
+    const dir = getFileCacheDir();
+    const file = new File(dir, key + '.json');
+    if (!file.exists) return null;
+    const content = file.textSync();
+    console.log('[FamilyTree] Loaded from file cache for', key, '(' + Math.round(content.length / 1024) + 'KB)');
+    return content;
+  } catch (e) {
+    console.warn('[FamilyTree] File cache read failed for', key, ':', e);
+    return null;
+  }
+}
+
+function writeFileCache(key: string, value: string): boolean {
+  if (Platform.OS === 'web') return false;
+  try {
+    const dir = getFileCacheDir();
+    if (!dir.exists) {
+      dir.create();
+    }
+    const file = new File(dir, key + '.json');
+    file.write(value);
+    console.log('[FamilyTree] File cache write success for', key, '(' + Math.round(value.length / 1024) + 'KB)');
+    return true;
+  } catch (e) {
+    console.warn('[FamilyTree] File cache write failed for', key, ':', e);
+    return false;
+  }
+}
 
 async function safeRemoveItem(key: string): Promise<void> {
   try {
@@ -67,8 +105,14 @@ async function safeSetItem(key: string, value: string): Promise<boolean> {
     return false;
   }
 
-  if (value.length > MAX_STORAGE_BYTES) {
-    console.warn('[FamilyTree] Data too large for AsyncStorage (' + Math.round(value.length / 1024) + 'KB), skipping cache for key', key);
+  if (value.length > MAX_ASYNC_STORAGE_BYTES) {
+    console.log('[FamilyTree] Data too large for AsyncStorage (' + Math.round(value.length / 1024) + 'KB), using file cache for key', key);
+    const fileCached = writeFileCache(key, value);
+    if (fileCached) {
+      await safeRemoveItem(key);
+      return true;
+    }
+    console.warn('[FamilyTree] File cache also failed for key', key);
     return false;
   }
 
@@ -79,22 +123,23 @@ async function safeSetItem(key: string, value: string): Promise<boolean> {
     const msg = e instanceof Error ? e.message : String(e);
     console.warn('[FamilyTree] AsyncStorage write failed for key', key, ':', msg);
     if (msg.includes('SQLITE_FULL') || msg.includes('disk is full') || msg.includes('code 13')) {
-      console.warn('[FamilyTree] Storage full detected, running aggressive cleanup...');
-      await aggressiveCleanup();
-      try {
-        if (key !== STORAGE_KEY && key !== RAW_GEDCOM_KEY) {
-          await AsyncStorage.setItem(key, value);
-          console.log('[FamilyTree] Small key retry succeeded for', key);
-          return true;
-        }
-      } catch (retryErr) {
-        console.error('[FamilyTree] Retry also failed, disabling storage:', retryErr);
+      console.warn('[FamilyTree] Storage full detected, trying file cache...');
+      const fileCached = writeFileCache(key, value);
+      if (fileCached) {
+        await aggressiveCleanup();
+        return true;
       }
       storageDisabled = true;
       console.warn('[FamilyTree] Local caching disabled for this session due to storage limits');
     }
     return false;
   }
+}
+
+async function safeGetItemWithFileCache(key: string): Promise<string | null> {
+  const asyncResult = await safeGetItem(key);
+  if (asyncResult) return asyncResult;
+  return readFileCache(key);
 }
 
 async function getDeviceId(): Promise<string> {
@@ -139,7 +184,7 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
 
       let stored: string | null = null;
       if (!needsReformat) {
-        stored = await safeGetItem(STORAGE_KEY);
+        stored = await safeGetItemWithFileCache(STORAGE_KEY);
       }
 
       if (stored) {

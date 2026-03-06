@@ -30,6 +30,7 @@ import {
   Share2,
 } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
+import * as Sharing from 'expo-sharing';
 import { captureRef } from 'react-native-view-shot';
 
 import Colors from '@/constants/colors';
@@ -804,7 +805,6 @@ const RelationshipEntryCard = React.memo(function RelationshipEntryCard({
           result: 'tmpfile',
         });
         console.log('[RelationshipScreen] Captured image at:', uri);
-        const Sharing = await import('expo-sharing');
         await Sharing.shareAsync(uri, {
           mimeType: 'image/png',
           dialogTitle: `${person1.givenName} & ${person2.givenName} - Relationship`,
