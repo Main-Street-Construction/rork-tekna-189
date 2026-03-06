@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import createContextHook from '@nkzw/create-context-hook';
@@ -32,36 +32,76 @@ const LAST_CLOUD_SYNC_KEY = 'last_cloud_sync';
 const DATA_FORMAT_VERSION_KEY = 'data_format_version';
 const CURRENT_DATA_FORMAT_VERSION = '6';
 const CLOUD_SYNC_INTERVAL = 4 * 60 * 60 * 1000;
+const MAX_STORAGE_BYTES = 4 * 1024 * 1024;
+
+let storageDisabled = false;
+
+async function safeRemoveItem(key: string): Promise<void> {
+  try {
+    await AsyncStorage.removeItem(key);
+  } catch (e) {
+    console.warn('[FamilyTree] Failed to remove key', key, ':', e);
+  }
+}
+
+async function safeGetItem(key: string): Promise<string | null> {
+  try {
+    return await AsyncStorage.getItem(key);
+  } catch (e) {
+    console.warn('[FamilyTree] AsyncStorage read failed for key', key, ':', e);
+    return null;
+  }
+}
+
+async function aggressiveCleanup(): Promise<void> {
+  console.warn('[FamilyTree] Running aggressive storage cleanup...');
+  const keysToRemove = [STORAGE_KEY, RAW_GEDCOM_KEY, LAST_CLOUD_SYNC_KEY, DATA_FORMAT_VERSION_KEY, AUTO_LOADED_KEY, AUTO_LOADED_VERSION_KEY];
+  for (const k of keysToRemove) {
+    await safeRemoveItem(k);
+  }
+}
 
 async function safeSetItem(key: string, value: string): Promise<boolean> {
+  if (storageDisabled) {
+    console.log('[FamilyTree] Storage disabled, skipping write for key', key);
+    return false;
+  }
+
+  if (value.length > MAX_STORAGE_BYTES) {
+    console.warn('[FamilyTree] Data too large for AsyncStorage (' + Math.round(value.length / 1024) + 'KB), skipping cache for key', key);
+    return false;
+  }
+
   try {
     await AsyncStorage.setItem(key, value);
     return true;
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
     console.warn('[FamilyTree] AsyncStorage write failed for key', key, ':', msg);
-    if (msg.includes('SQLITE_FULL') || msg.includes('disk is full')) {
-      console.warn('[FamilyTree] Storage full, attempting to clear old data and retry...');
+    if (msg.includes('SQLITE_FULL') || msg.includes('disk is full') || msg.includes('code 13')) {
+      console.warn('[FamilyTree] Storage full detected, running aggressive cleanup...');
+      await aggressiveCleanup();
       try {
-        await AsyncStorage.removeItem(STORAGE_KEY);
-        await AsyncStorage.removeItem(RAW_GEDCOM_KEY);
-        await AsyncStorage.removeItem(LAST_CLOUD_SYNC_KEY);
-        await AsyncStorage.setItem(key, value);
-        console.log('[FamilyTree] Retry after cleanup succeeded for key', key);
-        return true;
+        if (key !== STORAGE_KEY && key !== RAW_GEDCOM_KEY) {
+          await AsyncStorage.setItem(key, value);
+          console.log('[FamilyTree] Small key retry succeeded for', key);
+          return true;
+        }
       } catch (retryErr) {
-        console.error('[FamilyTree] Retry after cleanup also failed:', retryErr);
+        console.error('[FamilyTree] Retry also failed, disabling storage:', retryErr);
       }
+      storageDisabled = true;
+      console.warn('[FamilyTree] Local caching disabled for this session due to storage limits');
     }
     return false;
   }
 }
 
 async function getDeviceId(): Promise<string> {
-  let deviceId = await AsyncStorage.getItem(DEVICE_ID_KEY);
+  let deviceId = await safeGetItem(DEVICE_ID_KEY);
   if (!deviceId) {
     deviceId = 'device_' + Date.now() + '_' + Math.random().toString(36).slice(2, 10);
-    await AsyncStorage.setItem(DEVICE_ID_KEY, deviceId);
+    await safeSetItem(DEVICE_ID_KEY, deviceId);
   }
   return deviceId;
 }
@@ -81,21 +121,27 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
     queryFn: async () => {
       console.log('[FamilyTree] Loading data...');
 
-      const adminStored = await AsyncStorage.getItem(ADMIN_AUTHENTICATED_KEY);
+      const adminStored = await safeGetItem(ADMIN_AUTHENTICATED_KEY);
       if (adminStored === 'true') {
         setIsAdmin(true);
       }
 
-      const formatVersion = await AsyncStorage.getItem(DATA_FORMAT_VERSION_KEY);
+      await safeRemoveItem(RAW_GEDCOM_KEY);
+
+      const formatVersion = await safeGetItem(DATA_FORMAT_VERSION_KEY);
       const needsReformat = formatVersion !== CURRENT_DATA_FORMAT_VERSION;
 
       if (needsReformat) {
         console.log('[FamilyTree] Data format version mismatch, forcing fresh load from cloud');
-        await AsyncStorage.removeItem(STORAGE_KEY);
-        await AsyncStorage.removeItem(LAST_CLOUD_SYNC_KEY);
+        await safeRemoveItem(STORAGE_KEY);
+        await safeRemoveItem(LAST_CLOUD_SYNC_KEY);
       }
 
-      const stored = !needsReformat ? await AsyncStorage.getItem(STORAGE_KEY) : null;
+      let stored: string | null = null;
+      if (!needsReformat) {
+        stored = await safeGetItem(STORAGE_KEY);
+      }
+
       if (stored) {
         console.log('[FamilyTree] Found local cached data, loading instantly');
         const localData = deserializeFamilyTreeData(stored);
@@ -104,23 +150,23 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
           sample.forEach((p, i) => {
             console.log(`[FamilyTree] Cached sample ${i}:`, p.id, '|', p.name, '| given:', p.givenName, '| surname:', p.surname);
           });
+
+          const lastSync = await safeGetItem(LAST_CLOUD_SYNC_KEY);
+          const lastSyncTime = lastSync ? parseInt(lastSync, 10) : 0;
+          const timeSinceSync = Date.now() - lastSyncTime;
+
+          if (timeSinceSync > CLOUD_SYNC_INTERVAL) {
+            console.log('[FamilyTree] Cache stale, syncing from cloud in background');
+            void backgroundSyncFromCloud();
+          } else {
+            console.log('[FamilyTree] Cache fresh (synced', Math.round(timeSinceSync / 60000), 'min ago), skipping cloud sync');
+          }
+
+          return localData;
         }
-
-        const lastSync = await AsyncStorage.getItem(LAST_CLOUD_SYNC_KEY);
-        const lastSyncTime = lastSync ? parseInt(lastSync, 10) : 0;
-        const timeSinceSync = Date.now() - lastSyncTime;
-
-        if (timeSinceSync > CLOUD_SYNC_INTERVAL) {
-          console.log('[FamilyTree] Cache stale, syncing from cloud in background');
-          backgroundSyncFromCloud();
-        } else {
-          console.log('[FamilyTree] Cache fresh (synced', Math.round(timeSinceSync / 60000), 'min ago), skipping cloud sync');
-        }
-
-        return localData;
       }
 
-      console.log('[FamilyTree] No local cache, loading from cloud...');
+      console.log('[FamilyTree] No local cache or empty, loading from cloud...');
       setIsLoadingFromCloud(true);
       setCloudError(null);
       try {
@@ -128,9 +174,13 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
         if (cloudResult.data && cloudResult.data.individuals.size > 0) {
           console.log('[FamilyTree] Loaded from Supabase:', cloudResult.data.individuals.size, 'individuals');
           const serialized = serializeFamilyTreeData(cloudResult.data);
-          await safeSetItem(STORAGE_KEY, serialized);
-          await safeSetItem(LAST_CLOUD_SYNC_KEY, String(Date.now()));
-          await safeSetItem(DATA_FORMAT_VERSION_KEY, CURRENT_DATA_FORMAT_VERSION);
+          const cached = await safeSetItem(STORAGE_KEY, serialized);
+          if (cached) {
+            await safeSetItem(LAST_CLOUD_SYNC_KEY, String(Date.now()));
+            await safeSetItem(DATA_FORMAT_VERSION_KEY, CURRENT_DATA_FORMAT_VERSION);
+          } else {
+            console.warn('[FamilyTree] Could not cache data locally, will load from cloud each session');
+          }
           setIsLoadingFromCloud(false);
           return cloudResult.data;
         }
@@ -188,7 +238,7 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
 
     const autoLoad = async () => {
       try {
-        const loadedVersion = await AsyncStorage.getItem(AUTO_LOADED_VERSION_KEY);
+        const loadedVersion = await safeGetItem(AUTO_LOADED_VERSION_KEY);
         if (loadedVersion === DEFAULT_GEDCOM_VERSION) {
           console.log('[FamilyTree] Default already loaded (version match), skipping');
           return;
@@ -216,7 +266,6 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
         const parsed = parseGedcom(content);
         const serialized = serializeFamilyTreeData(parsed);
         await safeSetItem(STORAGE_KEY, serialized);
-        await safeSetItem(RAW_GEDCOM_KEY, content);
         await safeSetItem(AUTO_LOADED_KEY, 'true');
         await safeSetItem(AUTO_LOADED_VERSION_KEY, DEFAULT_GEDCOM_VERSION);
 
@@ -229,7 +278,7 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
       }
     };
 
-    autoLoad();
+    void autoLoad();
   }, [isReady, treeData]);
 
   const importMutation = useMutation({
@@ -250,9 +299,12 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
 
   const clearMutation = useMutation({
     mutationFn: async () => {
-      await AsyncStorage.removeItem(STORAGE_KEY);
-      await AsyncStorage.removeItem(RAW_GEDCOM_KEY);
-      await AsyncStorage.removeItem(AUTO_LOADED_KEY);
+      storageDisabled = false;
+      await safeRemoveItem(STORAGE_KEY);
+      await safeRemoveItem(RAW_GEDCOM_KEY);
+      await safeRemoveItem(AUTO_LOADED_KEY);
+      await safeRemoveItem(LAST_CLOUD_SYNC_KEY);
+      await safeRemoveItem(DATA_FORMAT_VERSION_KEY);
     },
     onSuccess: () => {
       setTreeData(null);
@@ -261,6 +313,7 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
 
   const importGedcom = useCallback(
     async (content: string) => {
+      storageDisabled = false;
       return importMutation.mutateAsync(content);
     },
     [importMutation]
@@ -288,7 +341,7 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
   const authenticateAdmin = useCallback(async (password: string): Promise<boolean> => {
     if (password === ADMIN_PASSWORD) {
       setIsAdmin(true);
-      await AsyncStorage.setItem(ADMIN_AUTHENTICATED_KEY, 'true');
+      await safeSetItem(ADMIN_AUTHENTICATED_KEY, 'true');
       console.log('[FamilyTree] Admin authenticated');
       const count = await getPendingEditCount();
       setPendingEditCount(count);
@@ -300,7 +353,7 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
   const logoutAdmin = useCallback(async () => {
     setIsAdmin(false);
     setPendingEditCount(0);
-    await AsyncStorage.removeItem(ADMIN_AUTHENTICATED_KEY);
+    await safeRemoveItem(ADMIN_AUTHENTICATED_KEY);
     console.log('[FamilyTree] Admin logged out');
   }, []);
 
@@ -310,18 +363,24 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
       const count = await getPendingEditCount();
       setPendingEditCount(count);
     };
-    loadCount();
+    void loadCount();
   }, [isAdmin]);
 
   const refreshFromCloud = useCallback(async (): Promise<{ success: boolean; error?: string }> => {
     setIsLoadingFromCloud(true);
     setCloudError(null);
+    storageDisabled = false;
     try {
+      await aggressiveCleanup();
+
       const result = await loadAllFromSupabase();
       if (result.data && result.data.individuals.size > 0) {
         const serialized = serializeFamilyTreeData(result.data);
-        await safeSetItem(STORAGE_KEY, serialized);
-        await safeSetItem(LAST_CLOUD_SYNC_KEY, String(Date.now()));
+        const cached = await safeSetItem(STORAGE_KEY, serialized);
+        if (cached) {
+          await safeSetItem(LAST_CLOUD_SYNC_KEY, String(Date.now()));
+          await safeSetItem(DATA_FORMAT_VERSION_KEY, CURRENT_DATA_FORMAT_VERSION);
+        }
         setTreeData(result.data);
         setIsLoadingFromCloud(false);
         console.log('[FamilyTree] Refreshed from Supabase');
@@ -757,8 +816,10 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
   const individualCount = treeData?.individuals.size ?? 0;
   const familyCount = treeData?.families.size ?? 0;
   const hasData = treeData !== null && individualCount > 0;
+  const isImporting = importMutation.isPending;
+  const importError = importMutation.error;
 
-  return {
+  return useMemo(() => ({
     treeData,
     isReady,
     isAutoLoading,
@@ -769,8 +830,8 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
     clearData,
     search,
     getPerson,
-    isImporting: importMutation.isPending,
-    importError: importMutation.error,
+    isImporting,
+    importError,
     isAdmin,
     authenticateAdmin,
     logoutAdmin,
@@ -790,5 +851,13 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
     isLoadingFromCloud,
     cloudError,
     refreshFromCloud,
-  };
+  }), [
+    treeData, isReady, isAutoLoading, hasData, individualCount, familyCount,
+    importGedcom, clearData, search, getPerson, isImporting, importError,
+    isAdmin, authenticateAdmin, logoutAdmin, pendingEditCount, submitEdit,
+    loadPendingEdits, reviewPendingEdit, refreshPendingCount, generateNewId,
+    addPerson, updatePerson, addChildToFamily, createFamilyAndAddChild,
+    addSpouse, linkExistingSpouses, updateFamily, isLoadingFromCloud,
+    cloudError, refreshFromCloud,
+  ]);
 });
