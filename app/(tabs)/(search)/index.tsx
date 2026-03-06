@@ -12,7 +12,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
-import { Search, TreePine, Upload, X, Users, AlertCircle, RefreshCw } from 'lucide-react-native';
+import { Search, TreePine, Upload, X, Users, AlertCircle } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import Colors from '@/constants/colors';
 import { useFamilyTree } from '@/contexts/FamilyTreeContext';
@@ -25,7 +25,7 @@ import PersonCard from '@/components/PersonCard';
 export default function SearchScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { hasData, search, individualCount, familyCount, isReady, isAutoLoading, treeData, loadFailed, forceReloadData, isLoadingFromCloud } = useFamilyTree();
+  const { hasData, search, individualCount, familyCount, isReady, isAutoLoading, treeData } = useFamilyTree();
   const { profile, hasClaimed } = useProfile();
   const { addEntry } = useSearchHistory();
   const [query, setQuery] = useState<string>('');
@@ -34,24 +34,8 @@ export default function SearchScreen() {
   const [isFocused, setIsFocused] = useState<boolean>(false);
   const inputRef = useRef<TextInput>(null);
 
-  const isLoading = !isReady || isAutoLoading || isLoadingFromCloud;
+  const isLoading = !isReady || isAutoLoading;
   const canSearch = hasData && !isLoading;
-  const [isRetrying, setIsRetrying] = useState<boolean>(false);
-
-  const handleForceReload = useCallback(async () => {
-    console.log('[SearchScreen] Force reload triggered');
-    setIsRetrying(true);
-    try {
-      const result = await forceReloadData();
-      if (!result.success) {
-        console.warn('[SearchScreen] Force reload failed:', result.error);
-      }
-    } catch (e) {
-      console.error('[SearchScreen] Force reload error:', e);
-    } finally {
-      setIsRetrying(false);
-    }
-  }, [forceReloadData]);
 
   const handleSearch = useCallback(
     (text: string) => {
@@ -172,43 +156,15 @@ export default function SearchScreen() {
     if (!hasData) {
       return (
         <View style={styles.center}>
-          <View style={[styles.iconCircle, loadFailed && styles.iconCircleError]}>
-            {loadFailed ? (
-              <AlertCircle size={36} color={Colors.danger} />
-            ) : (
-              <TreePine size={36} color={Colors.accent} />
-            )}
+          <View style={styles.iconCircle}>
+            <TreePine size={36} color={Colors.accent} />
           </View>
-          <Text style={styles.bigTitle}>
-            {loadFailed ? 'Failed to Load Data' : 'No Family Tree Loaded'}
-          </Text>
-          <Text style={styles.desc}>
-            {loadFailed
-              ? 'The family tree data could not be downloaded. This can happen if the app was interrupted during setup. Tap below to try again.'
-              : 'Import a GEDCOM file to start searching your ancestors.'}
-          </Text>
-          {loadFailed ? (
-            <TouchableOpacity
-              style={[styles.actionBtn, styles.retryBtn]}
-              onPress={handleForceReload}
-              activeOpacity={0.7}
-              disabled={isRetrying}
-            >
-              {isRetrying ? (
-                <ActivityIndicator size="small" color="#fff" />
-              ) : (
-                <RefreshCw size={16} color="#fff" />
-              )}
-              <Text style={styles.actionBtnText}>
-                {isRetrying ? 'Reloading...' : 'Reload from Server'}
-              </Text>
-            </TouchableOpacity>
-          ) : (
-            <TouchableOpacity style={styles.actionBtn} onPress={handleImport} activeOpacity={0.7}>
-              <Upload size={16} color="#fff" />
-              <Text style={styles.actionBtnText}>Import GEDCOM File</Text>
-            </TouchableOpacity>
-          )}
+          <Text style={styles.bigTitle}>No Family Tree Loaded</Text>
+          <Text style={styles.desc}>Import a GEDCOM file to start searching your ancestors.</Text>
+          <TouchableOpacity style={styles.actionBtn} onPress={handleImport} activeOpacity={0.7}>
+            <Upload size={16} color="#fff" />
+            <Text style={styles.actionBtnText}>Import GEDCOM File</Text>
+          </TouchableOpacity>
         </View>
       );
     }
@@ -317,19 +273,12 @@ export default function SearchScreen() {
         {!hasData && !isLoading && (
           <View style={styles.infoRow}>
             <AlertCircle size={14} color={Colors.danger} />
-            <Text style={styles.warningText}>{loadFailed ? 'Data load failed' : 'No family data loaded'}</Text>
+            <Text style={styles.warningText}>No family data loaded</Text>
             <View style={styles.spacer} />
-            {loadFailed ? (
-              <TouchableOpacity style={styles.miniBtn} onPress={handleForceReload} activeOpacity={0.7} disabled={isRetrying}>
-                <RefreshCw size={13} color={Colors.accent} />
-                <Text style={styles.miniBtnText}>{isRetrying ? 'Retrying...' : 'Retry'}</Text>
-              </TouchableOpacity>
-            ) : (
-              <TouchableOpacity style={styles.miniBtn} onPress={handleImport} activeOpacity={0.7}>
-                <Upload size={13} color={Colors.accent} />
-                <Text style={styles.miniBtnText}>Import</Text>
-              </TouchableOpacity>
-            )}
+            <TouchableOpacity style={styles.miniBtn} onPress={handleImport} activeOpacity={0.7}>
+              <Upload size={13} color={Colors.accent} />
+              <Text style={styles.miniBtnText}>Import</Text>
+            </TouchableOpacity>
           </View>
         )}
       </View>
@@ -483,12 +432,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center' as const,
     alignItems: 'center' as const,
     marginBottom: 20,
-  },
-  iconCircleError: {
-    backgroundColor: 'rgba(220, 53, 69, 0.1)',
-  },
-  retryBtn: {
-    backgroundColor: Colors.danger,
   },
   iconCircleSm: {
     width: 64,
