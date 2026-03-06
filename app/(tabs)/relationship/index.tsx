@@ -70,20 +70,33 @@ export default function RelationshipScreen() {
   const [expandedIndex, setExpandedIndex] = useState<number | null>(null);
   const [showResult, setShowResult] = useState<boolean>(false);
   const fadeAnim = useRef(new Animated.Value(1)).current;
+  const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
+    };
+  }, []);
 
   const handleSearch = useCallback(
     (text: string) => {
       setQuery(text);
+      if (searchTimerRef.current) {
+        clearTimeout(searchTimerRef.current);
+      }
       if (text.trim().length >= 2 && hasData) {
-        try {
-          const found = search(text);
-          console.log('[RelationshipScreen] Search for', text, 'found', found.length, 'results');
-          setResults(found.slice(0, 50));
-        } catch (e) {
-          console.error('[RelationshipScreen] Search error:', e);
-          setResults([]);
-        }
+        searchTimerRef.current = setTimeout(() => {
+          try {
+            const found = search(text);
+            console.log('[RelationshipScreen] Search for', text, 'found', found.length, 'results');
+            setResults(found.slice(0, 50));
+          } catch (e) {
+            console.error('[RelationshipScreen] Search error:', e);
+            setResults([]);
+          }
+        }, 250);
       } else {
+        searchTimerRef.current = null;
         setResults([]);
       }
     },

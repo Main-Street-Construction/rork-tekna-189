@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useMemo } from 'react';
+import React, { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import {
   View,
   Text,
@@ -35,16 +35,30 @@ export default function LinkSpousesScreen() {
   const [marriagePlace, setMarriagePlace] = useState<string>('');
   const [isSaving, setIsSaving] = useState<boolean>(false);
 
+  const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
+    };
+  }, []);
+
   const handleSearch = useCallback(
     (text: string) => {
       setSearchQuery(text);
+      if (searchTimerRef.current) {
+        clearTimeout(searchTimerRef.current);
+      }
       if (text.trim().length >= 2) {
-        const found = search(text);
-        const filtered = step === 'person2' && person1
-          ? found.filter((p) => p.id !== person1.id)
-          : found;
-        setSearchResults(filtered.slice(0, 30));
+        searchTimerRef.current = setTimeout(() => {
+          const found = search(text);
+          const filtered = step === 'person2' && person1
+            ? found.filter((p) => p.id !== person1.id)
+            : found;
+          setSearchResults(filtered.slice(0, 30));
+        }, 250);
       } else {
+        searchTimerRef.current = null;
         setSearchResults([]);
       }
     },

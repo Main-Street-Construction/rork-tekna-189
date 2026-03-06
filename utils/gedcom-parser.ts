@@ -580,6 +580,8 @@ function getSearchableNames(person: GedcomIndividual): {
   };
 }
 
+const MAX_SEARCH_RESULTS = 100;
+
 export function searchIndividuals(
   query: string,
   data: FamilyTreeData
@@ -591,18 +593,21 @@ export function searchIndividuals(
   const scored: { person: GedcomIndividual; score: number }[] = [];
   let checked = 0;
   let filtered = 0;
+  let lowestKeptScore = -1;
 
-  data.individuals.forEach((person) => {
+  const iter = data.individuals.values();
+  let next = iter.next();
+  while (!next.done) {
+    const person = next.value;
     checked++;
+
     if (!hasDisplayableName(person)) {
       filtered++;
-      return;
+      next = iter.next();
+      continue;
     }
 
     const { firstName, surname, fullGiven, fullName } = getSearchableNames(person);
-    const birthPlace = person.birthPlace?.toLowerCase() || '';
-    const deathPlace = person.deathPlace?.toLowerCase() || '';
-    const personId = person.id.toLowerCase();
 
     let score = -1;
 
@@ -633,30 +638,30 @@ export function searchIndividuals(
         score = 30;
       } else if (fullName.includes(lower)) {
         score = 25;
-      } else if (birthPlace.includes(lower) || deathPlace.includes(lower)) {
-        score = 10;
-      } else if (personId.includes(lower)) {
-        score = 5;
+      } else if (score < 0 && lowestKeptScore <= 10) {
+        const birthPlace = person.birthPlace?.toLowerCase() || '';
+        const deathPlace = person.deathPlace?.toLowerCase() || '';
+        if (birthPlace.includes(lower) || deathPlace.includes(lower)) {
+          score = 10;
+        } else {
+          const personId = person.id.toLowerCase();
+          if (personId.includes(lower)) {
+            score = 5;
+          }
+        }
       }
     }
 
     if (score >= 0) {
-      scored.push({ person, score });
+      if (scored.length < MAX_SEARCH_RESULTS || score > lowestKeptScore) {
+        scored.push({ person, score });
+      }
     }
-  });
+
+    next = iter.next();
+  }
 
   console.log('[Search] Query:', query, '| Checked:', checked, '| Filtered:', filtered, '| Matched:', scored.length);
-  if (__DEV__ && scored.length === 0 && checked > 0) {
-    const sample = Array.from(data.individuals.values()).slice(0, 3);
-    sample.forEach((p, i) => {
-      console.log(`[Search] Sample person ${i}:`, JSON.stringify({
-        id: p.id,
-        name: p.name,
-        givenName: p.givenName,
-        surname: p.surname,
-      }));
-    });
-  }
 
   scored.sort((a, b) => {
     if (b.score !== a.score) return b.score - a.score;
@@ -664,7 +669,8 @@ export function searchIndividuals(
       (a.person.givenName ?? '').localeCompare(b.person.givenName ?? '');
   });
 
-  return scored.map((s) => s.person);
+  const trimmed = scored.length > MAX_SEARCH_RESULTS ? scored.slice(0, MAX_SEARCH_RESULTS) : scored;
+  return trimmed.map((s) => s.person);
 }
 
 export function findRelationshipPath(

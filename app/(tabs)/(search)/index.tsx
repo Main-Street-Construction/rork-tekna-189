@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useRef, useMemo, useEffect } from 'react';
+import React, { useState, useCallback, useRef, useEffect } from 'react';
 import {
   View,
   Text,
@@ -33,26 +33,32 @@ export default function SearchScreen() {
   const [hasSearched, setHasSearched] = useState<boolean>(false);
   const [isFocused, setIsFocused] = useState<boolean>(false);
   const inputRef = useRef<TextInput>(null);
+  const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const isLoading = !isReady || isAutoLoading;
   const canSearch = hasData && !isLoading;
 
   const handleSearch = useCallback(
     (text: string) => {
-      console.log('[SearchScreen] handleSearch called with:', text);
       setQuery(text);
+      if (searchTimerRef.current) {
+        clearTimeout(searchTimerRef.current);
+      }
       if (text.trim().length >= 2 && canSearch) {
-        try {
-          const found = search(text);
-          console.log('[SearchScreen] Found results:', found.length);
-          setResults(found);
-          setHasSearched(true);
-        } catch (e) {
-          console.error('[SearchScreen] Search error:', e);
-          setResults([]);
-          setHasSearched(true);
-        }
+        searchTimerRef.current = setTimeout(() => {
+          try {
+            const found = search(text);
+            console.log('[SearchScreen] Found results:', found.length);
+            setResults(found);
+            setHasSearched(true);
+          } catch (e) {
+            console.error('[SearchScreen] Search error:', e);
+            setResults([]);
+            setHasSearched(true);
+          }
+        }, 250);
       } else {
+        searchTimerRef.current = null;
         setResults([]);
         if (text.trim().length === 0) {
           setHasSearched(false);
@@ -61,6 +67,12 @@ export default function SearchScreen() {
     },
     [search, canSearch]
   );
+
+  useEffect(() => {
+    return () => {
+      if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
+    };
+  }, []);
 
   const handleClear = useCallback(() => {
     console.log('[SearchScreen] Clearing search');
@@ -93,6 +105,7 @@ export default function SearchScreen() {
 
   const [relationshipMap, setRelationshipMap] = useState<Map<string, string>>(new Map());
   const relationshipTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const relationshipBatchRef = useRef<number>(0);
 
   useEffect(() => {
     if (relationshipTimerRef.current) {
@@ -106,10 +119,13 @@ export default function SearchScreen() {
 
     const myId = profile.rootPersonId;
     const currentResults = results;
+    const batchId = ++relationshipBatchRef.current;
 
     relationshipTimerRef.current = setTimeout(() => {
       const map = new Map<string, string>();
-      for (const person of currentResults.slice(0, 30)) {
+      const batch = currentResults.slice(0, 10);
+      for (const person of batch) {
+        if (batchId !== relationshipBatchRef.current) return;
         if (person.id === myId) {
           map.set(person.id, 'You');
           continue;
@@ -123,9 +139,11 @@ export default function SearchScreen() {
           console.log('[SearchScreen] Relationship calc error for', person.id, e);
         }
       }
-      console.log('[SearchScreen] Computed relationships for', map.size, 'of', currentResults.length, 'results');
-      setRelationshipMap(map);
-    }, 300);
+      if (batchId === relationshipBatchRef.current) {
+        console.log('[SearchScreen] Computed relationships for', map.size, 'of', batch.length, 'results');
+        setRelationshipMap(map);
+      }
+    }, 600);
 
     return () => {
       if (relationshipTimerRef.current) {
