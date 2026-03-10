@@ -25,7 +25,7 @@ import PersonCard from '@/components/PersonCard';
 export default function SearchScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { hasData, search, individualCount, familyCount, isReady, isAutoLoading, treeData } = useFamilyTree();
+  const { hasData, search, individualCount, familyCount, isReady, treeData } = useFamilyTree();
   const { profile, hasClaimed } = useProfile();
   const { addEntry } = useSearchHistory();
   const [query, setQuery] = useState<string>('');
@@ -35,7 +35,7 @@ export default function SearchScreen() {
   const inputRef = useRef<TextInput>(null);
   const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const isLoading = !isReady || isAutoLoading;
+  const isLoading = !isReady;
   const canSearch = hasData && !isLoading;
 
   const handleSearch = useCallback(
@@ -165,7 +165,7 @@ export default function SearchScreen() {
         <View style={styles.center}>
           <ActivityIndicator size="large" color={Colors.accent} />
           <Text style={styles.centerMsg}>
-            {isAutoLoading ? 'Loading family tree...' : 'Initializing...'}
+            Initializing...
           </Text>
         </View>
       );
