@@ -11,7 +11,7 @@ import {
   deserializeFamilyTreeData,
   searchIndividuals,
 } from '@/utils/gedcom-parser';
-import { DEFAULT_GEDCOM_URL, HAS_DEFAULT_GEDCOM, DEFAULT_GEDCOM_VERSION } from '@/data/default-gedcom';
+
 import {
   loadAllFromSupabase,
   updateIndividualInSupabase,
@@ -27,8 +27,7 @@ import { ADMIN_PASSWORD, ADMIN_AUTHENTICATED_KEY } from '@/constants/admin';
 
 const STORAGE_KEY = 'family_tree_data';
 const RAW_GEDCOM_KEY = 'raw_gedcom';
-const AUTO_LOADED_KEY = 'auto_loaded_default';
-const AUTO_LOADED_VERSION_KEY = 'auto_loaded_version';
+
 const DEVICE_ID_KEY = 'device_id';
 const LAST_CLOUD_SYNC_KEY = 'last_cloud_sync';
 const DATA_FORMAT_VERSION_KEY = 'data_format_version';
@@ -93,7 +92,7 @@ async function safeGetItem(key: string): Promise<string | null> {
 
 async function aggressiveCleanup(): Promise<void> {
   console.warn('[FamilyTree] Running aggressive storage cleanup...');
-  const keysToRemove = [STORAGE_KEY, RAW_GEDCOM_KEY, LAST_CLOUD_SYNC_KEY, DATA_FORMAT_VERSION_KEY, AUTO_LOADED_KEY, AUTO_LOADED_VERSION_KEY];
+  const keysToRemove = [STORAGE_KEY, RAW_GEDCOM_KEY, LAST_CLOUD_SYNC_KEY, DATA_FORMAT_VERSION_KEY];
   for (const k of keysToRemove) {
     await safeRemoveItem(k);
   }
@@ -154,12 +153,10 @@ async function getDeviceId(): Promise<string> {
 export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
   const [treeData, setTreeData] = useState<FamilyTreeData | null>(null);
   const [isReady, setIsReady] = useState<boolean>(false);
-  const [isAutoLoading, setIsAutoLoading] = useState<boolean>(false);
   const [isAdmin, setIsAdmin] = useState<boolean>(false);
   const [pendingEditCount, setPendingEditCount] = useState<number>(0);
   const [isLoadingFromCloud, setIsLoadingFromCloud] = useState<boolean>(false);
   const [cloudError, setCloudError] = useState<string | null>(null);
-  const autoLoadAttempted = useRef(false);
 
   const loadQuery = useQuery({
     queryKey: ['familyTree'],
@@ -274,58 +271,6 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
     }
   }, [loadQuery.data]);
 
-  useEffect(() => {
-    if (!isReady || autoLoadAttempted.current) return;
-    if (treeData !== null) return;
-    if (!HAS_DEFAULT_GEDCOM) return;
-
-    autoLoadAttempted.current = true;
-
-    const autoLoad = async () => {
-      try {
-        const loadedVersion = await safeGetItem(AUTO_LOADED_VERSION_KEY);
-        if (loadedVersion === DEFAULT_GEDCOM_VERSION) {
-          console.log('[FamilyTree] Default already loaded (version match), skipping');
-          return;
-        }
-
-        console.log('[FamilyTree] Auto-loading default GEDCOM from:', DEFAULT_GEDCOM_URL);
-        setIsAutoLoading(true);
-
-        const response = await fetch(DEFAULT_GEDCOM_URL);
-        if (!response.ok) {
-          console.warn('[FamilyTree] Failed to fetch default GEDCOM:', response.status);
-          setIsAutoLoading(false);
-          return;
-        }
-
-        const content = await response.text();
-        console.log('[FamilyTree] Fetched default GEDCOM, length:', content.length);
-
-        if (!content.includes('INDI') && !content.includes('HEAD')) {
-          console.warn('[FamilyTree] Fetched content does not look like valid GEDCOM');
-          setIsAutoLoading(false);
-          return;
-        }
-
-        const parsed = parseGedcom(content);
-        const serialized = serializeFamilyTreeData(parsed);
-        await safeSetItem(STORAGE_KEY, serialized);
-        await safeSetItem(AUTO_LOADED_KEY, 'true');
-        await safeSetItem(AUTO_LOADED_VERSION_KEY, DEFAULT_GEDCOM_VERSION);
-
-        setTreeData(parsed);
-        console.log('[FamilyTree] Default GEDCOM auto-loaded successfully');
-      } catch (e) {
-        console.error('[FamilyTree] Auto-load error:', e);
-      } finally {
-        setIsAutoLoading(false);
-      }
-    };
-
-    void autoLoad();
-  }, [isReady, treeData]);
-
   const importMutation = useMutation({
     mutationFn: async (gedcomContent: string) => {
       console.log('[FamilyTree] Importing GEDCOM data...');
@@ -347,7 +292,6 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
       storageDisabled = false;
       await safeRemoveItem(STORAGE_KEY);
       await safeRemoveItem(RAW_GEDCOM_KEY);
-      await safeRemoveItem(AUTO_LOADED_KEY);
       await safeRemoveItem(LAST_CLOUD_SYNC_KEY);
       await safeRemoveItem(DATA_FORMAT_VERSION_KEY);
     },
@@ -867,7 +811,6 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
   return useMemo(() => ({
     treeData,
     isReady,
-    isAutoLoading,
     hasData,
     individualCount,
     familyCount,
@@ -897,7 +840,7 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
     cloudError,
     refreshFromCloud,
   }), [
-    treeData, isReady, isAutoLoading, hasData, individualCount, familyCount,
+    treeData, isReady, hasData, individualCount, familyCount,
     importGedcom, clearData, search, getPerson, isImporting, importError,
     isAdmin, authenticateAdmin, logoutAdmin, pendingEditCount, submitEdit,
     loadPendingEdits, reviewPendingEdit, refreshPendingCount, generateNewId,
