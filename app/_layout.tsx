@@ -4,6 +4,7 @@ import * as SplashScreen from "expo-splash-screen";
 import React, { useEffect, useState, useCallback } from "react";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { AuthProvider } from "@/contexts/AuthContext";
 import { FamilyTreeProvider } from "@/contexts/FamilyTreeContext";
 import { ProfileProvider } from "@/contexts/ProfileContext";
 import { SearchHistoryProvider } from "@/contexts/SearchHistoryContext";
@@ -11,7 +12,7 @@ import OnboardingTutorial from "@/components/OnboardingTutorial";
 import Colors from "@/constants/colors";
 import { trpc, trpcClient } from "@/lib/trpc";
 
-SplashScreen.preventAutoHideAsync();
+void SplashScreen.preventAutoHideAsync();
 
 const queryClient = new QueryClient();
 
@@ -58,6 +59,14 @@ function RootLayoutNav() {
         name="edit-marriage/[familyId]"
         options={{ presentation: "modal", title: "Edit Marriage" }}
       />
+      <Stack.Screen
+        name="auth"
+        options={{ presentation: "modal", title: "Sign In" }}
+      />
+      <Stack.Screen
+        name="admin/index"
+        options={{ title: "Admin Panel" }}
+      />
     </Stack>
   );
 }
@@ -74,10 +83,10 @@ export default function RootLayout() {
         setShowOnboarding(true);
       }
       setOnboardingChecked(true);
-      SplashScreen.hideAsync();
+      void SplashScreen.hideAsync();
     }).catch(() => {
       setOnboardingChecked(true);
-      SplashScreen.hideAsync();
+      void SplashScreen.hideAsync();
     });
   }, []);
 
@@ -92,16 +101,18 @@ export default function RootLayout() {
     <trpc.Provider client={trpcClient} queryClient={queryClient}>
       <QueryClientProvider client={queryClient}>
         <GestureHandlerRootView style={{ flex: 1 }}>
-          <FamilyTreeProvider>
-            <ProfileProvider>
-              <SearchHistoryProvider>
-                <RootLayoutNav />
-                {showOnboarding && (
-                  <OnboardingTutorial onComplete={handleOnboardingComplete} />
-                )}
-              </SearchHistoryProvider>
-            </ProfileProvider>
-          </FamilyTreeProvider>
+          <AuthProvider>
+            <FamilyTreeProvider>
+              <ProfileProvider>
+                <SearchHistoryProvider>
+                  <RootLayoutNav />
+                  {showOnboarding && (
+                    <OnboardingTutorial onComplete={handleOnboardingComplete} />
+                  )}
+                </SearchHistoryProvider>
+              </ProfileProvider>
+            </FamilyTreeProvider>
+          </AuthProvider>
         </GestureHandlerRootView>
       </QueryClientProvider>
     </trpc.Provider>

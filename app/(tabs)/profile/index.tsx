@@ -31,14 +31,17 @@ import {
   ShieldCheck,
   ClipboardList,
   Lock,
+  LogIn,
   LogOut,
   Heart,
+  Users,
 } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import { submitFeedback } from '@/lib/supabase-db';
 import Colors from '@/constants/colors';
 import { useProfile } from '@/contexts/ProfileContext';
 import { useFamilyTree } from '@/contexts/FamilyTreeContext';
+import { useAuth } from '@/contexts/AuthContext';
 import { useRouter } from 'expo-router';
 import { GedcomIndividual } from '@/types/genealogy';
 
@@ -47,10 +50,11 @@ export default function ProfileScreen() {
   const { profile, hasProfile, hasClaimed, isClaimed, saveProfile, claimIdentity, resetClaim, isSaving } = useProfile();
   const {
     hasData, individualCount, familyCount, clearData, search, getPerson,
-    isAdmin, authenticateAdmin, logoutAdmin,
+    isAdmin,
     pendingEditCount, refreshPendingCount,
     isLoadingFromCloud, cloudError, refreshFromCloud,
   } = useFamilyTree();
+  const { isSignedIn, user, signOut, signOutPending, isEnabled } = useAuth();
 
   const [displayName, setDisplayName] = useState<string>(
     profile?.displayName ?? ''
@@ -62,9 +66,6 @@ export default function ProfileScreen() {
   const [showClaimSearch, setShowClaimSearch] = useState<boolean>(false);
   const [feedbackMessage, setFeedbackMessage] = useState<string>('');
   const [feedbackSent, setFeedbackSent] = useState<boolean>(false);
-  const [adminPassword, setAdminPassword] = useState<string>('');
-  const [showAdminLogin, setShowAdminLogin] = useState<boolean>(false);
-  const [adminLoginError, setAdminLoginError] = useState<boolean>(false);
   const feedbackMutation = useMutation({
     mutationFn: async (message: string) => {
       const result = await submitFeedback(message, profile?.displayName || undefined);
@@ -72,7 +73,7 @@ export default function ProfileScreen() {
       return result;
     },
     onSuccess: () => {
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       setFeedbackMessage('');
       setFeedbackSent(true);
       setTimeout(() => setFeedbackSent(false), 4000);
@@ -84,14 +85,14 @@ export default function ProfileScreen() {
 
   const refreshMutation = useMutation({
     mutationFn: async () => {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
       return refreshFromCloud();
     },
   });
 
   useEffect(() => {
     if (isAdmin) {
-      refreshPendingCount();
+      void refreshPendingCount();
     }
   }, [isAdmin, refreshPendingCount]);
 
@@ -100,7 +101,7 @@ export default function ProfileScreen() {
       Alert.alert('Name Required', 'Please enter your display name.');
       return;
     }
-    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     saveProfile({
       displayName: displayName.trim(),
       email: email.trim() || undefined,
@@ -118,7 +119,7 @@ export default function ProfileScreen() {
           text: 'Clear Data',
           style: 'destructive',
           onPress: () => {
-            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+            void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
             clearData();
           },
         },
@@ -155,7 +156,7 @@ export default function ProfileScreen() {
             text: 'Claim',
             style: 'default',
             onPress: async () => {
-              Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+              void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
               await claimIdentity(person.id, person.name);
               setShowClaimSearch(false);
               setClaimQuery('');
@@ -207,34 +208,19 @@ export default function ProfileScreen() {
     setShowClaimSearch(true);
   }, [isClaimed, profile?.rootPersonId, profile?.rootPersonName, getPerson, resetClaim]);
 
-  const handleAdminLogin = useCallback(async () => {
-    Keyboard.dismiss();
-    if (!adminPassword.trim()) return;
-
-    const success = await authenticateAdmin(adminPassword.trim());
-    if (success) {
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      setShowAdminLogin(false);
-      setAdminPassword('');
-      setAdminLoginError(false);
-    } else {
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-      setAdminLoginError(true);
-    }
-  }, [adminPassword, authenticateAdmin]);
-
-  const handleAdminLogout = useCallback(() => {
-    Alert.alert('Logout Admin', 'Are you sure you want to log out of admin?', [
+  const handleSignOut = useCallback(() => {
+    Alert.alert('Sign Out', 'Are you sure you want to sign out?', [
       { text: 'Cancel', style: 'cancel' },
       {
-        text: 'Logout',
+        text: 'Sign Out',
+        style: 'destructive',
         onPress: () => {
-          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-          logoutAdmin();
+          void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+          void signOut();
         },
       },
     ]);
-  }, [logoutAdmin]);
+  }, [signOut]);
 
   const handleRefresh = useCallback(() => {
     refreshMutation.mutate();
@@ -480,112 +466,101 @@ export default function ProfileScreen() {
           </View>
         )}
 
-        <View style={styles.adminSection}>
-          <Text style={styles.sectionTitle}>Admin Access</Text>
+        <View style={styles.accountSection}>
+          <Text style={styles.sectionTitle}>Account</Text>
 
-          {isAdmin ? (
-            <View style={styles.adminCard}>
-              <View style={styles.adminCardHeader}>
-                <View style={styles.adminActiveBadge}>
-                  <ShieldCheck size={16} color={Colors.white} />
+          {isSignedIn ? (
+            <View style={styles.accountCard}>
+              <View style={styles.accountHeader}>
+                <View style={[styles.accountIcon, isAdmin && styles.accountIconAdmin]}>
+                  {isAdmin ? (
+                    <ShieldCheck size={18} color={Colors.white} />
+                  ) : (
+                    <Mail size={18} color={Colors.white} />
+                  )}
                 </View>
-                <View style={styles.adminHeaderInfo}>
-                  <Text style={styles.adminActiveTitle}>Admin Mode Active</Text>
-                  <Text style={styles.adminActiveDesc}>
-                    Your edits are applied directly to the database
-                  </Text>
+                <View style={styles.accountInfo}>
+                  <Text style={styles.accountEmail} numberOfLines={1}>{user?.email ?? 'Signed In'}</Text>
+                  <View style={styles.accountBadges}>
+                    {isAdmin && (
+                      <View style={styles.roleBadge}>
+                        <Text style={styles.roleBadgeText}>Admin</Text>
+                      </View>
+                    )}
+                    <View style={[styles.statusBadge, isEnabled ? styles.statusEnabled : styles.statusDisabled]}>
+                      <Text style={[styles.statusBadgeText, isEnabled ? styles.statusTextEnabled : styles.statusTextDisabled]}>
+                        {isEnabled ? 'Enabled' : 'Pending Approval'}
+                      </Text>
+                    </View>
+                  </View>
                 </View>
               </View>
 
-              <TouchableOpacity
-                style={styles.pendingEditsBtn}
-                onPress={() => router.push('/pending-edits')}
-                activeOpacity={0.7}
-              >
-                <ClipboardList size={16} color={Colors.accent} />
-                <Text style={styles.pendingEditsBtnText}>Review Pending Edits</Text>
-                {pendingEditCount > 0 && (
-                  <View style={styles.pendingBadge}>
-                    <Text style={styles.pendingBadgeText}>{pendingEditCount}</Text>
-                  </View>
-                )}
-                <ChevronRight size={14} color={Colors.textLight} />
-              </TouchableOpacity>
+              {isAdmin && (
+                <>
+                  <TouchableOpacity
+                    style={styles.pendingEditsBtn}
+                    onPress={() => router.push('/pending-edits')}
+                    activeOpacity={0.7}
+                  >
+                    <ClipboardList size={16} color={Colors.accent} />
+                    <Text style={styles.pendingEditsBtnText}>Review Pending Edits</Text>
+                    {pendingEditCount > 0 && (
+                      <View style={styles.pendingBadge}>
+                        <Text style={styles.pendingBadgeText}>{pendingEditCount}</Text>
+                      </View>
+                    )}
+                    <ChevronRight size={14} color={Colors.textLight} />
+                  </TouchableOpacity>
 
-              <TouchableOpacity
-                style={styles.pendingEditsBtn}
-                onPress={() => router.push('/link-spouses')}
-                activeOpacity={0.7}
-              >
-                <Heart size={16} color={Colors.accent} />
-                <Text style={styles.pendingEditsBtnText}>Link Existing Spouses</Text>
-                <ChevronRight size={14} color={Colors.textLight} />
-              </TouchableOpacity>
+                  <TouchableOpacity
+                    style={styles.pendingEditsBtn}
+                    onPress={() => router.push('/link-spouses')}
+                    activeOpacity={0.7}
+                  >
+                    <Heart size={16} color={Colors.accent} />
+                    <Text style={styles.pendingEditsBtnText}>Link Existing Spouses</Text>
+                    <ChevronRight size={14} color={Colors.textLight} />
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={styles.pendingEditsBtn}
+                    onPress={() => router.push('/admin')}
+                    activeOpacity={0.7}
+                  >
+                    <Users size={16} color={Colors.accent} />
+                    <Text style={styles.pendingEditsBtnText}>Manage Users</Text>
+                    <ChevronRight size={14} color={Colors.textLight} />
+                  </TouchableOpacity>
+                </>
+              )}
 
               <TouchableOpacity
                 style={styles.logoutBtn}
-                onPress={handleAdminLogout}
+                onPress={handleSignOut}
+                disabled={signOutPending}
                 activeOpacity={0.7}
               >
-                <LogOut size={16} color={Colors.danger} />
-                <Text style={styles.logoutBtnText}>Logout Admin</Text>
+                {signOutPending ? (
+                  <ActivityIndicator size="small" color={Colors.danger} />
+                ) : (
+                  <LogOut size={16} color={Colors.danger} />
+                )}
+                <Text style={styles.logoutBtnText}>Sign Out</Text>
               </TouchableOpacity>
             </View>
-          ) : showAdminLogin ? (
-            <View style={styles.adminLoginCard}>
-              <View style={styles.adminLoginHeader}>
-                <Lock size={16} color={Colors.accent} />
-                <Text style={styles.adminLoginTitle}>Enter Admin Password</Text>
-              </View>
-              <TextInput
-                style={[styles.adminPasswordInput, adminLoginError && styles.adminPasswordInputError]}
-                placeholder="Password"
-                placeholderTextColor={Colors.textLight}
-                value={adminPassword}
-                onChangeText={(t) => {
-                  setAdminPassword(t);
-                  setAdminLoginError(false);
-                }}
-                secureTextEntry
-                autoFocus
-                testID="admin-password-input"
-              />
-              {adminLoginError && (
-                <Text style={styles.adminErrorText}>Incorrect password</Text>
-              )}
-              <View style={styles.adminLoginActions}>
-                <TouchableOpacity
-                  style={styles.adminCancelBtn}
-                  onPress={() => {
-                    setShowAdminLogin(false);
-                    setAdminPassword('');
-                    setAdminLoginError(false);
-                  }}
-                >
-                  <Text style={styles.adminCancelText}>Cancel</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.adminSubmitBtn, !adminPassword.trim() && { opacity: 0.5 }]}
-                  onPress={handleAdminLogin}
-                  disabled={!adminPassword.trim()}
-                >
-                  <ShieldCheck size={16} color={Colors.white} />
-                  <Text style={styles.adminSubmitText}>Login</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
           ) : (
-            <View style={styles.adminPromptCard}>
-              <Text style={styles.adminPromptText}>
-                Admins can approve or reject edits made by other users. Non-admin edits are submitted for review.
+            <View style={styles.signInPromptCard}>
+              <Text style={styles.signInPromptText}>
+                Sign in to access cloud features, submit edits, and manage your account.
               </Text>
               <TouchableOpacity
-                style={styles.adminLoginBtn}
-                onPress={() => setShowAdminLogin(true)}
+                style={styles.signInBtn}
+                onPress={() => router.push('/auth')}
                 activeOpacity={0.7}
               >
-                <Lock size={16} color={Colors.white} />
-                <Text style={styles.adminLoginBtnText}>Admin Login</Text>
+                <LogIn size={16} color={Colors.white} />
+                <Text style={styles.signInBtnText}>Sign In</Text>
               </TouchableOpacity>
             </View>
           )}
@@ -1030,10 +1005,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: 32,
     lineHeight: 18,
   },
-  adminSection: {
+  accountSection: {
     paddingTop: 24,
   },
-  adminCard: {
+  accountCard: {
     backgroundColor: Colors.card,
     marginHorizontal: 16,
     marginTop: 8,
@@ -1042,32 +1017,67 @@ const styles = StyleSheet.create({
     borderColor: Colors.cardBorder,
     overflow: 'hidden',
   },
-  adminCardHeader: {
+  accountHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     padding: 16,
     gap: 12,
   },
-  adminActiveBadge: {
+  accountIcon: {
     width: 40,
     height: 40,
     borderRadius: 20,
-    backgroundColor: Colors.success,
+    backgroundColor: Colors.primary,
     justifyContent: 'center',
     alignItems: 'center',
   },
-  adminHeaderInfo: {
+  accountIconAdmin: {
+    backgroundColor: Colors.success,
+  },
+  accountInfo: {
     flex: 1,
   },
-  adminActiveTitle: {
-    fontSize: 16,
+  accountEmail: {
+    fontSize: 15,
     fontWeight: '600' as const,
     color: Colors.text,
   },
-  adminActiveDesc: {
-    fontSize: 12,
-    color: Colors.textSecondary,
-    marginTop: 2,
+  accountBadges: {
+    flexDirection: 'row',
+    gap: 6,
+    marginTop: 4,
+  },
+  roleBadge: {
+    backgroundColor: Colors.accent,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 8,
+  },
+  roleBadgeText: {
+    fontSize: 10,
+    fontWeight: '700' as const,
+    color: Colors.white,
+  },
+  statusBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 8,
+  },
+  statusEnabled: {
+    backgroundColor: 'rgba(74, 124, 89, 0.12)',
+  },
+  statusDisabled: {
+    backgroundColor: 'rgba(196, 92, 74, 0.1)',
+  },
+  statusBadgeText: {
+    fontSize: 10,
+    fontWeight: '600' as const,
+  },
+  statusTextEnabled: {
+    color: Colors.success,
+  },
+  statusTextDisabled: {
+    color: Colors.danger,
   },
   pendingEditsBtn: {
     flexDirection: 'row',
@@ -1112,7 +1122,7 @@ const styles = StyleSheet.create({
     fontWeight: '500' as const,
     color: Colors.danger,
   },
-  adminPromptCard: {
+  signInPromptCard: {
     backgroundColor: Colors.card,
     marginHorizontal: 16,
     marginTop: 8,
@@ -1121,13 +1131,13 @@ const styles = StyleSheet.create({
     borderColor: Colors.cardBorder,
     padding: 16,
   },
-  adminPromptText: {
+  signInPromptText: {
     fontSize: 13,
     color: Colors.textSecondary,
     lineHeight: 19,
     marginBottom: 14,
   },
-  adminLoginBtn: {
+  signInBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
@@ -1136,84 +1146,10 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     gap: 8,
   },
-  adminLoginBtnText: {
+  signInBtnText: {
     color: Colors.white,
     fontSize: 15,
     fontWeight: '600' as const,
-  },
-  adminLoginCard: {
-    backgroundColor: Colors.card,
-    marginHorizontal: 16,
-    marginTop: 8,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: Colors.cardBorder,
-    padding: 16,
-  },
-  adminLoginHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    marginBottom: 14,
-  },
-  adminLoginTitle: {
-    fontSize: 15,
-    fontWeight: '600' as const,
-    color: Colors.text,
-  },
-  adminPasswordInput: {
-    backgroundColor: Colors.background,
-    borderRadius: 10,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    fontSize: 16,
-    color: Colors.text,
-    borderWidth: 1,
-    borderColor: Colors.cardBorder,
-  },
-  adminPasswordInputError: {
-    borderColor: Colors.danger,
-  },
-  adminErrorText: {
-    fontSize: 12,
-    color: Colors.danger,
-    marginTop: 6,
-    fontWeight: '500' as const,
-  },
-  adminLoginActions: {
-    flexDirection: 'row',
-    gap: 10,
-    marginTop: 14,
-  },
-  adminCancelBtn: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 12,
-    borderRadius: 10,
-    backgroundColor: Colors.background,
-    borderWidth: 1,
-    borderColor: Colors.cardBorder,
-  },
-  adminCancelText: {
-    fontSize: 14,
-    fontWeight: '600' as const,
-    color: Colors.textSecondary,
-  },
-  adminSubmitBtn: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 12,
-    borderRadius: 10,
-    backgroundColor: Colors.primary,
-    gap: 6,
-  },
-  adminSubmitText: {
-    fontSize: 14,
-    fontWeight: '600' as const,
-    color: Colors.white,
   },
   databaseSection: {
     paddingTop: 24,

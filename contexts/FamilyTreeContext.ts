@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { File, Directory, Paths } from 'expo-file-system';
@@ -23,12 +23,11 @@ import {
   getPendingEditCount,
 } from '@/lib/supabase-db';
 import { PendingEdit } from '@/types/genealogy';
-import { ADMIN_PASSWORD, ADMIN_AUTHENTICATED_KEY } from '@/constants/admin';
+import { useAuth } from '@/contexts/AuthContext';
 
 const STORAGE_KEY = 'family_tree_data';
 const RAW_GEDCOM_KEY = 'raw_gedcom';
 
-const DEVICE_ID_KEY = 'device_id';
 const LAST_CLOUD_SYNC_KEY = 'last_cloud_sync';
 const DATA_FORMAT_VERSION_KEY = 'data_format_version';
 const CURRENT_DATA_FORMAT_VERSION = '6';
@@ -141,19 +140,10 @@ async function safeGetItemWithFileCache(key: string): Promise<string | null> {
   return readFileCache(key);
 }
 
-async function getDeviceId(): Promise<string> {
-  let deviceId = await safeGetItem(DEVICE_ID_KEY);
-  if (!deviceId) {
-    deviceId = 'device_' + Date.now() + '_' + Math.random().toString(36).slice(2, 10);
-    await safeSetItem(DEVICE_ID_KEY, deviceId);
-  }
-  return deviceId;
-}
-
 export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
+  const { isAdmin, user } = useAuth();
   const [treeData, setTreeData] = useState<FamilyTreeData | null>(null);
   const [isReady, setIsReady] = useState<boolean>(false);
-  const [isAdmin, setIsAdmin] = useState<boolean>(false);
   const [pendingEditCount, setPendingEditCount] = useState<number>(0);
   const [isLoadingFromCloud, setIsLoadingFromCloud] = useState<boolean>(false);
   const [cloudError, setCloudError] = useState<string | null>(null);
@@ -162,11 +152,6 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
     queryKey: ['familyTree'],
     queryFn: async () => {
       console.log('[FamilyTree] Loading data...');
-
-      const adminStored = await safeGetItem(ADMIN_AUTHENTICATED_KEY);
-      if (adminStored === 'true') {
-        setIsAdmin(true);
-      }
 
       await safeRemoveItem(RAW_GEDCOM_KEY);
 
@@ -327,25 +312,6 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
     [treeData]
   );
 
-  const authenticateAdmin = useCallback(async (password: string): Promise<boolean> => {
-    if (password === ADMIN_PASSWORD) {
-      setIsAdmin(true);
-      await safeSetItem(ADMIN_AUTHENTICATED_KEY, 'true');
-      console.log('[FamilyTree] Admin authenticated');
-      const count = await getPendingEditCount();
-      setPendingEditCount(count);
-      return true;
-    }
-    return false;
-  }, []);
-
-  const logoutAdmin = useCallback(async () => {
-    setIsAdmin(false);
-    setPendingEditCount(0);
-    await safeRemoveItem(ADMIN_AUTHENTICATED_KEY);
-    console.log('[FamilyTree] Admin logged out');
-  }, []);
-
   useEffect(() => {
     if (!isAdmin) return;
     const loadCount = async () => {
@@ -424,10 +390,10 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
       targetId: string,
       data: Record<string, unknown>
     ): Promise<{ success: boolean; error?: string }> => {
-      const deviceId = await getDeviceId();
-      return submitPendingEdit(editType, targetId, data, deviceId);
+      const submitterId = user?.id ?? 'anonymous';
+      return submitPendingEdit(editType, targetId, data, submitterId);
     },
-    []
+    [user?.id]
   );
 
   const addPerson = useCallback(
@@ -821,8 +787,6 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
     isImporting,
     importError,
     isAdmin,
-    authenticateAdmin,
-    logoutAdmin,
     pendingEditCount,
     submitEdit,
     loadPendingEdits,
@@ -842,7 +806,7 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
   }), [
     treeData, isReady, hasData, individualCount, familyCount,
     importGedcom, clearData, search, getPerson, isImporting, importError,
-    isAdmin, authenticateAdmin, logoutAdmin, pendingEditCount, submitEdit,
+    isAdmin, pendingEditCount, submitEdit,
     loadPendingEdits, reviewPendingEdit, refreshPendingCount, generateNewId,
     addPerson, updatePerson, addChildToFamily, createFamilyAndAddChild,
     addSpouse, linkExistingSpouses, updateFamily, isLoadingFromCloud,
