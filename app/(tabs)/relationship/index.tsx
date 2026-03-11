@@ -37,6 +37,7 @@ import Colors from '@/constants/colors';
 import { useFamilyTree } from '@/contexts/FamilyTreeContext';
 import { useProfile } from '@/contexts/ProfileContext';
 import { useSearchHistory } from '@/contexts/SearchHistoryContext';
+import { useAuth } from '@/contexts/AuthContext';
 import { GedcomIndividual, FamilyTreeData } from '@/types/genealogy';
 import {
   calculateAllRelationships,
@@ -45,6 +46,7 @@ import {
 } from '@/utils/relationship';
 import PersonCard from '@/components/PersonCard';
 import RelationshipPathView from '@/components/RelationshipPathView';
+import AuthGate from '@/components/AuthGate';
 
 if (
   Platform.OS === 'android' &&
@@ -54,6 +56,16 @@ if (
 }
 
 export default function RelationshipScreen() {
+  const { isSignedIn, isEnabled } = useAuth();
+
+  if (!isSignedIn || !isEnabled) {
+    return <AuthGate><View /></AuthGate>;
+  }
+
+  return <RelationshipScreenContent />;
+}
+
+function RelationshipScreenContent() {
   const router = useRouter();
   const { hasData, search, treeData, isReady, getPerson } = useFamilyTree();
   const { profile, hasClaimed } = useProfile();

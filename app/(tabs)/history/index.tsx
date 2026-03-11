@@ -12,8 +12,10 @@ import { Clock, Search, Trash2, ArrowRight, User, GitFork } from 'lucide-react-n
 import * as Haptics from 'expo-haptics';
 import Colors from '@/constants/colors';
 import { useSearchHistory } from '@/contexts/SearchHistoryContext';
+import { useAuth } from '@/contexts/AuthContext';
 import { SearchHistoryItem } from '@/types/genealogy';
 import EmptyState from '@/components/EmptyState';
+import AuthGate from '@/components/AuthGate';
 
 function formatTimeAgo(timestamp: number): string {
   const diff = Date.now() - timestamp;
@@ -29,6 +31,16 @@ function formatTimeAgo(timestamp: number): string {
 }
 
 export default function HistoryScreen() {
+  const { isSignedIn, isEnabled } = useAuth();
+
+  if (!isSignedIn || !isEnabled) {
+    return <AuthGate><View style={styles.container} /></AuthGate>;
+  }
+
+  return <HistoryScreenContent />;
+}
+
+function HistoryScreenContent() {
   const router = useRouter();
   const { history, clearHistory } = useSearchHistory();
 
@@ -42,7 +54,7 @@ export default function HistoryScreen() {
           text: 'Clear',
           style: 'destructive',
           onPress: () => {
-            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+            void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
             clearHistory();
           },
         },
@@ -52,7 +64,7 @@ export default function HistoryScreen() {
 
   const handleItemPress = useCallback(
     (item: SearchHistoryItem) => {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
       if (item.type === 'relationship' && item.person1Id) {
         router.push(`/person/${item.person1Id}`);
       } else if (item.selectedPersonId) {

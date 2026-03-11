@@ -12,6 +12,62 @@ export interface UserProfileRow {
   created_at: string;
 }
 
+const ADMIN_EMAIL = 'charlemartel6@gmail.com';
+
+async function ensureProfileExists(userId: string, email: string | undefined): Promise<UserProfileRow | null> {
+  console.log('[Auth] Ensuring profile exists for', userId, email);
+  const { data: existing, error: fetchErr } = await supabase
+    .from('profiles')
+    .select('id, email, is_enabled, is_admin, created_at')
+    .eq('id', userId)
+    .single();
+
+  if (existing && !fetchErr) {
+    console.log('[Auth] Profile already exists:', JSON.stringify(existing));
+    if (email === ADMIN_EMAIL && (!existing.is_admin || !existing.is_enabled)) {
+      console.log('[Auth] Auto-promoting admin email:', email);
+      const { data: updated, error: updateErr } = await supabase
+        .from('profiles')
+        .update({ is_admin: true, is_enabled: true })
+        .eq('id', userId)
+        .select('id, email, is_enabled, is_admin, created_at')
+        .single();
+      if (updated && !updateErr) return updated as UserProfileRow;
+      console.warn('[Auth] Admin auto-promote failed:', updateErr?.message);
+    }
+    return existing as UserProfileRow;
+  }
+
+  console.log('[Auth] Profile not found, creating fallback profile for', userId);
+  const isAdminUser = email === ADMIN_EMAIL;
+  const { data: created, error: insertErr } = await supabase
+    .from('profiles')
+    .insert({
+      id: userId,
+      email: email ?? null,
+      is_enabled: isAdminUser,
+      is_admin: isAdminUser,
+    })
+    .select('id, email, is_enabled, is_admin, created_at')
+    .single();
+
+  if (insertErr) {
+    console.warn('[Auth] Fallback profile insert failed:', insertErr.message);
+    if (insertErr.message.includes('duplicate') || insertErr.code === '23505') {
+      const { data: retry } = await supabase
+        .from('profiles')
+        .select('id, email, is_enabled, is_admin, created_at')
+        .eq('id', userId)
+        .single();
+      return (retry as UserProfileRow) ?? null;
+    }
+    return null;
+  }
+
+  console.log('[Auth] Fallback profile created:', JSON.stringify(created));
+  return created as UserProfileRow;
+}
+
 export const [AuthProvider, useAuth] = createContextHook(() => {
   const queryClient = useQueryClient();
   const [session, setSession] = useState<Session | null>(null);
@@ -49,21 +105,12 @@ export const [AuthProvider, useAuth] = createContextHook(() => {
     queryKey: ['authProfile', session?.user?.id],
     queryFn: async (): Promise<UserProfileRow | null> => {
       if (!session?.user?.id) return null;
-      console.log('[Auth] Fetching profile row for', session.user.id);
-      const { data, error } = await supabase
-        .from('profiles')
-        .select('id, email, is_enabled, is_admin, created_at')
-        .eq('id', session.user.id)
-        .single();
-
-      if (error) {
-        console.warn('[Auth] Profile fetch error:', error.message);
-        return null;
-      }
-      console.log('[Auth] Profile loaded:', JSON.stringify(data));
-      return data as UserProfileRow;
+      console.log('[Auth] Fetching profile for', session.user.id, session.user.email);
+      return ensureProfileExists(session.user.id, session.user.email ?? undefined);
     },
     enabled: !!session?.user?.id,
+    retry: 2,
+    retryDelay: 1000,
   });
 
   useEffect(() => {

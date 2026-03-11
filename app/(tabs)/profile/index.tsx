@@ -352,7 +352,7 @@ export default function ProfileScreen() {
           </View>
         )}
 
-        {hasData && (
+        {isSignedIn && isEnabled && hasData && (
           <View style={styles.identitySection}>
             <Text style={styles.sectionTitle}>Your Identity</Text>
             {hasClaimed ? (
@@ -566,7 +566,7 @@ export default function ProfileScreen() {
           )}
         </View>
 
-        {hasData && (
+        {isSignedIn && isEnabled && hasData && (
           <View style={styles.databaseSection}>
             <Text style={styles.sectionTitle}>Database</Text>
 
@@ -610,7 +610,7 @@ export default function ProfileScreen() {
           </View>
         )}
 
-        <View style={styles.feedbackSection}>
+        {isSignedIn && <View style={styles.feedbackSection}>
           <Text style={styles.sectionTitle}>Feedback</Text>
           <Text style={styles.feedbackDesc}>Have a suggestion or found a bug? Let us know!</Text>
           {feedbackSent && (
@@ -644,41 +644,43 @@ export default function ProfileScreen() {
               <Text style={styles.feedbackSendText}>{feedbackMutation.isPending ? 'Sending...' : 'Send Feedback'}</Text>
             </TouchableOpacity>
           </View>
-        </View>
+        </View>}
 
-        <View style={styles.dataSection}>
-          <Text style={styles.sectionTitle}>Family Data</Text>
+        {isSignedIn && isEnabled && (
+          <View style={styles.dataSection}>
+            <Text style={styles.sectionTitle}>Family Data</Text>
 
-          {hasData ? (
-            <View style={styles.dataCard}>
-              <TouchableOpacity
-                style={styles.dataAction}
-                onPress={handleImport}
-              >
-                <Database size={16} color={Colors.accent} />
-                <Text style={styles.dataActionText}>Import New Data</Text>
-                <ChevronRight size={16} color={Colors.textLight} />
+            {hasData ? (
+              <View style={styles.dataCard}>
+                <TouchableOpacity
+                  style={styles.dataAction}
+                  onPress={handleImport}
+                >
+                  <Database size={16} color={Colors.accent} />
+                  <Text style={styles.dataActionText}>Import New Data</Text>
+                  <ChevronRight size={16} color={Colors.textLight} />
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={styles.dangerAction}
+                  onPress={handleClearData}
+                >
+                  <Trash2 size={16} color={Colors.danger} />
+                  <Text style={styles.dangerActionText}>Clear Local Cache</Text>
+                  <ChevronRight size={16} color={Colors.textLight} />
+                </TouchableOpacity>
+              </View>
+            ) : (
+              <TouchableOpacity style={styles.importCard} onPress={handleImport}>
+                <TreePine size={28} color={Colors.accent} />
+                <Text style={styles.importTitle}>Import GEDCOM File</Text>
+                <Text style={styles.importDesc}>
+                  Load your family tree data to start exploring
+                </Text>
               </TouchableOpacity>
-
-              <TouchableOpacity
-                style={styles.dangerAction}
-                onPress={handleClearData}
-              >
-                <Trash2 size={16} color={Colors.danger} />
-                <Text style={styles.dangerActionText}>Clear Local Cache</Text>
-                <ChevronRight size={16} color={Colors.textLight} />
-              </TouchableOpacity>
-            </View>
-          ) : (
-            <TouchableOpacity style={styles.importCard} onPress={handleImport}>
-              <TreePine size={28} color={Colors.accent} />
-              <Text style={styles.importTitle}>Import GEDCOM File</Text>
-              <Text style={styles.importDesc}>
-                Load your family tree data to start exploring
-              </Text>
-            </TouchableOpacity>
-          )}
-        </View>
+            )}
+          </View>
+        )}
       </ScrollView>
     </KeyboardAvoidingView>
   );

@@ -141,16 +141,22 @@ async function safeGetItemWithFileCache(key: string): Promise<string | null> {
 }
 
 export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
-  const { isAdmin, user } = useAuth();
+  const { isAdmin, user, isSignedIn, isEnabled } = useAuth();
   const [treeData, setTreeData] = useState<FamilyTreeData | null>(null);
   const [isReady, setIsReady] = useState<boolean>(false);
   const [pendingEditCount, setPendingEditCount] = useState<number>(0);
   const [isLoadingFromCloud, setIsLoadingFromCloud] = useState<boolean>(false);
   const [cloudError, setCloudError] = useState<string | null>(null);
 
+  const canLoadData = isSignedIn && isEnabled;
+
   const loadQuery = useQuery({
-    queryKey: ['familyTree'],
+    queryKey: ['familyTree', canLoadData],
     queryFn: async () => {
+      if (!canLoadData) {
+        console.log('[FamilyTree] Not loading — user not signed in or not enabled');
+        return null;
+      }
       console.log('[FamilyTree] Loading data...');
 
       await safeRemoveItem(RAW_GEDCOM_KEY);
@@ -224,6 +230,7 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
       console.log('[FamilyTree] No data found');
       return null;
     },
+    enabled: canLoadData,
   });
 
   const backgroundSyncFromCloud = useCallback(async () => {

@@ -18,11 +18,23 @@ import Colors from '@/constants/colors';
 import { useFamilyTree } from '@/contexts/FamilyTreeContext';
 import { useProfile } from '@/contexts/ProfileContext';
 import { useSearchHistory } from '@/contexts/SearchHistoryContext';
+import { useAuth } from '@/contexts/AuthContext';
 import { GedcomIndividual } from '@/types/genealogy';
 import { calculateRelationship } from '@/utils/relationship';
 import PersonCard from '@/components/PersonCard';
+import AuthGate from '@/components/AuthGate';
 
 export default function SearchScreen() {
+  const { isSignedIn, isEnabled } = useAuth();
+
+  if (!isSignedIn || !isEnabled) {
+    return <AuthGate><View /></AuthGate>;
+  }
+
+  return <SearchScreenContent />;
+}
+
+function SearchScreenContent() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { hasData, search, individualCount, familyCount, isReady, treeData } = useFamilyTree();
