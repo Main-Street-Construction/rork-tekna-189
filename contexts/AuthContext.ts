@@ -10,11 +10,9 @@ export interface UserProfileRow {
   is_admin: boolean;
 }
 
-const ADMIN_EMAIL = 'charlemartel6@gmail.com';
-
 const PROFILE_COLUMNS = 'id, is_enabled, is_admin';
 
-async function ensureProfileExists(userId: string, email: string | undefined): Promise<UserProfileRow | null> {
+async function ensureProfileExists(userId: string): Promise<UserProfileRow | null> {
   try {
     const { data: existing, error: fetchErr } = await supabase
       .from('profiles')
@@ -23,32 +21,20 @@ async function ensureProfileExists(userId: string, email: string | undefined): P
       .single();
 
     if (existing && !fetchErr) {
-      if (email === ADMIN_EMAIL && (!existing.is_admin || !existing.is_enabled)) {
-        const { data: updated, error: updateErr } = await supabase
-          .from('profiles')
-          .update({ is_admin: true, is_enabled: true })
-          .eq('id', userId)
-          .select(PROFILE_COLUMNS)
-          .single();
-        if (updated && !updateErr) return updated as UserProfileRow;
-      }
       return existing as UserProfileRow;
     }
 
-
-    const isAdminUser = email === ADMIN_EMAIL;
     const { data: created, error: insertErr } = await supabase
       .from('profiles')
       .insert({
         id: userId,
-        is_enabled: isAdminUser,
-        is_admin: isAdminUser,
+        is_enabled: false,
+        is_admin: false,
       })
       .select(PROFILE_COLUMNS)
       .single();
 
     if (insertErr) {
-
       if (insertErr.message.includes('duplicate') || insertErr.code === '23505') {
         const { data: retry } = await supabase
           .from('profiles')
@@ -59,7 +45,6 @@ async function ensureProfileExists(userId: string, email: string | undefined): P
       }
       return { id: userId, is_enabled: false, is_admin: false };
     }
-
 
     return created as UserProfileRow;
   } catch {
@@ -100,7 +85,7 @@ export const [AuthProvider, useAuth] = createContextHook(() => {
     queryKey: ['authProfile', session?.user?.id],
     queryFn: async (): Promise<UserProfileRow | null> => {
       if (!session?.user?.id) return null;
-      return ensureProfileExists(session.user.id, session.user.email ?? undefined);
+      return ensureProfileExists(session.user.id);
     },
     enabled: !!session?.user?.id,
     retry: 2,
@@ -134,7 +119,7 @@ export const [AuthProvider, useAuth] = createContextHook(() => {
       }
       const needsEmailConfirmation = !data.session && !!data.user;
       if (data.session && data.user) {
-        await ensureProfileExists(data.user.id, email);
+        await ensureProfileExists(data.user.id);
       }
       return { ...data, needsEmailConfirmation };
     },

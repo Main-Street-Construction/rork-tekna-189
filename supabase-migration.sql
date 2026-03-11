@@ -295,9 +295,14 @@ $ LANGUAGE plpgsql SECURITY DEFINER;
 -- ============================================================
 -- DONE! After running this:
 -- 1. Create your first user via the app's signup flow
--- 2. Manually set that user as admin + enabled:
---    UPDATE profiles SET is_admin = true, is_enabled = true WHERE email = 'charlemartel6@gmail.com';
--- 3. All subsequent users can be managed from the admin panel
+-- 2. Find that user's ID in the Supabase Dashboard (Authentication > Users)
+-- 3. Manually set that user as admin + enabled:
+--    UPDATE profiles SET is_admin = true, is_enabled = true WHERE id = '<user-uuid-here>';
+-- 4. All subsequent users can be managed from the in-app admin panel
+-- 
+-- IMPORTANT: There is no auto-promotion logic in the app.
+-- Admin and enabled status must ALWAYS be set via the Supabase
+-- dashboard or the admin panel (which uses the admin_update_user RPC).
 -- 
 -- TROUBLESHOOTING:
 -- If signup still fails, check Supabase Dashboard > Database > Triggers
