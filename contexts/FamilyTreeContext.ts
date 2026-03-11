@@ -21,6 +21,7 @@ import {
   fetchPendingEdits,
   reviewPendingEdit as reviewPendingEditApi,
   getPendingEditCount,
+  getCloudCounts,
 } from '@/lib/supabase-db';
 import { PendingEdit } from '@/types/genealogy';
 import { useAuth } from '@/contexts/AuthContext';
@@ -328,39 +329,73 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
     void loadCount();
   }, [isAdmin]);
 
+  const fullReloadFromCloud = useCallback(async (): Promise<{ success: boolean; error?: string }> => {
+    console.log('[FamilyTree] Performing full reload from cloud...');
+    storageDisabled = false;
+    await aggressiveCleanup();
+
+    const result = await loadAllFromSupabase();
+    if (result.data && result.data.individuals.size > 0) {
+      const serialized = serializeFamilyTreeData(result.data);
+      const cached = await safeSetItem(STORAGE_KEY, serialized);
+      if (cached) {
+        await safeSetItem(LAST_CLOUD_SYNC_KEY, String(Date.now()));
+        await safeSetItem(DATA_FORMAT_VERSION_KEY, CURRENT_DATA_FORMAT_VERSION);
+      }
+      setTreeData(result.data);
+      console.log('[FamilyTree] Full reload complete:', result.data.individuals.size, 'individuals');
+      return { success: true };
+    }
+    if (result.error) {
+      setCloudError(result.error);
+      return { success: false, error: result.error };
+    }
+    return { success: false, error: 'No data found in database' };
+  }, []);
+
   const refreshFromCloud = useCallback(async (): Promise<{ success: boolean; error?: string }> => {
     setIsLoadingFromCloud(true);
     setCloudError(null);
-    storageDisabled = false;
     try {
-      await aggressiveCleanup();
+      const localIndCount = treeData?.individuals.size ?? 0;
+      const localFamCount = treeData?.families.size ?? 0;
 
-      const result = await loadAllFromSupabase();
-      if (result.data && result.data.individuals.size > 0) {
-        const serialized = serializeFamilyTreeData(result.data);
-        const cached = await safeSetItem(STORAGE_KEY, serialized);
-        if (cached) {
-          await safeSetItem(LAST_CLOUD_SYNC_KEY, String(Date.now()));
-          await safeSetItem(DATA_FORMAT_VERSION_KEY, CURRENT_DATA_FORMAT_VERSION);
-        }
-        setTreeData(result.data);
+      if (localIndCount === 0) {
+        console.log('[FamilyTree] No local data — doing full reload');
+        const result = await fullReloadFromCloud();
         setIsLoadingFromCloud(false);
-        console.log('[FamilyTree] Refreshed from Supabase');
+        return result;
+      }
+
+      const cloudCounts = await getCloudCounts();
+      if (!cloudCounts) {
+        console.warn('[FamilyTree] Could not fetch cloud counts, assuming up-to-date');
+        await safeSetItem(LAST_CLOUD_SYNC_KEY, String(Date.now()));
+        setIsLoadingFromCloud(false);
         return { success: true };
       }
-      setIsLoadingFromCloud(false);
-      if (result.error) {
-        setCloudError(result.error);
-        return { success: false, error: result.error };
+
+      const indDiff = Math.abs(cloudCounts.individuals - localIndCount);
+      const famDiff = Math.abs(cloudCounts.families - localFamCount);
+
+      if (indDiff === 0 && famDiff === 0) {
+        console.log('[FamilyTree] Data is up-to-date (local:', localIndCount, 'ind,', localFamCount, 'fam | cloud:', cloudCounts.individuals, 'ind,', cloudCounts.families, 'fam)');
+        await safeSetItem(LAST_CLOUD_SYNC_KEY, String(Date.now()));
+        setIsLoadingFromCloud(false);
+        return { success: true };
       }
-      return { success: false, error: 'No data found in database' };
+
+      console.log('[FamilyTree] Data mismatch detected (local:', localIndCount, 'ind,', localFamCount, 'fam | cloud:', cloudCounts.individuals, 'ind,', cloudCounts.families, 'fam) — syncing...');
+      const result = await fullReloadFromCloud();
+      setIsLoadingFromCloud(false);
+      return result;
     } catch (e) {
       const msg = String(e);
       setCloudError(msg);
       setIsLoadingFromCloud(false);
       return { success: false, error: msg };
     }
-  }, []);
+  }, [treeData, fullReloadFromCloud]);
 
   const generateNewId = useCallback(
     (prefix: string): string => {

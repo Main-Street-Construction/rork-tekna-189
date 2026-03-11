@@ -351,6 +351,35 @@ export async function loadAllFromSupabase(): Promise<{
   }
 }
 
+export async function getCloudCounts(): Promise<{ individuals: number; families: number } | null> {
+  try {
+    console.log('[Supabase] Fetching cloud counts...');
+    const { count: indCount, error: indError } = await supabase
+      .from('individuals')
+      .select('*', { count: 'exact', head: true });
+
+    if (indError) {
+      console.warn('[Supabase] Error fetching individual count:', indError.message);
+      return null;
+    }
+
+    const { count: famCount, error: famError } = await supabase
+      .from('families')
+      .select('*', { count: 'exact', head: true });
+
+    if (famError) {
+      console.warn('[Supabase] Error fetching family count:', famError.message);
+      return null;
+    }
+
+    console.log('[Supabase] Cloud counts:', indCount, 'individuals,', famCount, 'families');
+    return { individuals: indCount ?? 0, families: famCount ?? 0 };
+  } catch (e) {
+    console.warn('[Supabase] getCloudCounts failed:', e);
+    return null;
+  }
+}
+
 export async function updateIndividualInSupabase(
   individual: GedcomIndividual
 ): Promise<{ success: boolean; error?: string }> {
