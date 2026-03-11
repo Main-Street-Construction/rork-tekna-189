@@ -86,7 +86,7 @@ export default function AdminScreen() {
 
     Alert.alert(
       `${newValue ? 'Enable' : 'Disable'} User`,
-      `Are you sure you want to ${action} ${targetUser.email ?? 'this user'}?`,
+      `Are you sure you want to ${action} this user (${targetUser.id.slice(0, 8)}...)?`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -115,7 +115,7 @@ export default function AdminScreen() {
 
     Alert.alert(
       `${newValue ? 'Grant' : 'Revoke'} Admin`,
-      `Are you sure you want to ${action} ${targetUser.email ?? 'this user'}?`,
+      `Are you sure you want to ${action} this user (${targetUser.id.slice(0, 8)}...)?`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -226,7 +226,7 @@ export default function AdminScreen() {
                   <View style={styles.userInfo}>
                     <View style={styles.userNameRow}>
                       <Text style={styles.userEmail} numberOfLines={1}>
-                        {u.email ?? 'No email'}
+                        {u.id.slice(0, 8)}...
                       </Text>
                       {isSelf && (
                         <View style={styles.selfBadge}>

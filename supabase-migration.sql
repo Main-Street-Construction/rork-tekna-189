@@ -8,7 +8,6 @@
 -- ============================================================
 CREATE TABLE IF NOT EXISTS profiles (
   id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
-  email TEXT,
   is_enabled BOOLEAN NOT NULL DEFAULT false,
   is_admin BOOLEAN NOT NULL DEFAULT false,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -17,14 +16,17 @@ CREATE TABLE IF NOT EXISTS profiles (
 -- 2. AUTO-CREATE PROFILE ON SIGNUP TRIGGER
 -- ============================================================
 CREATE OR REPLACE FUNCTION public.handle_new_user()
-RETURNS TRIGGER AS $$
+RETURNS TRIGGER AS $
 BEGIN
-  INSERT INTO public.profiles (id, email, is_enabled, is_admin)
-  VALUES (NEW.id, NEW.email, false, false)
+  INSERT INTO public.profiles (id, is_enabled, is_admin)
+  VALUES (NEW.id, false, false)
   ON CONFLICT (id) DO NOTHING;
   RETURN NEW;
+EXCEPTION WHEN OTHERS THEN
+  RAISE WARNING 'handle_new_user trigger failed: %', SQLERRM;
+  RETURN NEW;
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
+$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
 
 DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
 CREATE TRIGGER on_auth_user_created
@@ -174,22 +176,21 @@ CREATE POLICY "feedback_select_admin" ON feedback
 CREATE OR REPLACE FUNCTION public.admin_list_users()
 RETURNS TABLE (
   id UUID,
-  email TEXT,
   is_enabled BOOLEAN,
   is_admin BOOLEAN,
   created_at TIMESTAMPTZ
-) AS $$
+) AS $
 BEGIN
   IF NOT public.is_admin() THEN
     RAISE EXCEPTION 'Forbidden: caller is not an admin';
   END IF;
 
   RETURN QUERY
-    SELECT p.id, p.email, p.is_enabled, p.is_admin, p.created_at
+    SELECT p.id, p.is_enabled, p.is_admin, p.created_at
     FROM public.profiles p
     ORDER BY p.created_at DESC;
 END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
+$ LANGUAGE plpgsql SECURITY DEFINER;
 
 -- Update user roles (admin only)
 CREATE OR REPLACE FUNCTION public.admin_update_user(
@@ -239,19 +240,7 @@ GRANT SELECT ON public.profiles TO supabase_auth_admin;
 -- Also ensure the trigger function owner is correct:
 ALTER FUNCTION public.handle_new_user() OWNER TO supabase_admin;
 
--- If the above doesn't work, try dropping and recreating with explicit search_path:
-CREATE OR REPLACE FUNCTION public.handle_new_user()
-RETURNS TRIGGER AS $
-BEGIN
-  INSERT INTO public.profiles (id, email, is_enabled, is_admin)
-  VALUES (NEW.id, NEW.email, false, false)
-  ON CONFLICT (id) DO NOTHING;
-  RETURN NEW;
-EXCEPTION WHEN OTHERS THEN
-  RAISE WARNING 'handle_new_user trigger failed: %', SQLERRM;
-  RETURN NEW;
-END;
-$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
+-- Trigger function is already defined above with search_path = public
 
 -- Also add an INSERT policy on profiles so the app fallback works:
 DROP POLICY IF EXISTS "profiles_insert_own" ON profiles;

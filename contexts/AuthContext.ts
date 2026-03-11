@@ -6,7 +6,6 @@ import type { Session, User } from '@supabase/supabase-js';
 
 export interface UserProfileRow {
   id: string;
-  email: string | null;
   is_enabled: boolean;
   is_admin: boolean;
   created_at: string;
@@ -14,11 +13,13 @@ export interface UserProfileRow {
 
 const ADMIN_EMAIL = 'charlemartel6@gmail.com';
 
+const PROFILE_COLUMNS = 'id, is_enabled, is_admin, created_at';
+
 async function ensureProfileExists(userId: string, email: string | undefined): Promise<UserProfileRow | null> {
   console.log('[Auth] Ensuring profile exists for', userId, email);
   const { data: existing, error: fetchErr } = await supabase
     .from('profiles')
-    .select('id, email, is_enabled, is_admin, created_at')
+    .select(PROFILE_COLUMNS)
     .eq('id', userId)
     .single();
 
@@ -30,7 +31,7 @@ async function ensureProfileExists(userId: string, email: string | undefined): P
         .from('profiles')
         .update({ is_admin: true, is_enabled: true })
         .eq('id', userId)
-        .select('id, email, is_enabled, is_admin, created_at')
+        .select(PROFILE_COLUMNS)
         .single();
       if (updated && !updateErr) return updated as UserProfileRow;
       console.warn('[Auth] Admin auto-promote failed:', updateErr?.message);
@@ -44,11 +45,10 @@ async function ensureProfileExists(userId: string, email: string | undefined): P
     .from('profiles')
     .insert({
       id: userId,
-      email: email ?? null,
       is_enabled: isAdminUser,
       is_admin: isAdminUser,
     })
-    .select('id, email, is_enabled, is_admin, created_at')
+    .select(PROFILE_COLUMNS)
     .single();
 
   if (insertErr) {
@@ -56,7 +56,7 @@ async function ensureProfileExists(userId: string, email: string | undefined): P
     if (insertErr.message.includes('duplicate') || insertErr.code === '23505') {
       const { data: retry } = await supabase
         .from('profiles')
-        .select('id, email, is_enabled, is_admin, created_at')
+        .select(PROFILE_COLUMNS)
         .eq('id', userId)
         .single();
       return (retry as UserProfileRow) ?? null;
