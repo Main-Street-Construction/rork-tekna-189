@@ -16,7 +16,6 @@ import {
   ShieldOff,
   Users,
   Mail,
-  Clock,
   AlertTriangle,
 } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
@@ -36,12 +35,21 @@ export default function AdminScreen() {
     queryFn: async (): Promise<UserProfileRow[]> => {
       console.log('[Admin] Fetching user list via RPC...');
       const { data, error } = await supabase.rpc('admin_list_users');
-      if (error) {
-        console.error('[Admin] RPC error:', error.message);
-        throw new Error(error.message);
+      if (!error && data) {
+        console.log('[Admin] Loaded', (data as UserProfileRow[])?.length ?? 0, 'users via RPC');
+        return (data as UserProfileRow[]) ?? [];
       }
-      console.log('[Admin] Loaded', (data as UserProfileRow[])?.length ?? 0, 'users');
-      return (data as UserProfileRow[]) ?? [];
+      console.warn('[Admin] RPC failed, falling back to direct query:', error?.message);
+      const { data: fallback, error: fbErr } = await supabase
+        .from('profiles')
+        .select('id, is_enabled, is_admin')
+        .order('id', { ascending: false });
+      if (fbErr) {
+        console.error('[Admin] Fallback query error:', fbErr.message);
+        throw new Error(fbErr.message);
+      }
+      console.log('[Admin] Loaded', fallback?.length ?? 0, 'users via fallback');
+      return (fallback as UserProfileRow[]) ?? [];
     },
     enabled: isAdmin,
   });
@@ -133,14 +141,7 @@ export default function AdminScreen() {
     );
   }, [updateUserMutation, user?.id]);
 
-  const formatDate = (dateStr: string) => {
-    const d = new Date(dateStr);
-    return d.toLocaleDateString(undefined, {
-      year: 'numeric',
-      month: 'short',
-      day: 'numeric',
-    });
-  };
+
 
   if (!isAdmin) {
     return (
@@ -235,8 +236,7 @@ export default function AdminScreen() {
                       )}
                     </View>
                     <View style={styles.userMeta}>
-                      <Clock size={10} color={Colors.textLight} />
-                      <Text style={styles.userDate}>Joined {formatDate(u.created_at)}</Text>
+                      <Text style={styles.userDate}>{u.id.slice(0, 16)}...</Text>
                     </View>
                   </View>
                 </View>

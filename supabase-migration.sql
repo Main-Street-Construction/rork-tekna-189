@@ -9,9 +9,19 @@
 CREATE TABLE IF NOT EXISTS profiles (
   id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
   is_enabled BOOLEAN NOT NULL DEFAULT false,
-  is_admin BOOLEAN NOT NULL DEFAULT false,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  is_admin BOOLEAN NOT NULL DEFAULT false
 );
+
+-- Add created_at if missing (for tables created before this column existed)
+DO $
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'profiles' AND column_name = 'created_at'
+  ) THEN
+    ALTER TABLE public.profiles ADD COLUMN created_at TIMESTAMPTZ DEFAULT now();
+  END IF;
+END $;
 
 -- 2. AUTO-CREATE PROFILE ON SIGNUP TRIGGER
 -- ============================================================

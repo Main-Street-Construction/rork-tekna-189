@@ -8,12 +8,11 @@ export interface UserProfileRow {
   id: string;
   is_enabled: boolean;
   is_admin: boolean;
-  created_at: string;
 }
 
 const ADMIN_EMAIL = 'charlemartel6@gmail.com';
 
-const PROFILE_COLUMNS = 'id, is_enabled, is_admin, created_at';
+const PROFILE_COLUMNS = 'id, is_enabled, is_admin';
 
 async function ensureProfileExists(userId: string, email: string | undefined): Promise<UserProfileRow | null> {
   console.log('[Auth] Ensuring profile exists for', userId, email);
