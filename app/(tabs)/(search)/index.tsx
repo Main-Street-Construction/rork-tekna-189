@@ -60,11 +60,10 @@ function SearchScreenContent() {
         searchTimerRef.current = setTimeout(() => {
           try {
             const found = search(text);
-            console.log('[SearchScreen] Found results:', found.length);
+
             setResults(found);
             setHasSearched(true);
-          } catch (e) {
-            console.error('[SearchScreen] Search error:', e);
+          } catch {
             setResults([]);
             setHasSearched(true);
           }
@@ -87,7 +86,7 @@ function SearchScreenContent() {
   }, []);
 
   const handleClear = useCallback(() => {
-    console.log('[SearchScreen] Clearing search');
+
     setQuery('');
     setResults([]);
     setHasSearched(false);
@@ -147,12 +146,11 @@ function SearchScreenContent() {
           if (rel && rel.relationship && rel.relationship !== 'No blood relation found') {
             map.set(person.id, `Your ${rel.relationship}`);
           }
-        } catch (e) {
-          console.log('[SearchScreen] Relationship calc error for', person.id, e);
+        } catch {
         }
       }
       if (batchId === relationshipBatchRef.current) {
-        console.log('[SearchScreen] Computed relationships for', map.size, 'of', batch.length, 'results');
+
         setRelationshipMap(map);
       }
     }, 600);

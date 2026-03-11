@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useQuery, useMutation } from '@tanstack/react-query';
 import createContextHook from '@nkzw/create-context-hook';
@@ -13,7 +13,7 @@ export const [ProfileProvider, useProfile] = createContextHook(() => {
   const loadQuery = useQuery({
     queryKey: ['userProfile'],
     queryFn: async () => {
-      console.log('[Profile] Loading profile...');
+
       const stored = await AsyncStorage.getItem(PROFILE_KEY);
       if (stored) {
         return JSON.parse(stored) as UserProfile;
@@ -86,7 +86,7 @@ export const [ProfileProvider, useProfile] = createContextHook(() => {
       };
       saveMutation.mutate(updated);
     }
-    console.log('[Profile] Claim reset');
+
   }, [profile, saveMutation]);
 
   const claimIdentity = useCallback(
@@ -119,7 +119,7 @@ export const [ProfileProvider, useProfile] = createContextHook(() => {
   const hasProfile = profile !== null && profile.displayName.length > 0;
   const hasClaimed = isClaimed && profile?.rootPersonId != null;
 
-  return {
+  return useMemo(() => ({
     profile,
     hasProfile,
     hasClaimed,
@@ -128,5 +128,8 @@ export const [ProfileProvider, useProfile] = createContextHook(() => {
     claimIdentity,
     resetClaim,
     isSaving: saveMutation.isPending,
-  };
+  }), [
+    profile, hasProfile, hasClaimed, isClaimed,
+    saveProfile, claimIdentity, resetClaim, saveMutation.isPending,
+  ]);
 });

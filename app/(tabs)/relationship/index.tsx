@@ -173,7 +173,7 @@ function RelationshipScreenContent() {
           try {
             console.log('[RelationshipScreen] Starting multi-calculation...');
             const result = calculateAllRelationships(p1Id, p2Id, td);
-            console.log('[RelationshipScreen] Found', result?.entries.length, 'relationship paths');
+
             setMultiResult(result);
             setIsCalculating(false);
             void Haptics.notificationAsync(
@@ -245,7 +245,7 @@ function RelationshipScreenContent() {
           try {
             console.log('[RelationshipScreen] Starting multi-calculation (autofill)...');
             const result = calculateAllRelationships(p1Id, p2Id, td);
-            console.log('[RelationshipScreen] Found', result?.entries.length, 'relationship paths');
+
             setMultiResult(result);
             setIsCalculating(false);
             void Haptics.notificationAsync(

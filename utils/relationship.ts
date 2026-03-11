@@ -66,12 +66,10 @@ export function findCommonAncestors(
   person2Id: string,
   data: FamilyTreeData
 ): CommonAncestorResult[] {
-  console.log('[Relationship] Finding common ancestors between', person1Id, 'and', person2Id);
-
   const ancestors1 = getAncestorMap(person1Id, data);
   const ancestors2 = getAncestorMap(person2Id, data);
 
-  console.log('[Relationship] Ancestor map sizes:', ancestors1.size, ancestors2.size);
+
 
   const common: CommonAncestorResult[] = [];
 
@@ -103,7 +101,7 @@ export function findCommonAncestors(
     }
   });
 
-  console.log('[Relationship] Found', common.length, 'closest common ancestors, best total:', bestTotal);
+
   return common;
 }
 
@@ -112,7 +110,7 @@ export function findAllCommonAncestors(
   person2Id: string,
   data: FamilyTreeData
 ): CommonAncestorResult[] {
-  console.log('[Relationship] Finding ALL common ancestors between', person1Id, 'and', person2Id);
+
 
   const ancestors1 = getAncestorMap(person1Id, data);
   const ancestors2 = getAncestorMap(person2Id, data);
@@ -145,7 +143,7 @@ export function findAllCommonAncestors(
     return totalA - totalB;
   });
 
-  console.log('[Relationship] Found', common.length, 'total common ancestors');
+
   return common;
 }
 
@@ -250,13 +248,13 @@ export function calculateRelationship(
   person2Id: string,
   data: FamilyTreeData
 ): RelationshipResult | null {
-  console.log('[Relationship] Calculating between', person1Id, 'and', person2Id);
+
 
   const person1 = data.individuals.get(person1Id);
   const person2 = data.individuals.get(person2Id);
 
   if (!person1 || !person2) {
-    console.log('[Relationship] One or both persons not found');
+
     return null;
   }
 
@@ -292,7 +290,7 @@ export function calculateRelationship(
     const path2 = closest.pathFromAncestorToPerson2.slice(1);
     const fullPath = [...path1, ...path2];
 
-    console.log('[Relationship] Result:', relationship, '| Reverse:', reverseRelationship);
+
 
     return {
       person1,
@@ -330,7 +328,7 @@ export function calculateAllRelationships(
   person2Id: string,
   data: FamilyTreeData
 ): MultiRelationshipResult | null {
-  console.log('[Relationship] Calculating ALL relationships between', person1Id, 'and', person2Id);
+
 
   const person1 = data.individuals.get(person1Id);
   const person2 = data.individuals.get(person2Id);
@@ -373,7 +371,7 @@ export function calculateAllRelationships(
   const closestRel = entries.length > 0 ? entries[0].relationship : (spouseRelation ? (p2Gender === 'F' ? 'Wife' : p2Gender === 'M' ? 'Husband' : 'Spouse') : 'No blood relation found');
   const closestRevRel = entries.length > 0 ? entries[0].reverseRelationship : (spouseRelation ? (p1Gender === 'F' ? 'Wife' : p1Gender === 'M' ? 'Husband' : 'Spouse') : 'No blood relation found');
 
-  console.log('[Relationship] Found', entries.length, 'unique relationship paths');
+
 
   return {
     person1,

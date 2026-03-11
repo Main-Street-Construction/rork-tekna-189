@@ -52,7 +52,7 @@ export default function AuthScreen() {
         setSuccessMessage('Password reset email sent! Check your inbox (and spam folder).');
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
-        console.warn('[Auth] Reset error:', msg);
+
         void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
         setErrorMessage(msg);
       }
@@ -84,7 +84,7 @@ export default function AuthScreen() {
         const result = await signUp(email.trim(), password);
         void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
         if (result.needsEmailConfirmation) {
-          console.log('[Auth] Email confirmation required, showing confirm screen');
+
           setPendingEmail(email.trim());
           setMode('confirm_email');
         } else {
@@ -93,7 +93,7 @@ export default function AuthScreen() {
       }
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
-      console.warn('[Auth] Error:', msg);
+
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       if (msg.includes('Email not confirmed')) {
         setPendingEmail(email.trim());
@@ -117,7 +117,7 @@ export default function AuthScreen() {
       setSuccessMessage('Confirmation email resent! Check your inbox and spam folder.');
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
-      console.warn('[Auth] Resend error:', msg);
+
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       setErrorMessage(msg);
     }

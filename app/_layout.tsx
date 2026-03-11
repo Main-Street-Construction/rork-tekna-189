@@ -67,6 +67,10 @@ function RootLayoutNav() {
         name="admin/index"
         options={{ title: "Admin Panel" }}
       />
+      <Stack.Screen
+        name="privacy-policy/index"
+        options={{ title: "Privacy Policy" }}
+      />
     </Stack>
   );
 }

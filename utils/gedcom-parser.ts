@@ -28,7 +28,7 @@ function parseLine(raw: string): ParsedLine | null {
 
   const match = line.match(/^(\d+)\s+(.*)$/);
   if (!match) {
-    console.log('[GEDCOM Parser] Skipping unparseable line:', line.substring(0, 80));
+
     return null;
   }
 
@@ -74,7 +74,7 @@ function collectSubLines(lines: ParsedLine[], startIndex: number, parentLevel: n
   return { subLines, nextIndex: i };
 }
 
-function getSubValue(subLines: ParsedLine[], tag: string): string | undefined {
+function _getSubValue(subLines: ParsedLine[], tag: string): string | undefined {
   for (const line of subLines) {
     if (line.tag === tag) {
       return line.value;

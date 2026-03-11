@@ -26,18 +26,16 @@ async function fetchWithRetry<T>(
       ]);
       if (!result.error) return result;
       lastError = new Error(result.error.message);
-      console.warn(`[Supabase] Attempt ${attempt + 1}/${retries} returned error: ${result.error.message}`);
+
       if (attempt === retries - 1) return result;
     } catch (e) {
       lastError = e;
       const msg = e instanceof Error ? e.message : String(e);
-      console.warn(`[Supabase] Attempt ${attempt + 1}/${retries} failed: ${msg}`);
       if (attempt === retries - 1) {
         return { data: null, error: { message: msg } };
       }
     }
     const backoff = delayMs * Math.pow(1.5, attempt);
-    console.log(`[Supabase] Retrying in ${Math.round(backoff)}ms...`);
     await new Promise(resolve => setTimeout(resolve, backoff));
   }
   return { data: null, error: { message: lastError instanceof Error ? lastError.message : String(lastError) } };
@@ -136,12 +134,7 @@ function supabaseToFamily(
   const husbandGedcomId = row.husband_id ? uuidToGedcomId.get(row.husband_id) : undefined;
   const wifeGedcomId = row.wife_id ? uuidToGedcomId.get(row.wife_id) : undefined;
 
-  if (row.husband_id && !husbandGedcomId) {
-    console.warn('[Supabase] Could not resolve husband UUID:', row.husband_id, 'for family', row.gedcom_id);
-  }
-  if (row.wife_id && !wifeGedcomId) {
-    console.warn('[Supabase] Could not resolve wife UUID:', row.wife_id, 'for family', row.gedcom_id);
-  }
+
 
   return {
     id: row.gedcom_id,
@@ -186,7 +179,7 @@ export async function loadAllFromSupabase(): Promise<{
   error?: string;
 }> {
   try {
-    console.log('[Supabase] Loading all data from shared database...');
+
 
     const individuals = new Map<string, GedcomIndividual>();
     const uuidToGedcomId = new Map<string, string>();
@@ -203,7 +196,6 @@ export async function loadAllFromSupabase(): Promise<{
       );
 
       if (indError) {
-        console.error('[Supabase] Error fetching individuals:', indError);
         return { data: null, error: indError.message };
       }
 
@@ -214,23 +206,14 @@ export async function loadAllFromSupabase(): Promise<{
         uuidToGedcomId.set(typedRow.id, typedRow.gedcom_id);
         const ind = supabaseToIndividual(typedRow);
         individuals.set(ind.id, ind);
-        if (individuals.size <= 3) {
-          console.log('[Supabase] Sample individual:', JSON.stringify({
-            uuid: typedRow.id,
-            gedcom_id: typedRow.gedcom_id,
-            name: ind.name,
-            givenName: ind.givenName,
-            surname: ind.surname,
-          }));
-        }
       }
 
-      console.log(`[Supabase] Loaded ${individuals.size} individuals so far`);
+
       if (rows.length < PAGE_SIZE) break;
       indOffset += PAGE_SIZE;
     }
 
-    console.log(`[Supabase] Built UUID->gedcom_id map with ${uuidToGedcomId.size} entries`);
+
 
     const familyRows: SupabaseFamily[] = [];
     let famOffset = 0;
@@ -256,7 +239,7 @@ export async function loadAllFromSupabase(): Promise<{
         familyUuidToGedcomId.set(typedRow.id, typedRow.gedcom_id);
       }
 
-      console.log(`[Supabase] Loaded ${familyRows.length} family rows so far`);
+
       if (rows.length < PAGE_SIZE) break;
       famOffset += PAGE_SIZE;
     }
@@ -273,7 +256,6 @@ export async function loadAllFromSupabase(): Promise<{
       );
 
       if (fmError) {
-        console.error('[Supabase] Error fetching family_members:', fmError);
         break;
       }
 
@@ -292,12 +274,12 @@ export async function loadAllFromSupabase(): Promise<{
         }
       }
 
-      console.log(`[Supabase] Processed ${fmOffset + rows.length} family_members rows`);
+
       if (rows.length < PAGE_SIZE) break;
       fmOffset += PAGE_SIZE;
     }
 
-    console.log(`[Supabase] Family children map has ${familyChildrenMap.size} families with children`);
+
 
     const families = new Map<string, GedcomFamily>();
     for (const row of familyRows) {
@@ -336,30 +318,22 @@ export async function loadAllFromSupabase(): Promise<{
       }
     });
 
-    const sampleFam = Array.from(families.values()).slice(0, 2);
-    sampleFam.forEach((f, i) => {
-      console.log(`[Supabase] Sample family ${i}:`, JSON.stringify({
-        id: f.id, husbandId: f.husbandId, wifeId: f.wifeId, childrenCount: f.childrenIds.length,
-      }));
-    });
 
-    console.log(`[Supabase] Load complete: ${individuals.size} individuals, ${families.size} families`);
     return { data: { individuals, families } };
   } catch (e) {
-    console.error('[Supabase] Load error:', e);
     return { data: null, error: String(e) };
   }
 }
 
 export async function getCloudCounts(): Promise<{ individuals: number; families: number } | null> {
   try {
-    console.log('[Supabase] Fetching cloud counts...');
+
     const { count: indCount, error: indError } = await supabase
       .from('individuals')
       .select('*', { count: 'exact', head: true });
 
     if (indError) {
-      console.warn('[Supabase] Error fetching individual count:', indError.message);
+
       return null;
     }
 
@@ -368,14 +342,13 @@ export async function getCloudCounts(): Promise<{ individuals: number; families:
       .select('*', { count: 'exact', head: true });
 
     if (famError) {
-      console.warn('[Supabase] Error fetching family count:', famError.message);
+
       return null;
     }
 
-    console.log('[Supabase] Cloud counts:', indCount, 'individuals,', famCount, 'families');
+
     return { individuals: indCount ?? 0, families: famCount ?? 0 };
-  } catch (e) {
-    console.warn('[Supabase] getCloudCounts failed:', e);
+  } catch {
     return null;
   }
 }
@@ -384,7 +357,7 @@ export async function updateIndividualInSupabase(
   individual: GedcomIndividual
 ): Promise<{ success: boolean; error?: string }> {
   try {
-    console.log('[Supabase] Updating individual:', individual.id, individual.name);
+
     const row = individualToSupabaseRow(individual);
 
     const { error } = await supabase
@@ -393,13 +366,13 @@ export async function updateIndividualInSupabase(
       .eq('gedcom_id', individual.id);
 
     if (error) {
-      console.error('[Supabase] Error updating individual:', error);
+
       return { success: false, error: error.message };
     }
 
     return { success: true };
   } catch (e) {
-    console.error('[Supabase] Update individual error:', e);
+
     return { success: false, error: String(e) };
   }
 }
@@ -408,7 +381,7 @@ export async function createIndividualInSupabase(
   individual: GedcomIndividual
 ): Promise<{ success: boolean; error?: string }> {
   try {
-    console.log('[Supabase] Creating individual:', individual.id, individual.name);
+
     const row = individualToSupabaseRow(individual);
 
     const { data: existing } = await supabase
@@ -418,13 +391,13 @@ export async function createIndividualInSupabase(
       .limit(1);
 
     if (existing && existing.length > 0) {
-      console.log('[Supabase] Individual already exists, updating instead:', individual.id);
+
       const { error } = await supabase
         .from('individuals')
         .update(row)
         .eq('gedcom_id', individual.id);
       if (error) {
-        console.error('[Supabase] Error updating existing individual:', error);
+
         return { success: false, error: error.message };
       }
       return { success: true };
@@ -435,13 +408,13 @@ export async function createIndividualInSupabase(
       .insert(row);
 
     if (error) {
-      console.error('[Supabase] Error creating individual:', error);
+
       return { success: false, error: error.message };
     }
 
     return { success: true };
   } catch (e) {
-    console.error('[Supabase] Create individual error:', e);
+
     return { success: false, error: String(e) };
   }
 }
@@ -450,18 +423,18 @@ export async function upsertFamilyInSupabase(
   family: GedcomFamily
 ): Promise<{ success: boolean; error?: string }> {
   try {
-    console.log('[Supabase] Upserting family:', family.id, 'husband:', family.husbandId, 'wife:', family.wifeId);
+
 
     let husbandUuid: string | null = null;
     let wifeUuid: string | null = null;
 
     if (family.husbandId) {
       husbandUuid = await resolveGedcomIdToUuid(family.husbandId);
-      console.log('[Supabase] Resolved husband', family.husbandId, '->', husbandUuid);
+
     }
     if (family.wifeId) {
       wifeUuid = await resolveGedcomIdToUuid(family.wifeId);
-      console.log('[Supabase] Resolved wife', family.wifeId, '->', wifeUuid);
+
     }
 
     const row: Record<string, unknown> = {
@@ -488,7 +461,7 @@ export async function upsertFamilyInSupabase(
         .eq('gedcom_id', family.id);
 
       if (error) {
-        console.error('[Supabase] Error updating family:', error);
+
         return { success: false, error: error.message };
       }
     } else {
@@ -498,7 +471,7 @@ export async function upsertFamilyInSupabase(
         .select('id');
 
       if (error) {
-        console.error('[Supabase] Error inserting family:', error);
+
         return { success: false, error: error.message };
       }
       familyUuid = inserted?.[0]?.id;
@@ -508,7 +481,7 @@ export async function upsertFamilyInSupabase(
       for (const childGedcomId of family.childrenIds) {
         const childUuid = await resolveGedcomIdToUuid(childGedcomId);
         if (!childUuid) {
-          console.warn('[Supabase] Could not resolve child UUID for:', childGedcomId);
+
           continue;
         }
 
@@ -521,25 +494,21 @@ export async function upsertFamilyInSupabase(
           .limit(1);
 
         if (!existingMember || existingMember.length === 0) {
-          const { error: fmError } = await supabase
+          const { error: _fmError } = await supabase
             .from('family_members')
             .insert({
               family_id: familyUuid,
               individual_id: childUuid,
               role: 'child',
             });
-          if (fmError) {
-            console.warn('[Supabase] Error inserting family_member:', fmError.message);
-          } else {
-            console.log('[Supabase] Added child', childGedcomId, 'to family', family.id);
-          }
+
         }
       }
     }
 
     return { success: true };
   } catch (e) {
-    console.error('[Supabase] Upsert family error:', e);
+
     return { success: false, error: String(e) };
   }
 }
@@ -551,7 +520,7 @@ export async function submitPendingEdit(
   submittedBy: string
 ): Promise<{ success: boolean; error?: string }> {
   try {
-    console.log('[Supabase] Submitting pending edit:', editType, targetId);
+
     const { error } = await supabase.from('pending_edits').insert({
       edit_type: editType,
       target_id: targetId,
@@ -561,7 +530,7 @@ export async function submitPendingEdit(
     });
 
     if (error) {
-      console.error('[Supabase] Error submitting pending edit:', error);
+
       if (error.message.includes('does not exist') || error.code === '42P01') {
         return { success: false, error: 'Pending edits table not set up yet. Contact the admin.' };
       }
@@ -569,7 +538,7 @@ export async function submitPendingEdit(
     }
     return { success: true };
   } catch (e) {
-    console.error('[Supabase] Submit pending edit error:', e);
+
     return { success: false, error: String(e) };
   }
 }
@@ -583,7 +552,7 @@ export async function fetchPendingEdits(): Promise<{ edits: PendingEdit[]; error
       .order('submitted_at', { ascending: false });
 
     if (error) {
-      console.error('[Supabase] Error fetching pending edits:', error);
+
       if (error.message.includes('does not exist') || error.code === '42P01') {
         return { edits: [], error: 'Pending edits table not set up.' };
       }
@@ -592,7 +561,7 @@ export async function fetchPendingEdits(): Promise<{ edits: PendingEdit[]; error
 
     return { edits: (data ?? []) as PendingEdit[] };
   } catch (e) {
-    console.error('[Supabase] Fetch pending edits error:', e);
+
     return { edits: [], error: String(e) };
   }
 }
@@ -603,7 +572,7 @@ export async function reviewPendingEdit(
   reviewerNote?: string
 ): Promise<{ success: boolean; error?: string }> {
   try {
-    console.log('[Supabase] Reviewing pending edit:', editId, status);
+
     const { error } = await supabase
       .from('pending_edits')
       .update({
@@ -614,12 +583,12 @@ export async function reviewPendingEdit(
       .eq('id', editId);
 
     if (error) {
-      console.error('[Supabase] Error reviewing pending edit:', error);
+
       return { success: false, error: error.message };
     }
     return { success: true };
   } catch (e) {
-    console.error('[Supabase] Review pending edit error:', e);
+
     return { success: false, error: String(e) };
   }
 }
@@ -629,7 +598,7 @@ export async function submitFeedback(
   userName?: string
 ): Promise<{ success: boolean; error?: string }> {
   try {
-    console.log('[Supabase] Submitting feedback from:', userName ?? 'Anonymous');
+
     const { error } = await supabase.from('feedback').insert({
       message,
       user_name: userName ?? 'Anonymous',
@@ -637,7 +606,7 @@ export async function submitFeedback(
     });
 
     if (error) {
-      console.error('[Supabase] Error submitting feedback:', error);
+
       if (error.message.includes('does not exist') || error.code === '42P01') {
         return { success: false, error: 'Feedback table not set up yet. Contact the admin.' };
       }
@@ -645,7 +614,7 @@ export async function submitFeedback(
     }
     return { success: true };
   } catch (e) {
-    console.error('[Supabase] Submit feedback error:', e);
+
     return { success: false, error: String(e) };
   }
 }
@@ -659,13 +628,13 @@ export async function fetchFeedback(): Promise<{ items: Array<{ id: string; mess
       .limit(50);
 
     if (error) {
-      console.error('[Supabase] Error fetching feedback:', error);
+
       return { items: [], error: error.message };
     }
 
     return { items: (data ?? []) as Array<{ id: string; message: string; user_name: string; created_at: string }> };
   } catch (e) {
-    console.error('[Supabase] Fetch feedback error:', e);
+
     return { items: [], error: String(e) };
   }
 }

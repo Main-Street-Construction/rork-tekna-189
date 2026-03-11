@@ -44,14 +44,14 @@ export default function AdminScreen() {
   const usersQuery = useQuery({
     queryKey: ['adminUsersList'],
     queryFn: async (): Promise<AdminUserRow[]> => {
-      console.log('[Admin] Fetching user list via RPC...');
+
       const { data, error } = await supabase.rpc('admin_list_users_with_email');
       if (!error && data) {
         const rows = data as AdminUserRow[];
-        console.log('[Admin] Loaded', rows.length, 'users via RPC (with email)');
+
         return rows;
       }
-      console.warn('[Admin] RPC admin_list_users_with_email failed:', error?.message, '— trying fallback');
+
       const { data: fallback, error: fbErr } = await supabase.rpc('admin_list_users');
       if (!fbErr && fallback) {
         const rows = (fallback as Array<{ id: string; is_enabled: boolean; is_admin: boolean; created_at: string | null }>).map((r) => ({
@@ -59,10 +59,10 @@ export default function AdminScreen() {
           email: null,
           email_confirmed: false,
         }));
-        console.log('[Admin] Loaded', rows.length, 'users via fallback RPC');
+
         return rows;
       }
-      console.error('[Admin] All RPCs failed:', fbErr?.message);
+
       throw new Error(fbErr?.message ?? 'Failed to load users');
     },
     enabled: isAdmin,
@@ -74,7 +74,7 @@ export default function AdminScreen() {
       setIsEnabled?: boolean;
       setIsAdmin?: boolean;
     }) => {
-      console.log('[Admin] Updating user:', params.targetUserId, params);
+
       const { data, error } = await supabase.rpc('admin_update_user', {
         target_user_id: params.targetUserId,
         set_is_enabled: params.setIsEnabled ?? null,

@@ -35,6 +35,7 @@ import {
   LogOut,
   Heart,
   Users,
+  FileText,
 } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import { submitFeedback } from '@/lib/supabase-db';
@@ -645,6 +646,21 @@ export default function ProfileScreen() {
             </TouchableOpacity>
           </View>
         </View>}
+
+        <View style={styles.legalSection}>
+          <Text style={styles.sectionTitle}>Legal</Text>
+          <View style={styles.dataCard}>
+            <TouchableOpacity
+              style={styles.dataAction}
+              onPress={() => router.push('/privacy-policy')}
+              activeOpacity={0.7}
+            >
+              <FileText size={16} color={Colors.accent} />
+              <Text style={styles.dataActionText}>Privacy Policy</Text>
+              <ChevronRight size={16} color={Colors.textLight} />
+            </TouchableOpacity>
+          </View>
+        </View>
 
         {isSignedIn && isEnabled && (
           <View style={styles.dataSection}>
@@ -1349,5 +1365,8 @@ const styles = StyleSheet.create({
     color: Colors.textSecondary,
     marginTop: 4,
     textAlign: 'center',
+  },
+  legalSection: {
+    paddingTop: 24,
   },
 });
