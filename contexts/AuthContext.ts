@@ -16,55 +16,60 @@ const PROFILE_COLUMNS = 'id, is_enabled, is_admin';
 
 async function ensureProfileExists(userId: string, email: string | undefined): Promise<UserProfileRow | null> {
   console.log('[Auth] Ensuring profile exists for', userId, email);
-  const { data: existing, error: fetchErr } = await supabase
-    .from('profiles')
-    .select(PROFILE_COLUMNS)
-    .eq('id', userId)
-    .single();
+  try {
+    const { data: existing, error: fetchErr } = await supabase
+      .from('profiles')
+      .select(PROFILE_COLUMNS)
+      .eq('id', userId)
+      .single();
 
-  if (existing && !fetchErr) {
-    console.log('[Auth] Profile already exists:', JSON.stringify(existing));
-    if (email === ADMIN_EMAIL && (!existing.is_admin || !existing.is_enabled)) {
-      console.log('[Auth] Auto-promoting admin email:', email);
-      const { data: updated, error: updateErr } = await supabase
-        .from('profiles')
-        .update({ is_admin: true, is_enabled: true })
-        .eq('id', userId)
-        .select(PROFILE_COLUMNS)
-        .single();
-      if (updated && !updateErr) return updated as UserProfileRow;
-      console.warn('[Auth] Admin auto-promote failed:', updateErr?.message);
+    if (existing && !fetchErr) {
+      console.log('[Auth] Profile already exists:', JSON.stringify(existing));
+      if (email === ADMIN_EMAIL && (!existing.is_admin || !existing.is_enabled)) {
+        console.log('[Auth] Auto-promoting admin email:', email);
+        const { data: updated, error: updateErr } = await supabase
+          .from('profiles')
+          .update({ is_admin: true, is_enabled: true })
+          .eq('id', userId)
+          .select(PROFILE_COLUMNS)
+          .single();
+        if (updated && !updateErr) return updated as UserProfileRow;
+        console.warn('[Auth] Admin auto-promote failed:', updateErr?.message);
+      }
+      return existing as UserProfileRow;
     }
-    return existing as UserProfileRow;
-  }
 
-  console.log('[Auth] Profile not found, creating fallback profile for', userId);
-  const isAdminUser = email === ADMIN_EMAIL;
-  const { data: created, error: insertErr } = await supabase
-    .from('profiles')
-    .insert({
-      id: userId,
-      is_enabled: isAdminUser,
-      is_admin: isAdminUser,
-    })
-    .select(PROFILE_COLUMNS)
-    .single();
+    console.log('[Auth] Profile not found, creating fallback profile for', userId);
+    const isAdminUser = email === ADMIN_EMAIL;
+    const { data: created, error: insertErr } = await supabase
+      .from('profiles')
+      .insert({
+        id: userId,
+        is_enabled: isAdminUser,
+        is_admin: isAdminUser,
+      })
+      .select(PROFILE_COLUMNS)
+      .single();
 
-  if (insertErr) {
-    console.warn('[Auth] Fallback profile insert failed:', insertErr.message);
-    if (insertErr.message.includes('duplicate') || insertErr.code === '23505') {
-      const { data: retry } = await supabase
-        .from('profiles')
-        .select(PROFILE_COLUMNS)
-        .eq('id', userId)
-        .single();
-      return (retry as UserProfileRow) ?? null;
+    if (insertErr) {
+      console.warn('[Auth] Fallback profile insert failed:', insertErr.message);
+      if (insertErr.message.includes('duplicate') || insertErr.code === '23505') {
+        const { data: retry } = await supabase
+          .from('profiles')
+          .select(PROFILE_COLUMNS)
+          .eq('id', userId)
+          .single();
+        return (retry as UserProfileRow) ?? null;
+      }
+      return { id: userId, is_enabled: false, is_admin: false };
     }
-    return null;
-  }
 
-  console.log('[Auth] Fallback profile created:', JSON.stringify(created));
-  return created as UserProfileRow;
+    console.log('[Auth] Fallback profile created:', JSON.stringify(created));
+    return created as UserProfileRow;
+  } catch (e) {
+    console.warn('[Auth] ensureProfileExists error:', e);
+    return { id: userId, is_enabled: false, is_admin: false };
+  }
 }
 
 export const [AuthProvider, useAuth] = createContextHook(() => {
@@ -135,16 +140,18 @@ export const [AuthProvider, useAuth] = createContextHook(() => {
         console.warn('[Auth] Signup error:', error.message);
         if (error.message.includes('Database error saving new user')) {
           throw new Error(
-            'Signup failed due to a database configuration issue. Please ask the admin to check that the signup trigger has correct permissions. SQL fix: GRANT USAGE ON SCHEMA public TO supabase_auth_admin; GRANT INSERT ON public.profiles TO supabase_auth_admin;'
+            'Signup failed due to a database configuration issue. Please contact the administrator.'
           );
         }
         throw error;
       }
-      if (data.user) {
-        console.log('[Auth] Signup successful, ensuring profile exists...');
+      const needsEmailConfirmation = !data.session && !!data.user;
+      console.log('[Auth] Signup result - session:', !!data.session, 'user:', !!data.user, 'needsConfirmation:', needsEmailConfirmation);
+      if (data.session && data.user) {
+        console.log('[Auth] Signup successful with session, ensuring profile exists...');
         await ensureProfileExists(data.user.id, email);
       }
-      return data;
+      return { ...data, needsEmailConfirmation };
     },
   });
 
@@ -175,6 +182,14 @@ export const [AuthProvider, useAuth] = createContextHook(() => {
     [signOutMutation]
   );
 
+  const resendConfirmationMutation = useMutation({
+    mutationFn: async ({ email }: { email: string }) => {
+      console.log('[Auth] Resending confirmation to:', email);
+      const { error } = await supabase.auth.resend({ type: 'signup', email });
+      if (error) throw error;
+    },
+  });
+
   const resetPasswordMutation = useMutation({
     mutationFn: async ({ email }: { email: string }) => {
       console.log('[Auth] Sending password reset to:', email);
@@ -186,6 +201,11 @@ export const [AuthProvider, useAuth] = createContextHook(() => {
   const resetPassword = useCallback(
     (email: string) => resetPasswordMutation.mutateAsync({ email }),
     [resetPasswordMutation]
+  );
+
+  const resendConfirmation = useCallback(
+    (email: string) => resendConfirmationMutation.mutateAsync({ email }),
+    [resendConfirmationMutation]
   );
 
   const refreshProfile = useCallback(() => {
@@ -210,20 +230,22 @@ export const [AuthProvider, useAuth] = createContextHook(() => {
     signUp,
     signOut,
     resetPassword,
+    resendConfirmation,
     refreshProfile,
     signInPending: signInMutation.isPending,
     signUpPending: signUpMutation.isPending,
     signOutPending: signOutMutation.isPending,
     resetPasswordPending: resetPasswordMutation.isPending,
+    resendConfirmationPending: resendConfirmationMutation.isPending,
     signInError: signInMutation.error,
     signUpError: signUpMutation.error,
     resetPasswordError: resetPasswordMutation.error,
   }), [
     user, session, profileRow, isSignedIn, isEnabled, isAdmin,
     sessionLoading, profileQuery.isLoading,
-    signIn, signUp, signOut, resetPassword, refreshProfile,
+    signIn, signUp, signOut, resetPassword, resendConfirmation, refreshProfile,
     signInMutation.isPending, signUpMutation.isPending, signOutMutation.isPending,
-    resetPasswordMutation.isPending,
+    resetPasswordMutation.isPending, resendConfirmationMutation.isPending,
     signInMutation.error, signUpMutation.error, resetPasswordMutation.error,
   ]);
 });

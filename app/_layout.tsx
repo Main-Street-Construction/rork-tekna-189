@@ -61,7 +61,7 @@ function RootLayoutNav() {
       />
       <Stack.Screen
         name="auth"
-        options={{ presentation: "modal", title: "Sign In" }}
+        options={{ presentation: "modal", title: "Account" }}
       />
       <Stack.Screen
         name="admin/index"

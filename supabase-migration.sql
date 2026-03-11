@@ -262,6 +262,36 @@ DROP POLICY IF EXISTS "profiles_admin_all" ON profiles;
 CREATE POLICY "profiles_admin_all" ON profiles
   FOR ALL USING (public.is_admin());
 
+-- 12. ADMIN LIST USERS WITH EMAIL (joins auth.users)
+-- ============================================================
+CREATE OR REPLACE FUNCTION public.admin_list_users_with_email()
+RETURNS TABLE (
+  id UUID,
+  email TEXT,
+  is_enabled BOOLEAN,
+  is_admin BOOLEAN,
+  created_at TIMESTAMPTZ,
+  email_confirmed BOOLEAN
+) AS $
+BEGIN
+  IF NOT public.is_admin() THEN
+    RAISE EXCEPTION 'Forbidden: caller is not an admin';
+  END IF;
+
+  RETURN QUERY
+    SELECT
+      p.id,
+      u.email::TEXT,
+      p.is_enabled,
+      p.is_admin,
+      COALESCE(p.created_at, u.created_at) AS created_at,
+      (u.email_confirmed_at IS NOT NULL) AS email_confirmed
+    FROM public.profiles p
+    LEFT JOIN auth.users u ON u.id = p.id
+    ORDER BY COALESCE(p.created_at, u.created_at) DESC;
+END;
+$ LANGUAGE plpgsql SECURITY DEFINER;
+
 -- ============================================================
 -- DONE! After running this:
 -- 1. Create your first user via the app's signup flow

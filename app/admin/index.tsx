@@ -17,12 +17,23 @@ import {
   Users,
   Mail,
   AlertTriangle,
+  CheckCircle,
+  XCircle,
 } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import Colors from '@/constants/colors';
-import { useAuth, UserProfileRow } from '@/contexts/AuthContext';
+import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/lib/supabase';
+
+interface AdminUserRow {
+  id: string;
+  email: string | null;
+  is_enabled: boolean;
+  is_admin: boolean;
+  created_at: string | null;
+  email_confirmed: boolean;
+}
 
 export default function AdminScreen() {
   const router = useRouter();
@@ -32,24 +43,27 @@ export default function AdminScreen() {
 
   const usersQuery = useQuery({
     queryKey: ['adminUsersList'],
-    queryFn: async (): Promise<UserProfileRow[]> => {
+    queryFn: async (): Promise<AdminUserRow[]> => {
       console.log('[Admin] Fetching user list via RPC...');
-      const { data, error } = await supabase.rpc('admin_list_users');
+      const { data, error } = await supabase.rpc('admin_list_users_with_email');
       if (!error && data) {
-        console.log('[Admin] Loaded', (data as UserProfileRow[])?.length ?? 0, 'users via RPC');
-        return (data as UserProfileRow[]) ?? [];
+        const rows = data as AdminUserRow[];
+        console.log('[Admin] Loaded', rows.length, 'users via RPC (with email)');
+        return rows;
       }
-      console.warn('[Admin] RPC failed, falling back to direct query:', error?.message);
-      const { data: fallback, error: fbErr } = await supabase
-        .from('profiles')
-        .select('id, is_enabled, is_admin')
-        .order('id', { ascending: false });
-      if (fbErr) {
-        console.error('[Admin] Fallback query error:', fbErr.message);
-        throw new Error(fbErr.message);
+      console.warn('[Admin] RPC admin_list_users_with_email failed:', error?.message, '— trying fallback');
+      const { data: fallback, error: fbErr } = await supabase.rpc('admin_list_users');
+      if (!fbErr && fallback) {
+        const rows = (fallback as Array<{ id: string; is_enabled: boolean; is_admin: boolean; created_at: string | null }>).map((r) => ({
+          ...r,
+          email: null,
+          email_confirmed: false,
+        }));
+        console.log('[Admin] Loaded', rows.length, 'users via fallback RPC');
+        return rows;
       }
-      console.log('[Admin] Loaded', fallback?.length ?? 0, 'users via fallback');
-      return (fallback as UserProfileRow[]) ?? [];
+      console.error('[Admin] All RPCs failed:', fbErr?.message);
+      throw new Error(fbErr?.message ?? 'Failed to load users');
     },
     enabled: isAdmin,
   });
@@ -88,13 +102,14 @@ export default function AdminScreen() {
     },
   });
 
-  const handleToggleEnabled = useCallback((targetUser: UserProfileRow) => {
+  const handleToggleEnabled = useCallback((targetUser: AdminUserRow) => {
     const newValue = !targetUser.is_enabled;
     const action = newValue ? 'enable' : 'disable';
+    const displayName = targetUser.email ?? targetUser.id.slice(0, 8) + '...';
 
     Alert.alert(
       `${newValue ? 'Enable' : 'Disable'} User`,
-      `Are you sure you want to ${action} this user (${targetUser.id.slice(0, 8)}...)?`,
+      `Are you sure you want to ${action} ${displayName}?`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -112,7 +127,7 @@ export default function AdminScreen() {
     );
   }, [updateUserMutation]);
 
-  const handleToggleAdmin = useCallback((targetUser: UserProfileRow) => {
+  const handleToggleAdmin = useCallback((targetUser: AdminUserRow) => {
     if (targetUser.id === user?.id) {
       Alert.alert('Cannot Change', 'You cannot revoke your own admin status.');
       return;
@@ -120,10 +135,11 @@ export default function AdminScreen() {
 
     const newValue = !targetUser.is_admin;
     const action = newValue ? 'grant admin to' : 'revoke admin from';
+    const displayName = targetUser.email ?? targetUser.id.slice(0, 8) + '...';
 
     Alert.alert(
       `${newValue ? 'Grant' : 'Revoke'} Admin`,
-      `Are you sure you want to ${action} this user (${targetUser.id.slice(0, 8)}...)?`,
+      `Are you sure you want to ${action} ${displayName}?`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -140,8 +156,6 @@ export default function AdminScreen() {
       ]
     );
   }, [updateUserMutation, user?.id]);
-
-
 
   if (!isAdmin) {
     return (
@@ -160,6 +174,7 @@ export default function AdminScreen() {
   }
 
   const users = usersQuery.data ?? [];
+  const enabledCount = users.filter((u) => u.is_enabled).length;
 
   return (
     <View style={styles.container}>
@@ -208,16 +223,24 @@ export default function AdminScreen() {
             <Text style={styles.statsText}>
               {users.length} user{users.length !== 1 ? 's' : ''} registered
             </Text>
+            <View style={styles.statsDot} />
+            <Text style={styles.statsTextSecondary}>
+              {enabledCount} enabled
+            </Text>
           </View>
 
           {users.map((u) => {
             const isSelf = u.id === user?.id;
             const isUpdating = updatingUserId === u.id;
+            const displayEmail = u.email ?? 'No email available';
+            const createdDate = u.created_at
+              ? new Date(u.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
+              : null;
 
             return (
               <View key={u.id} style={[styles.userCard, isSelf && styles.userCardSelf]}>
                 <View style={styles.userHeader}>
-                  <View style={styles.userIcon}>
+                  <View style={[styles.userIcon, u.is_admin && styles.userIconAdmin]}>
                     {u.is_admin ? (
                       <ShieldCheck size={18} color={Colors.success} />
                     ) : (
@@ -227,7 +250,7 @@ export default function AdminScreen() {
                   <View style={styles.userInfo}>
                     <View style={styles.userNameRow}>
                       <Text style={styles.userEmail} numberOfLines={1}>
-                        {u.id.slice(0, 8)}...
+                        {displayEmail}
                       </Text>
                       {isSelf && (
                         <View style={styles.selfBadge}>
@@ -236,7 +259,20 @@ export default function AdminScreen() {
                       )}
                     </View>
                     <View style={styles.userMeta}>
-                      <Text style={styles.userDate}>{u.id.slice(0, 16)}...</Text>
+                      {createdDate && (
+                        <Text style={styles.userDate}>Joined {createdDate}</Text>
+                      )}
+                      {u.email_confirmed ? (
+                        <View style={styles.confirmedBadge}>
+                          <CheckCircle size={10} color={Colors.success} />
+                          <Text style={styles.confirmedText}>Confirmed</Text>
+                        </View>
+                      ) : (
+                        <View style={styles.unconfirmedBadge}>
+                          <XCircle size={10} color={Colors.danger} />
+                          <Text style={styles.unconfirmedText}>Unconfirmed</Text>
+                        </View>
+                      )}
                     </View>
                   </View>
                 </View>
@@ -355,6 +391,17 @@ const styles = StyleSheet.create({
     fontWeight: '600' as const,
     color: Colors.text,
   },
+  statsDot: {
+    width: 4,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: Colors.textLight,
+  },
+  statsTextSecondary: {
+    fontSize: 14,
+    fontWeight: '500' as const,
+    color: Colors.textSecondary,
+  },
   userCard: {
     backgroundColor: Colors.card,
     marginHorizontal: 16,
@@ -382,6 +429,9 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
+  userIconAdmin: {
+    backgroundColor: 'rgba(74, 124, 89, 0.1)',
+  },
   userInfo: {
     flex: 1,
   },
@@ -391,7 +441,7 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   userEmail: {
-    fontSize: 15,
+    fontSize: 14,
     fontWeight: '600' as const,
     color: Colors.text,
     flexShrink: 1,
@@ -410,12 +460,32 @@ const styles = StyleSheet.create({
   userMeta: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
-    marginTop: 3,
+    gap: 8,
+    marginTop: 4,
   },
   userDate: {
     fontSize: 11,
     color: Colors.textLight,
+  },
+  confirmedBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+  },
+  confirmedText: {
+    fontSize: 10,
+    color: Colors.success,
+    fontWeight: '500' as const,
+  },
+  unconfirmedBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+  },
+  unconfirmedText: {
+    fontSize: 10,
+    color: Colors.danger,
+    fontWeight: '500' as const,
   },
   togglesRow: {
     flexDirection: 'row',
