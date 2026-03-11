@@ -66,16 +66,18 @@ export default function ProfileScreen() {
   const [claimResults, setClaimResults] = useState<GedcomIndividual[]>([]);
   const [showClaimSearch, setShowClaimSearch] = useState<boolean>(false);
   const [feedbackMessage, setFeedbackMessage] = useState<string>('');
+  const [feedbackEmail, setFeedbackEmail] = useState<string>('');
   const [feedbackSent, setFeedbackSent] = useState<boolean>(false);
   const feedbackMutation = useMutation({
-    mutationFn: async (message: string) => {
-      const result = await submitFeedback(message, profile?.displayName || undefined);
+    mutationFn: async (params: { message: string; contactEmail?: string }) => {
+      const result = await submitFeedback(params.message, profile?.displayName || undefined, params.contactEmail || undefined);
       if (!result.success) throw new Error(result.error ?? 'Failed to send feedback.');
       return result;
     },
     onSuccess: () => {
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       setFeedbackMessage('');
+      setFeedbackEmail('');
       setFeedbackSent(true);
       setTimeout(() => setFeedbackSent(false), 4000);
     },
@@ -177,8 +179,8 @@ export default function ProfileScreen() {
       return;
     }
     Keyboard.dismiss();
-    feedbackMutation.mutate(feedbackMessage.trim());
-  }, [feedbackMessage, feedbackMutation]);
+    feedbackMutation.mutate({ message: feedbackMessage.trim(), contactEmail: feedbackEmail.trim() || undefined });
+  }, [feedbackMessage, feedbackEmail, feedbackMutation]);
 
   const handleStartClaim = useCallback(() => {
     if (isClaimed) {
@@ -633,6 +635,19 @@ export default function ProfileScreen() {
                 numberOfLines={4}
                 textAlignVertical="top"
                 testID="feedback-input"
+              />
+            </View>
+            <View style={styles.feedbackEmailWrap}>
+              <Mail size={14} color={Colors.textLight} />
+              <TextInput
+                style={styles.feedbackEmailInput}
+                placeholder="Contact email (optional)"
+                placeholderTextColor={Colors.textLight}
+                value={feedbackEmail}
+                onChangeText={setFeedbackEmail}
+                keyboardType="email-address"
+                autoCapitalize="none"
+                testID="feedback-email-input"
               />
             </View>
             <TouchableOpacity
@@ -1286,6 +1301,22 @@ const styles = StyleSheet.create({
     color: Colors.white,
     fontSize: 14,
     fontWeight: '600' as const,
+  },
+  feedbackEmailWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 14,
+    paddingBottom: 10,
+    gap: 10,
+    borderTopWidth: 1,
+    borderTopColor: Colors.divider,
+    paddingTop: 10,
+  },
+  feedbackEmailInput: {
+    flex: 1,
+    fontSize: 14,
+    color: Colors.text,
+    height: 36,
   },
   feedbackSuccess: {
     flexDirection: 'row',

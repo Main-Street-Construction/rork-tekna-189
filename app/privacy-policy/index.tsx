@@ -71,9 +71,7 @@ export default function PrivacyPolicyScreen() {
           to user accounts.
         </Section>
 
-        <Section title="Data Sharing">
-          We do not sell, trade, or rent your personal information to third parties.
-          Your data is only shared with:{'\n\n'}
+        <Section title="Data Sharing" intro="We do not sell, trade, or rent your personal information to third parties. Your data is only shared with:">
           <BulletPoint text="Other approved users of the app who can view the shared family tree data." />
           <BulletPoint text="Supabase (our database provider) for secure data storage and authentication." />
           <BulletPoint text="No analytics services, advertising networks, or other third parties receive your data." />
@@ -121,14 +119,17 @@ export default function PrivacyPolicyScreen() {
   );
 }
 
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
+function Section({ title, intro, children }: { title: string; intro?: string; children: React.ReactNode }) {
   return (
     <View style={styles.section}>
       <Text style={styles.sectionTitle}>{title}</Text>
       {typeof children === 'string' ? (
         <Text style={styles.sectionBody}>{children}</Text>
       ) : (
-        <View>{children}</View>
+        <View>
+          {intro ? <Text style={[styles.sectionBody, { marginBottom: 10 }]}>{intro}</Text> : null}
+          {children}
+        </View>
       )}
     </View>
   );

@@ -595,15 +595,20 @@ export async function reviewPendingEdit(
 
 export async function submitFeedback(
   message: string,
-  userName?: string
+  userName?: string,
+  contactEmail?: string
 ): Promise<{ success: boolean; error?: string }> {
   try {
-
-    const { error } = await supabase.from('feedback').insert({
+    const row: Record<string, string> = {
       message,
       user_name: userName ?? 'Anonymous',
       created_at: new Date().toISOString(),
-    });
+    };
+    if (contactEmail) {
+      row.contact_email = contactEmail;
+    }
+
+    const { error } = await supabase.from('feedback').insert(row);
 
     if (error) {
 

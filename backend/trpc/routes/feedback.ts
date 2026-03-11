@@ -5,6 +5,7 @@ interface FeedbackItem {
   id: string;
   message: string;
   userName: string;
+  contactEmail?: string;
   createdAt: string;
 }
 
@@ -16,6 +17,7 @@ export const feedbackRouter = createTRPCRouter({
       z.object({
         message: z.string().min(1).max(2000),
         userName: z.string().optional(),
+        contactEmail: z.string().email().optional(),
       })
     )
     .mutation(({ input }) => {
@@ -23,6 +25,7 @@ export const feedbackRouter = createTRPCRouter({
         id: `fb_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
         message: input.message,
         userName: input.userName ?? "Anonymous",
+        contactEmail: input.contactEmail,
         createdAt: new Date().toISOString(),
       };
       feedbackStore.push(item);
