@@ -11,7 +11,7 @@ import {
 import { useRouter } from 'expo-router';
 import {
   LogIn, Clock, LogOut, RefreshCw, ShieldCheck,
-  UserPlus, Search, GitFork, TreePine, Edit3, Heart,
+  Search, GitFork, TreePine, Edit3, Heart,
   ChevronRight, ChevronLeft,
 } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
@@ -85,19 +85,8 @@ function SignInPrompt() {
         activeOpacity={0.8}
         testID="auth-gate-sign-in"
       >
-        <UserPlus size={18} color={Colors.white} />
+        <LogIn size={18} color={Colors.white} />
         <Text style={styles.signInBtnText}>Get Started</Text>
-      </TouchableOpacity>
-      <TouchableOpacity
-        style={styles.secondaryBtn}
-        onPress={() => {
-          void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-          router.push('/auth');
-        }}
-        activeOpacity={0.7}
-      >
-        <LogIn size={16} color={Colors.accent} />
-        <Text style={styles.secondaryBtnText}>Already have an account? Sign In</Text>
       </TouchableOpacity>
     </View>
   );
