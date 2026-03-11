@@ -17,11 +17,11 @@ import * as Haptics from 'expo-haptics';
 import Colors from '@/constants/colors';
 import { useAuth } from '@/contexts/AuthContext';
 
-type AuthMode = 'signin' | 'signup';
+type AuthMode = 'signin' | 'signup' | 'reset';
 
 export default function AuthScreen() {
   const router = useRouter();
-  const { signIn, signUp, signInPending, signUpPending } = useAuth();
+  const { signIn, signUp, resetPassword, signInPending, signUpPending, resetPasswordPending } = useAuth();
 
   const [mode, setMode] = useState<AuthMode>('signin');
   const [email, setEmail] = useState<string>('');
@@ -29,16 +29,33 @@ export default function AuthScreen() {
   const [confirmPassword, setConfirmPassword] = useState<string>('');
   const [showPassword, setShowPassword] = useState<boolean>(false);
   const [errorMessage, setErrorMessage] = useState<string>('');
+  const [successMessage, setSuccessMessage] = useState<string>('');
 
-  const isPending = signInPending || signUpPending;
+  const isPending = signInPending || signUpPending || resetPasswordPending;
 
   const handleSubmit = useCallback(async () => {
     setErrorMessage('');
+    setSuccessMessage('');
 
     if (!email.trim()) {
       setErrorMessage('Please enter your email address.');
       return;
     }
+
+    if (mode === 'reset') {
+      try {
+        await resetPassword(email.trim());
+        void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        setSuccessMessage('Password reset email sent! Check your inbox (and spam folder).');
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        console.warn('[Auth] Reset error:', msg);
+        void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+        setErrorMessage(msg);
+      }
+      return;
+    }
+
     if (!password.trim()) {
       setErrorMessage('Please enter a password.');
       return;
@@ -73,13 +90,22 @@ export default function AuthScreen() {
       const msg = e instanceof Error ? e.message : String(e);
       console.warn('[Auth] Error:', msg);
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-      setErrorMessage(msg);
+      if (msg.includes('Invalid login credentials')) {
+        setErrorMessage('Invalid email or password. If you haven\'t signed up yet, create an account first.');
+      } else {
+        setErrorMessage(msg);
+      }
     }
-  }, [email, password, confirmPassword, mode, signIn, signUp, router]);
+  }, [email, password, confirmPassword, mode, signIn, signUp, resetPassword, router]);
 
-  const toggleMode = useCallback(() => {
-    setMode((prev) => (prev === 'signin' ? 'signup' : 'signin'));
+  const toggleMode = useCallback((target?: AuthMode) => {
+    if (target) {
+      setMode(target);
+    } else {
+      setMode((prev) => (prev === 'signin' ? 'signup' : 'signin'));
+    }
     setErrorMessage('');
+    setSuccessMessage('');
     setConfirmPassword('');
   }, []);
 
@@ -110,19 +136,29 @@ export default function AuthScreen() {
             <View style={styles.iconCircle}>
               {mode === 'signin' ? (
                 <LogIn size={28} color={Colors.accent} />
+              ) : mode === 'reset' ? (
+                <Mail size={28} color={Colors.accent} />
               ) : (
                 <UserPlus size={28} color={Colors.accent} />
               )}
             </View>
             <Text style={styles.title}>
-              {mode === 'signin' ? 'Welcome Back' : 'Create Account'}
+              {mode === 'signin' ? 'Welcome Back' : mode === 'reset' ? 'Reset Password' : 'Create Account'}
             </Text>
             <Text style={styles.subtitle}>
               {mode === 'signin'
                 ? 'Sign in to access cloud features'
+                : mode === 'reset'
+                ? 'Enter your email and we\'ll send a reset link'
                 : 'Sign up to start using cloud features'}
             </Text>
           </View>
+
+          {successMessage ? (
+            <View style={styles.successBanner}>
+              <Text style={styles.successText}>{successMessage}</Text>
+            </View>
+          ) : null}
 
           {errorMessage ? (
             <View style={styles.errorBanner}>
@@ -147,31 +183,34 @@ export default function AuthScreen() {
                 />
               </View>
 
-              <View style={styles.inputDivider} />
-
-              <View style={styles.inputRow}>
-                <Lock size={18} color={Colors.textSecondary} />
-                <TextInput
-                  style={styles.input}
-                  placeholder="Password"
-                  placeholderTextColor={Colors.textLight}
-                  value={password}
-                  onChangeText={setPassword}
-                  secureTextEntry={!showPassword}
-                  autoCapitalize="none"
-                  testID="auth-password-input"
-                />
-                <TouchableOpacity
-                  onPress={() => setShowPassword((p) => !p)}
-                  hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                >
-                  {showPassword ? (
-                    <EyeOff size={18} color={Colors.textLight} />
-                  ) : (
-                    <Eye size={18} color={Colors.textLight} />
-                  )}
-                </TouchableOpacity>
-              </View>
+              {mode !== 'reset' && (
+                <>
+                  <View style={styles.inputDivider} />
+                  <View style={styles.inputRow}>
+                    <Lock size={18} color={Colors.textSecondary} />
+                    <TextInput
+                      style={styles.input}
+                      placeholder="Password"
+                      placeholderTextColor={Colors.textLight}
+                      value={password}
+                      onChangeText={setPassword}
+                      secureTextEntry={!showPassword}
+                      autoCapitalize="none"
+                      testID="auth-password-input"
+                    />
+                    <TouchableOpacity
+                      onPress={() => setShowPassword((p) => !p)}
+                      hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                    >
+                      {showPassword ? (
+                        <EyeOff size={18} color={Colors.textLight} />
+                      ) : (
+                        <Eye size={18} color={Colors.textLight} />
+                      )}
+                    </TouchableOpacity>
+                  </View>
+                </>
+              )}
 
               {mode === 'signup' && (
                 <>
@@ -206,15 +245,27 @@ export default function AuthScreen() {
                 <>
                   {mode === 'signin' ? (
                     <LogIn size={18} color={Colors.white} />
+                  ) : mode === 'reset' ? (
+                    <Mail size={18} color={Colors.white} />
                   ) : (
                     <UserPlus size={18} color={Colors.white} />
                   )}
                   <Text style={styles.submitBtnText}>
-                    {mode === 'signin' ? 'Sign In' : 'Create Account'}
+                    {mode === 'signin' ? 'Sign In' : mode === 'reset' ? 'Send Reset Link' : 'Create Account'}
                   </Text>
                 </>
               )}
             </TouchableOpacity>
+
+            {mode === 'signin' && (
+              <TouchableOpacity
+                style={styles.forgotBtn}
+                onPress={() => toggleMode('reset')}
+                activeOpacity={0.7}
+              >
+                <Text style={styles.forgotBtnText}>Forgot Password?</Text>
+              </TouchableOpacity>
+            )}
 
             {mode === 'signup' && (
               <View style={styles.noteBanner}>
@@ -227,13 +278,15 @@ export default function AuthScreen() {
 
           <View style={styles.switchRow}>
             <Text style={styles.switchText}>
-              {mode === 'signin'
+              {mode === 'reset'
+                ? 'Remember your password?'
+                : mode === 'signin'
                 ? "Don't have an account?"
                 : 'Already have an account?'}
             </Text>
-            <TouchableOpacity onPress={toggleMode} activeOpacity={0.7}>
+            <TouchableOpacity onPress={() => toggleMode(mode === 'reset' ? 'signin' : undefined)} activeOpacity={0.7}>
               <Text style={styles.switchLink}>
-                {mode === 'signin' ? 'Sign Up' : 'Sign In'}
+                {mode === 'reset' ? 'Sign In' : mode === 'signin' ? 'Sign Up' : 'Sign In'}
               </Text>
             </TouchableOpacity>
           </View>
@@ -339,6 +392,29 @@ const styles = StyleSheet.create({
     color: Colors.white,
     fontSize: 16,
     fontWeight: '600' as const,
+  },
+  successBanner: {
+    backgroundColor: 'rgba(74, 124, 89, 0.1)',
+    borderWidth: 1,
+    borderColor: 'rgba(74, 124, 89, 0.2)',
+    borderRadius: 12,
+    padding: 14,
+    marginBottom: 16,
+  },
+  successText: {
+    fontSize: 13,
+    color: '#4A7C59',
+    fontWeight: '500' as const,
+    lineHeight: 18,
+  },
+  forgotBtn: {
+    alignItems: 'center' as const,
+    paddingVertical: 10,
+  },
+  forgotBtnText: {
+    fontSize: 14,
+    color: Colors.accent,
+    fontWeight: '500' as const,
   },
   noteBanner: {
     backgroundColor: 'rgba(200, 149, 108, 0.1)',

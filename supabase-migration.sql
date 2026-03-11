@@ -228,9 +228,52 @@ END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
 -- ============================================================
+-- 11. FIX: Grant trigger function permissions
+-- If signup fails with "Database error saving new user",
+-- run these grants to fix the trigger:
+-- ============================================================
+GRANT USAGE ON SCHEMA public TO supabase_auth_admin;
+GRANT INSERT ON public.profiles TO supabase_auth_admin;
+GRANT SELECT ON public.profiles TO supabase_auth_admin;
+
+-- Also ensure the trigger function owner is correct:
+ALTER FUNCTION public.handle_new_user() OWNER TO supabase_admin;
+
+-- If the above doesn't work, try dropping and recreating with explicit search_path:
+CREATE OR REPLACE FUNCTION public.handle_new_user()
+RETURNS TRIGGER AS $
+BEGIN
+  INSERT INTO public.profiles (id, email, is_enabled, is_admin)
+  VALUES (NEW.id, NEW.email, false, false)
+  ON CONFLICT (id) DO NOTHING;
+  RETURN NEW;
+EXCEPTION WHEN OTHERS THEN
+  RAISE WARNING 'handle_new_user trigger failed: %', SQLERRM;
+  RETURN NEW;
+END;
+$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
+
+-- Also add an INSERT policy on profiles so the app fallback works:
+DROP POLICY IF EXISTS "profiles_insert_own" ON profiles;
+CREATE POLICY "profiles_insert_own" ON profiles
+  FOR INSERT WITH CHECK (auth.uid() = id);
+
+-- Admin full access policy (covers all operations):
+DROP POLICY IF EXISTS "profiles_admin_all" ON profiles;
+CREATE POLICY "profiles_admin_all" ON profiles
+  FOR ALL USING (public.is_admin());
+
+-- ============================================================
 -- DONE! After running this:
 -- 1. Create your first user via the app's signup flow
 -- 2. Manually set that user as admin + enabled:
---    UPDATE profiles SET is_admin = true, is_enabled = true WHERE email = 'your@email.com';
+--    UPDATE profiles SET is_admin = true, is_enabled = true WHERE email = 'charlemartel6@gmail.com';
 -- 3. All subsequent users can be managed from the admin panel
+-- 
+-- TROUBLESHOOTING:
+-- If signup still fails, check Supabase Dashboard > Database > Triggers
+-- to verify on_auth_user_created exists and is enabled.
+-- You can also try creating a user from the Supabase Dashboard
+-- (Authentication > Users > Add User) to bypass the trigger entirely,
+-- then the app will create the profile row on first login.
 -- ============================================================

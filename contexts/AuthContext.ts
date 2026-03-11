@@ -132,7 +132,19 @@ export const [AuthProvider, useAuth] = createContextHook(() => {
     mutationFn: async ({ email, password }: { email: string; password: string }) => {
       console.log('[Auth] Signing up:', email);
       const { data, error } = await supabase.auth.signUp({ email, password });
-      if (error) throw error;
+      if (error) {
+        console.warn('[Auth] Signup error:', error.message);
+        if (error.message.includes('Database error saving new user')) {
+          throw new Error(
+            'Signup failed due to a database configuration issue. Please ask the admin to check that the signup trigger has correct permissions. SQL fix: GRANT USAGE ON SCHEMA public TO supabase_auth_admin; GRANT INSERT ON public.profiles TO supabase_auth_admin;'
+          );
+        }
+        throw error;
+      }
+      if (data.user) {
+        console.log('[Auth] Signup successful, ensuring profile exists...');
+        await ensureProfileExists(data.user.id, email);
+      }
       return data;
     },
   });
@@ -164,6 +176,19 @@ export const [AuthProvider, useAuth] = createContextHook(() => {
     [signOutMutation]
   );
 
+  const resetPasswordMutation = useMutation({
+    mutationFn: async ({ email }: { email: string }) => {
+      console.log('[Auth] Sending password reset to:', email);
+      const { error } = await supabase.auth.resetPasswordForEmail(email);
+      if (error) throw error;
+    },
+  });
+
+  const resetPassword = useCallback(
+    (email: string) => resetPasswordMutation.mutateAsync({ email }),
+    [resetPasswordMutation]
+  );
+
   const refreshProfile = useCallback(() => {
     void queryClient.invalidateQueries({ queryKey: ['authProfile'] });
   }, [queryClient]);
@@ -185,17 +210,21 @@ export const [AuthProvider, useAuth] = createContextHook(() => {
     signIn,
     signUp,
     signOut,
+    resetPassword,
     refreshProfile,
     signInPending: signInMutation.isPending,
     signUpPending: signUpMutation.isPending,
     signOutPending: signOutMutation.isPending,
+    resetPasswordPending: resetPasswordMutation.isPending,
     signInError: signInMutation.error,
     signUpError: signUpMutation.error,
+    resetPasswordError: resetPasswordMutation.error,
   }), [
     user, session, profileRow, isSignedIn, isEnabled, isAdmin,
     sessionLoading, profileQuery.isLoading,
-    signIn, signUp, signOut, refreshProfile,
+    signIn, signUp, signOut, resetPassword, refreshProfile,
     signInMutation.isPending, signUpMutation.isPending, signOutMutation.isPending,
-    signInMutation.error, signUpMutation.error,
+    resetPasswordMutation.isPending,
+    signInMutation.error, signUpMutation.error, resetPasswordMutation.error,
   ]);
 });
