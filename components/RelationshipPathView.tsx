@@ -51,10 +51,11 @@ export default React.memo(function RelationshipPathView({
     const initials =
       (person.givenName?.[0] ?? '') + (person.surname?.[0] ?? '');
 
-    const NodeWrapper = isCapture ? View : TouchableOpacity;
-    const wrapperProps = isCapture
-      ? {}
-      : { onPress: () => handlePress(personId), activeOpacity: 0.7 };
+    const hasHandler = !!onPersonPress;
+    const NodeWrapper = hasHandler ? TouchableOpacity : View;
+    const wrapperProps = hasHandler
+      ? { onPress: () => handlePress(personId), activeOpacity: 0.7 }
+      : {};
 
     return (
       <NodeWrapper
