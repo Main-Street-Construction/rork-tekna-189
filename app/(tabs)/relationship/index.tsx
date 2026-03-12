@@ -870,16 +870,30 @@ const RelationshipEntryCard = React.memo(function RelationshipEntryCard({
       {isExpanded && treeData && (
         <View style={styles.entryPathContainer}>
           <View ref={pathViewRef} collapsable={false} style={styles.captureContainer}>
+            <View style={styles.captureTopBar} />
             <View style={styles.captureHeader}>
               <View style={styles.capturePersonRow}>
-                <Text style={styles.capturePersonName} numberOfLines={1}>{person1.name}</Text>
-                <ArrowRight size={14} color={Colors.textLight} />
-                <Text style={styles.capturePersonName} numberOfLines={1}>{person2.name}</Text>
+                <View style={styles.capturePersonPill}>
+                  <View style={[styles.capturePersonDot, { backgroundColor: person1.sex === 'F' ? Colors.female : Colors.male }]} />
+                  <Text style={styles.capturePersonName} numberOfLines={1}>{person1.name}</Text>
+                </View>
+                <View style={styles.captureArrowWrap}>
+                  <ArrowRight size={12} color="#A49A8E" />
+                </View>
+                <View style={styles.capturePersonPill}>
+                  <View style={[styles.capturePersonDot, { backgroundColor: person2.sex === 'F' ? Colors.female : Colors.male }]} />
+                  <Text style={styles.capturePersonName} numberOfLines={1}>{person2.name}</Text>
+                </View>
               </View>
               <View style={styles.captureBadge}>
+                <GitFork size={14} color="#fff" />
                 <Text style={styles.captureBadgeText}>{entry.relationship}</Text>
               </View>
-              <Text style={styles.captureAncestorLabel}>via {entry.commonAncestor.ancestor.name}</Text>
+              {entry.relationship !== entry.reverseRelationship && (
+                <Text style={styles.captureReverseLabel}>
+                  {person1.givenName} is {person2.givenName}&apos;s {entry.reverseRelationship}
+                </Text>
+              )}
             </View>
             <RelationshipPathView
               person1={person1}
@@ -887,8 +901,13 @@ const RelationshipEntryCard = React.memo(function RelationshipEntryCard({
               commonAncestor={entry.commonAncestor}
               data={treeData}
               onPersonPress={onPersonPress}
+              isCapture
             />
-            <Text style={styles.captureFooter}>Family Tree App</Text>
+            <View style={styles.captureFooterRow}>
+              <View style={styles.captureFooterLine} />
+              <Text style={styles.captureFooter}>Family Tree</Text>
+              <View style={styles.captureFooterLine} />
+            </View>
           </View>
           <TouchableOpacity
             style={styles.sharePathButton}
@@ -897,12 +916,12 @@ const RelationshipEntryCard = React.memo(function RelationshipEntryCard({
             disabled={isSharing}
           >
             {isSharing ? (
-              <ActivityIndicator size="small" color={Colors.textSecondary} />
+              <ActivityIndicator size="small" color={Colors.white} />
             ) : (
-              <Share2 size={14} color={Colors.textSecondary} />
+              <Share2 size={14} color={Colors.white} />
             )}
             <Text style={styles.sharePathText}>
-              {isSharing ? 'Generating...' : 'Share Path'}
+              {isSharing ? 'Generating...' : 'Share as Image'}
             </Text>
           </TouchableOpacity>
         </View>
@@ -1306,61 +1325,115 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 6,
-    paddingVertical: 10,
+    gap: 8,
+    paddingVertical: 12,
     marginHorizontal: 14,
-    marginBottom: 8,
-    borderRadius: 10,
-    backgroundColor: Colors.backgroundDark,
+    marginTop: 4,
+    marginBottom: 10,
+    borderRadius: 12,
+    backgroundColor: Colors.accent,
   },
   sharePathText: {
-    fontSize: 12,
+    fontSize: 13,
     fontWeight: '600' as const,
-    color: Colors.textSecondary,
+    color: Colors.white,
   },
   captureContainer: {
-    backgroundColor: Colors.background,
-    paddingBottom: 12,
+    backgroundColor: '#FAF7F4',
+    borderRadius: 20,
+    marginHorizontal: 8,
+    marginTop: 8,
+    overflow: 'hidden' as const,
+    borderWidth: 1,
+    borderColor: '#E8DED4',
+  },
+  captureTopBar: {
+    height: 4,
+    backgroundColor: Colors.primary,
   },
   captureHeader: {
     alignItems: 'center' as const,
-    paddingVertical: 14,
+    paddingTop: 20,
+    paddingBottom: 12,
     paddingHorizontal: 16,
   },
   capturePersonRow: {
     flexDirection: 'row' as const,
     alignItems: 'center' as const,
-    gap: 8,
-    marginBottom: 10,
+    gap: 6,
+    marginBottom: 14,
+    flexWrap: 'wrap' as const,
+    justifyContent: 'center' as const,
   },
-  capturePersonName: {
-    fontSize: 14,
-    fontWeight: '600' as const,
-    color: Colors.text,
-  },
-  captureBadge: {
-    backgroundColor: Colors.primary,
-    paddingHorizontal: 16,
+  capturePersonPill: {
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+    backgroundColor: '#fff',
+    paddingHorizontal: 12,
     paddingVertical: 8,
     borderRadius: 20,
-    marginBottom: 6,
+    borderWidth: 1,
+    borderColor: '#E8DED4',
+    gap: 7,
+    maxWidth: 160,
+  },
+  capturePersonDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+  },
+  captureArrowWrap: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: '#EDE5DD',
+    justifyContent: 'center' as const,
+    alignItems: 'center' as const,
+  },
+  capturePersonName: {
+    fontSize: 13,
+    fontWeight: '600' as const,
+    color: '#2D2A26',
+  },
+  captureBadge: {
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+    backgroundColor: Colors.primary,
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    borderRadius: 24,
+    gap: 8,
   },
   captureBadgeText: {
-    fontSize: 15,
+    fontSize: 16,
     fontWeight: '700' as const,
-    color: Colors.white,
+    color: '#fff',
   },
-  captureAncestorLabel: {
-    fontSize: 12,
-    color: Colors.textSecondary,
+  captureReverseLabel: {
+    fontSize: 11,
+    color: '#8A8078',
+    marginTop: 8,
     fontStyle: 'italic' as const,
+  },
+  captureFooterRow: {
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+    justifyContent: 'center' as const,
+    gap: 10,
+    paddingVertical: 14,
+    paddingHorizontal: 24,
+  },
+  captureFooterLine: {
+    flex: 1,
+    height: 1,
+    backgroundColor: '#E0D8D0',
   },
   captureFooter: {
     fontSize: 10,
-    color: Colors.textLight,
-    textAlign: 'center' as const,
-    paddingTop: 8,
-    paddingBottom: 4,
+    fontWeight: '600' as const,
+    color: '#B8AFA5',
+    textTransform: 'uppercase' as const,
+    letterSpacing: 1.5,
   },
   noAncestorNote: {
     alignItems: 'center',

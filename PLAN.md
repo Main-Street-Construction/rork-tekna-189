@@ -2,18 +2,25 @@
 
 ## Summary
 
-After scanning every source file in the project, 7 packages listed in the app's dependency list are never imported or used anywhere in the code. Removing them reduces install size, avoids confusion, and speeds up installs.
+After scanning every source file in the project, 7 packages listed in the app's dependency list were never imported or used anywhere in the code. They have been removed.
 
-## Packages to remove
+## Packages removed
 
-## What stays the same
+- [x] expo-blur
+- [x] expo-clipboard
+- [x] expo-image
+- [x] expo-linear-gradient
+- [x] expo-symbols
+- [x] expo-font
+- [x] expo-web-browser
 
-- **No code changes** — only `package.json` is updated
-- **No features added or removed**
+## What stayed the same
+
+- **No feature changes** — only `package.json` and `app.json` updated
 - **No structural or design changes**
 
 ## Steps
 
-1. Remove the 7 packages from `package.json`
-2. Re-run the package installer to update the lock file
-
+- [x] Remove the 7 packages from `package.json`
+- [x] Re-run the package installer to update the lock file
+- [x] Clean up `app.json` plugin references

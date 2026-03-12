@@ -19,47 +19,86 @@ export interface RelationshipResult {
   fullPath: string[];
 }
 
-const MAX_GENERATIONS = 20;
+const MAX_GENERATIONS = 25;
 
 function buildParentIndex(data: FamilyTreeData): Map<string, string[]> {
   const parentIndex = new Map<string, string[]>();
+
+  const addParents = (childId: string, husbandId?: string, wifeId?: string) => {
+    if (!data.individuals.has(childId)) return;
+    const parents: string[] = [];
+    if (husbandId && data.individuals.has(husbandId)) parents.push(husbandId);
+    if (wifeId && data.individuals.has(wifeId)) parents.push(wifeId);
+    if (parents.length === 0) return;
+
+    const existing = parentIndex.get(childId);
+    if (!existing) {
+      parentIndex.set(childId, parents);
+    } else {
+      for (const pid of parents) {
+        if (!existing.includes(pid)) {
+          existing.push(pid);
+        }
+      }
+    }
+  };
 
   data.individuals.forEach((person) => {
     if (person.familyAsChild) {
       const family = data.families.get(person.familyAsChild);
       if (family) {
-        const parents: string[] = [];
-        if (family.husbandId && data.individuals.has(family.husbandId)) parents.push(family.husbandId);
-        if (family.wifeId && data.individuals.has(family.wifeId)) parents.push(family.wifeId);
-        if (parents.length > 0) {
-          parentIndex.set(person.id, parents);
-        }
+        addParents(person.id, family.husbandId, family.wifeId);
       }
     }
   });
 
   data.families.forEach((family) => {
-    const parents: string[] = [];
-    if (family.husbandId && data.individuals.has(family.husbandId)) parents.push(family.husbandId);
-    if (family.wifeId && data.individuals.has(family.wifeId)) parents.push(family.wifeId);
-    if (parents.length === 0) return;
-
     for (const childId of family.childrenIds) {
-      if (!data.individuals.has(childId)) continue;
-      const existing = parentIndex.get(childId);
-      if (!existing) {
-        parentIndex.set(childId, [...parents]);
-      } else {
-        for (const pid of parents) {
-          if (!existing.includes(pid)) {
-            existing.push(pid);
-          }
-        }
-      }
+      addParents(childId, family.husbandId, family.wifeId);
     }
   });
 
   return parentIndex;
+}
+
+function buildChildIndex(data: FamilyTreeData): Map<string, string[]> {
+  const childIndex = new Map<string, string[]>();
+
+  data.families.forEach((family) => {
+    const addChildren = (parentId: string) => {
+      if (!data.individuals.has(parentId)) return;
+      const existing = childIndex.get(parentId) ?? [];
+      for (const childId of family.childrenIds) {
+        if (data.individuals.has(childId) && !existing.includes(childId)) {
+          existing.push(childId);
+        }
+      }
+      if (existing.length > 0) childIndex.set(parentId, existing);
+    };
+    if (family.husbandId) addChildren(family.husbandId);
+    if (family.wifeId) addChildren(family.wifeId);
+  });
+
+  return childIndex;
+}
+
+function buildSpouseIndex(data: FamilyTreeData): Map<string, string[]> {
+  const spouseIndex = new Map<string, string[]>();
+
+  data.families.forEach((family) => {
+    if (family.husbandId && family.wifeId &&
+        data.individuals.has(family.husbandId) && data.individuals.has(family.wifeId)) {
+      const hSpouses = spouseIndex.get(family.husbandId) ?? [];
+      if (!hSpouses.includes(family.wifeId)) hSpouses.push(family.wifeId);
+      spouseIndex.set(family.husbandId, hSpouses);
+
+      const wSpouses = spouseIndex.get(family.wifeId) ?? [];
+      if (!wSpouses.includes(family.husbandId)) wSpouses.push(family.husbandId);
+      spouseIndex.set(family.wifeId, wSpouses);
+    }
+  });
+
+  return spouseIndex;
 }
 
 function getAncestorMap(
@@ -72,14 +111,15 @@ function getAncestorMap(
   const queue: { id: string; generations: number; path: string[] }[] = [
     { id: personId, generations: 0, path: [personId] },
   ];
+  let head = 0;
 
-  while (queue.length > 0) {
-    const current = queue.shift()!;
+  while (head < queue.length) {
+    const current = queue[head++];
     if (ancestors.has(current.id)) continue;
 
     ancestors.set(current.id, {
       generations: current.generations,
-      path: [...current.path],
+      path: current.path,
     });
 
     if (earlyExitId && current.id === earlyExitId && current.generations > 0) {
@@ -88,14 +128,17 @@ function getAncestorMap(
 
     if (current.generations >= MAX_GENERATIONS) continue;
 
-    const parentIds = parentIndex.get(current.id) ?? [];
-    for (const pid of parentIds) {
-      if (!ancestors.has(pid)) {
-        queue.push({
-          id: pid,
-          generations: current.generations + 1,
-          path: [...current.path, pid],
-        });
+    const parentIds = parentIndex.get(current.id);
+    if (parentIds) {
+      for (let i = 0; i < parentIds.length; i++) {
+        const pid = parentIds[i];
+        if (!ancestors.has(pid)) {
+          queue.push({
+            id: pid,
+            generations: current.generations + 1,
+            path: [...current.path, pid],
+          });
+        }
       }
     }
   }
@@ -108,14 +151,14 @@ export function findCommonAncestors(
   person2Id: string,
   data: FamilyTreeData
 ): CommonAncestorResult[] {
+  if (!data.individuals.has(person1Id) || !data.individuals.has(person2Id)) return [];
+  if (person1Id === person2Id) return [];
+
   const parentIndex = buildParentIndex(data);
   const ancestors1 = getAncestorMap(person1Id, data, parentIndex);
   const ancestors2 = getAncestorMap(person2Id, data, parentIndex);
 
-
-
   const common: CommonAncestorResult[] = [];
-
   let bestTotal = Infinity;
 
   ancestors1.forEach((info1, ancestorId) => {
@@ -144,7 +187,6 @@ export function findCommonAncestors(
     }
   });
 
-
   return common;
 }
 
@@ -153,6 +195,9 @@ export function findAllCommonAncestors(
   person2Id: string,
   data: FamilyTreeData
 ): CommonAncestorResult[] {
+  if (!data.individuals.has(person1Id) || !data.individuals.has(person2Id)) return [];
+  if (person1Id === person2Id) return [];
+
   const parentIndex = buildParentIndex(data);
   const ancestors1 = getAncestorMap(person1Id, data, parentIndex);
   const ancestors2 = getAncestorMap(person2Id, data, parentIndex);
@@ -182,9 +227,10 @@ export function findAllCommonAncestors(
   common.sort((a, b) => {
     const totalA = a.generationsTo1 + a.generationsTo2;
     const totalB = b.generationsTo1 + b.generationsTo2;
-    return totalA - totalB;
+    if (totalA !== totalB) return totalA - totalB;
+    return Math.abs(a.generationsTo1 - a.generationsTo2) -
+           Math.abs(b.generationsTo1 - b.generationsTo2);
   });
-
 
   return common;
 }
@@ -207,6 +253,8 @@ export function describeRelationshipFromGenerations(
   gen2: number,
   person2Sex: 'M' | 'F' | 'U'
 ): string {
+  if (gen1 < 0 || gen2 < 0) return 'Related';
+
   const isMale = person2Sex === 'M';
   const isFemale = person2Sex === 'F';
 
@@ -285,18 +333,94 @@ export interface MultiRelationshipResult {
   closestReverseRelationship: string;
 }
 
+function getSpouseLabel(sex: 'M' | 'F' | 'U'): string {
+  if (sex === 'F') return 'Wife';
+  if (sex === 'M') return 'Husband';
+  return 'Spouse';
+}
+
+function findInLawRelationship(
+  person1Id: string,
+  person2Id: string,
+  data: FamilyTreeData,
+  spouseIndex: Map<string, string[]>,
+  parentIndex: Map<string, string[]>
+): { relationship: string; reverseRelationship: string } | null {
+  const p2Gender = getGenderSafe(person2Id, data);
+  const p1Gender = getGenderSafe(person1Id, data);
+
+  const spouses1 = spouseIndex.get(person1Id) ?? [];
+  for (const spouseId of spouses1) {
+    const ancestors1 = getAncestorMap(spouseId, data, parentIndex);
+    const ancestors2 = getAncestorMap(person2Id, data, parentIndex);
+    let bestTotal = Infinity;
+    let bestGen1 = 0;
+    let bestGen2 = 0;
+
+    ancestors1.forEach((info1, ancestorId) => {
+      const info2 = ancestors2.get(ancestorId);
+      if (info2) {
+        const total = info1.generations + info2.generations;
+        if (total > 0 && total < bestTotal) {
+          bestTotal = total;
+          bestGen1 = info1.generations;
+          bestGen2 = info2.generations;
+        }
+      }
+    });
+
+    if (bestTotal < Infinity) {
+      const baseRel = describeRelationshipFromGenerations(bestGen1, bestGen2, p2Gender);
+      const baseRevRel = describeRelationshipFromGenerations(bestGen2, bestGen1, p1Gender);
+      return {
+        relationship: `${baseRel}-in-Law`,
+        reverseRelationship: `${baseRevRel}-in-Law`,
+      };
+    }
+  }
+
+  const spouses2 = spouseIndex.get(person2Id) ?? [];
+  for (const spouseId of spouses2) {
+    const ancestors1 = getAncestorMap(person1Id, data, parentIndex);
+    const ancestors2 = getAncestorMap(spouseId, data, parentIndex);
+    let bestTotal = Infinity;
+    let bestGen1 = 0;
+    let bestGen2 = 0;
+
+    ancestors1.forEach((info1, ancestorId) => {
+      const info2 = ancestors2.get(ancestorId);
+      if (info2) {
+        const total = info1.generations + info2.generations;
+        if (total > 0 && total < bestTotal) {
+          bestTotal = total;
+          bestGen1 = info1.generations;
+          bestGen2 = info2.generations;
+        }
+      }
+    });
+
+    if (bestTotal < Infinity) {
+      const baseRel = describeRelationshipFromGenerations(bestGen1, bestGen2, p2Gender);
+      const baseRevRel = describeRelationshipFromGenerations(bestGen2, bestGen1, p1Gender);
+      return {
+        relationship: `${baseRel}-in-Law`,
+        reverseRelationship: `${baseRevRel}-in-Law`,
+      };
+    }
+  }
+
+  return null;
+}
+
 export function calculateRelationship(
   person1Id: string,
   person2Id: string,
   data: FamilyTreeData
 ): RelationshipResult | null {
-
-
   const person1 = data.individuals.get(person1Id);
   const person2 = data.individuals.get(person2Id);
 
   if (!person1 || !person2) {
-
     return null;
   }
 
@@ -328,11 +452,9 @@ export function calculateRelationship(
       person1Gender
     );
 
-    const path1 = [...closest.pathFromAncestorToPerson1];
-    const path2 = closest.pathFromAncestorToPerson2.slice(1);
-    const fullPath = [...path1, ...path2];
-
-
+    const path1Reversed = [...closest.pathFromAncestorToPerson1].reverse();
+    const path2Tail = closest.pathFromAncestorToPerson2.slice(1);
+    const fullPath = [...path1Reversed, ...path2Tail];
 
     return {
       person1,
@@ -344,12 +466,27 @@ export function calculateRelationship(
     };
   }
 
-  if (isSpouse(person1Id, person2Id, data)) {
+  const spouseRelation = isSpouse(person1Id, person2Id, data);
+  if (spouseRelation) {
     return {
       person1,
       person2,
-      relationship: getGenderSafe(person2Id, data) === 'F' ? 'Wife' : getGenderSafe(person2Id, data) === 'M' ? 'Husband' : 'Spouse',
-      reverseRelationship: getGenderSafe(person1Id, data) === 'F' ? 'Wife' : getGenderSafe(person1Id, data) === 'M' ? 'Husband' : 'Spouse',
+      relationship: getSpouseLabel(getGenderSafe(person2Id, data)),
+      reverseRelationship: getSpouseLabel(getGenderSafe(person1Id, data)),
+      commonAncestors: [],
+      fullPath: [person1Id, person2Id],
+    };
+  }
+
+  const parentIndex = buildParentIndex(data);
+  const spouseIndex = buildSpouseIndex(data);
+  const inLaw = findInLawRelationship(person1Id, person2Id, data, spouseIndex, parentIndex);
+  if (inLaw) {
+    return {
+      person1,
+      person2,
+      relationship: inLaw.relationship,
+      reverseRelationship: inLaw.reverseRelationship,
       commonAncestors: [],
       fullPath: [person1Id, person2Id],
     };
@@ -370,12 +507,21 @@ export function calculateAllRelationships(
   person2Id: string,
   data: FamilyTreeData
 ): MultiRelationshipResult | null {
-
-
   const person1 = data.individuals.get(person1Id);
   const person2 = data.individuals.get(person2Id);
 
   if (!person1 || !person2) return null;
+
+  if (person1Id === person2Id) {
+    return {
+      person1,
+      person2,
+      entries: [],
+      isSpouse: false,
+      closestRelationship: 'Self',
+      closestReverseRelationship: 'Self',
+    };
+  }
 
   const spouseRelation = isSpouse(person1Id, person2Id, data);
   const allCommon = findAllCommonAncestors(person1Id, person2Id, data);
@@ -410,10 +556,27 @@ export function calculateAllRelationships(
     if (entries.length >= 20) break;
   }
 
-  const closestRel = entries.length > 0 ? entries[0].relationship : (spouseRelation ? (p2Gender === 'F' ? 'Wife' : p2Gender === 'M' ? 'Husband' : 'Spouse') : 'No blood relation found');
-  const closestRevRel = entries.length > 0 ? entries[0].reverseRelationship : (spouseRelation ? (p1Gender === 'F' ? 'Wife' : p1Gender === 'M' ? 'Husband' : 'Spouse') : 'No blood relation found');
+  let closestRel: string;
+  let closestRevRel: string;
 
-
+  if (entries.length > 0) {
+    closestRel = entries[0].relationship;
+    closestRevRel = entries[0].reverseRelationship;
+  } else if (spouseRelation) {
+    closestRel = getSpouseLabel(p2Gender);
+    closestRevRel = getSpouseLabel(p1Gender);
+  } else {
+    const parentIndex = buildParentIndex(data);
+    const spouseIndex = buildSpouseIndex(data);
+    const inLaw = findInLawRelationship(person1Id, person2Id, data, spouseIndex, parentIndex);
+    if (inLaw) {
+      closestRel = inLaw.relationship;
+      closestRevRel = inLaw.reverseRelationship;
+    } else {
+      closestRel = 'No blood relation found';
+      closestRevRel = 'No blood relation found';
+    }
+  }
 
   return {
     person1,
@@ -430,38 +593,25 @@ export function getDescendantPath(
   descendantId: string,
   data: FamilyTreeData
 ): string[] | null {
+  if (!data.individuals.has(ancestorId) || !data.individuals.has(descendantId)) return null;
   if (ancestorId === descendantId) return [ancestorId];
 
+  const childIndex = buildChildIndex(data);
   const visited = new Set<string>();
   const queue: { id: string; path: string[] }[] = [
     { id: ancestorId, path: [ancestorId] },
   ];
+  let head = 0;
 
-  const childrenCache = new Map<string, string[]>();
-
-  while (queue.length > 0) {
-    const current = queue.shift()!;
+  while (head < queue.length) {
+    const current = queue[head++];
     if (visited.has(current.id)) continue;
     visited.add(current.id);
 
     if (current.path.length > 30) continue;
 
-    let childIds = childrenCache.get(current.id);
-    if (!childIds) {
-      childIds = [];
-      const person = data.individuals.get(current.id);
-      if (person) {
-        for (const famId of person.familiesAsSpouse) {
-          const family = data.families.get(famId);
-          if (family) {
-            for (const cId of family.childrenIds) {
-              childIds.push(cId);
-            }
-          }
-        }
-      }
-      childrenCache.set(current.id, childIds);
-    }
+    const childIds = childIndex.get(current.id);
+    if (!childIds) continue;
 
     for (const childId of childIds) {
       if (visited.has(childId)) continue;
