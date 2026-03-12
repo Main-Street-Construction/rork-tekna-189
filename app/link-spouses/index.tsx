@@ -13,7 +13,7 @@ import {
   FlatList,
   Keyboard,
 } from 'react-native';
-import { useRouter, Stack } from 'expo-router';
+import { useRouter, Stack, useLocalSearchParams } from 'expo-router';
 import { Heart, X, Search, User, Check } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import Colors from '@/constants/colors';
@@ -24,10 +24,12 @@ type SelectionStep = 'person1' | 'person2' | 'details';
 
 export default function LinkSpousesScreen() {
   const router = useRouter();
-  const { search, isAdmin, submitEdit, linkExistingSpouses } = useFamilyTree();
+  const { prefill } = useLocalSearchParams<{ prefill?: string }>();
+  const { search, getPerson, isAdmin, submitEdit, linkExistingSpouses } = useFamilyTree();
 
   const [step, setStep] = useState<SelectionStep>('person1');
   const [person1, setPerson1] = useState<GedcomIndividual | null>(null);
+  const [didPrefill, setDidPrefill] = useState<boolean>(false);
   const [person2, setPerson2] = useState<GedcomIndividual | null>(null);
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [searchResults, setSearchResults] = useState<GedcomIndividual[]>([]);
@@ -36,6 +38,17 @@ export default function LinkSpousesScreen() {
   const [isSaving, setIsSaving] = useState<boolean>(false);
 
   const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    if (prefill && !didPrefill) {
+      const prefillPerson = getPerson(prefill);
+      if (prefillPerson) {
+        setPerson1(prefillPerson);
+        setStep('person2');
+        setDidPrefill(true);
+      }
+    }
+  }, [prefill, didPrefill, getPerson]);
 
   useEffect(() => {
     return () => {

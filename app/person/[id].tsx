@@ -180,9 +180,10 @@ export default function PersonDetailScreen() {
   }, [router]);
 
   const handleLinkSpouses = useCallback(() => {
+    if (!id) return;
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    router.push('/link-spouses');
-  }, [router]);
+    router.push(`/link-spouses?prefill=${id}`);
+  }, [router, id]);
 
   const spouseFamilies = useMemo(() => {
     if (!id || !treeData) return [];
