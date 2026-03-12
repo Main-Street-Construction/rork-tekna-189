@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { File, Directory, Paths } from 'expo-file-system';
@@ -142,16 +142,37 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
   const [pendingEditCount, setPendingEditCount] = useState<number>(0);
   const [isLoadingFromCloud, setIsLoadingFromCloud] = useState<boolean>(false);
   const [cloudError, setCloudError] = useState<string | null>(null);
+  const bgSyncRef = useRef<boolean>(false);
 
   const canLoadData = isSignedIn && isEnabled;
 
-  const loadQuery = useQuery({
-    queryKey: ['familyTree', canLoadData],
-    queryFn: async () => {
-      if (!canLoadData) {
-        console.log('[FamilyTree] Not loading — user not signed in or not enabled');
-        return null;
+  const backgroundSyncFromCloud = useCallback(async () => {
+    setIsLoadingFromCloud(true);
+    setCloudError(null);
+    try {
+      const cloudResult = await loadAllFromSupabase();
+      if (cloudResult.data && cloudResult.data.individuals.size > 0) {
+        console.log('[FamilyTree] Background sync complete:', cloudResult.data.individuals.size, 'individuals');
+        const serialized = serializeFamilyTreeData(cloudResult.data);
+        await safeSetItem(STORAGE_KEY, serialized);
+        await safeSetItem(LAST_CLOUD_SYNC_KEY, String(Date.now()));
+        await safeSetItem(DATA_FORMAT_VERSION_KEY, CURRENT_DATA_FORMAT_VERSION);
+        setTreeData(cloudResult.data);
+      } else if (cloudResult.error) {
+        console.warn('[FamilyTree] Background sync error:', cloudResult.error);
+        setCloudError(cloudResult.error);
       }
+    } catch (e) {
+      console.warn('[FamilyTree] Background sync failed:', e);
+      setCloudError(String(e));
+    } finally {
+      setIsLoadingFromCloud(false);
+    }
+  }, []);
+
+  const loadQuery = useQuery({
+    queryKey: ['familyTree'],
+    queryFn: async (): Promise<FamilyTreeData | null> => {
       console.log('[FamilyTree] Loading data...');
 
       await safeRemoveItem(RAW_GEDCOM_KEY);
@@ -174,20 +195,15 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
         console.log('[FamilyTree] Found local cached data, loading instantly');
         const localData = deserializeFamilyTreeData(stored);
         if (localData.individuals.size > 0) {
-          const sample = Array.from(localData.individuals.values()).slice(0, 2);
-          sample.forEach((p, i) => {
-            console.log(`[FamilyTree] Cached sample ${i}:`, p.id, '|', p.name, '| given:', p.givenName, '| surname:', p.surname);
-          });
-
           const lastSync = await safeGetItem(LAST_CLOUD_SYNC_KEY);
           const lastSyncTime = lastSync ? parseInt(lastSync, 10) : 0;
           const timeSinceSync = Date.now() - lastSyncTime;
 
           if (timeSinceSync > CLOUD_SYNC_INTERVAL) {
-            console.log('[FamilyTree] Cache stale, syncing from cloud in background');
-            void backgroundSyncFromCloud();
+            console.log('[FamilyTree] Cache stale, will sync from cloud in background');
+            bgSyncRef.current = true;
           } else {
-            console.log('[FamilyTree] Cache fresh (synced', Math.round(timeSinceSync / 60000), 'min ago), skipping cloud sync');
+            console.log('[FamilyTree] Cache fresh (synced', Math.round(timeSinceSync / 60000), 'min ago)');
           }
 
           return localData;
@@ -206,10 +222,7 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
           if (cached) {
             await safeSetItem(LAST_CLOUD_SYNC_KEY, String(Date.now()));
             await safeSetItem(DATA_FORMAT_VERSION_KEY, CURRENT_DATA_FORMAT_VERSION);
-          } else {
-            console.warn('[FamilyTree] Could not cache data locally, will load from cloud each session');
           }
-          setIsLoadingFromCloud(false);
           return cloudResult.data;
         }
         if (cloudResult.error) {
@@ -219,44 +232,37 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
       } catch (e) {
         console.warn('[FamilyTree] Supabase load failed:', e);
         setCloudError(String(e));
+      } finally {
+        setIsLoadingFromCloud(false);
       }
-      setIsLoadingFromCloud(false);
 
       console.log('[FamilyTree] No data found');
       return null;
     },
     enabled: canLoadData,
+    staleTime: CLOUD_SYNC_INTERVAL,
+    gcTime: CLOUD_SYNC_INTERVAL * 2,
+    retry: 2,
+    retryDelay: (attempt) => Math.min(1000 * Math.pow(2, attempt), 10000),
   });
-
-  const backgroundSyncFromCloud = useCallback(async () => {
-    setIsLoadingFromCloud(true);
-    setCloudError(null);
-    try {
-      const cloudResult = await loadAllFromSupabase();
-      if (cloudResult.data && cloudResult.data.individuals.size > 0) {
-        console.log('[FamilyTree] Background sync complete:', cloudResult.data.individuals.size, 'individuals');
-        const serialized = serializeFamilyTreeData(cloudResult.data);
-        await safeSetItem(STORAGE_KEY, serialized);
-        await safeSetItem(LAST_CLOUD_SYNC_KEY, String(Date.now()));
-        setTreeData(cloudResult.data);
-      } else if (cloudResult.error) {
-        console.warn('[FamilyTree] Background sync error:', cloudResult.error);
-        setCloudError(cloudResult.error);
-      }
-    } catch (e) {
-      console.warn('[FamilyTree] Background sync failed:', e);
-      setCloudError(String(e));
-    } finally {
-      setIsLoadingFromCloud(false);
-    }
-  }, []);
 
   useEffect(() => {
     if (loadQuery.data !== undefined) {
       setTreeData(loadQuery.data);
       setIsReady(true);
+      if (bgSyncRef.current) {
+        bgSyncRef.current = false;
+        void backgroundSyncFromCloud();
+      }
     }
-  }, [loadQuery.data]);
+  }, [loadQuery.data, backgroundSyncFromCloud]);
+
+  useEffect(() => {
+    if (!canLoadData) {
+      setTreeData(null);
+      setIsReady(false);
+    }
+  }, [canLoadData]);
 
   const importMutation = useMutation({
     mutationFn: async (gedcomContent: string) => {
@@ -337,6 +343,7 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
         await safeSetItem(DATA_FORMAT_VERSION_KEY, CURRENT_DATA_FORMAT_VERSION);
       }
       setTreeData(result.data);
+      setIsReady(true);
       console.log('[FamilyTree] Full reload complete:', result.data.individuals.size, 'individuals');
       return { success: true };
     }
@@ -357,16 +364,14 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
       if (localIndCount === 0) {
         console.log('[FamilyTree] No local data — doing full reload');
         const result = await fullReloadFromCloud();
-        setIsLoadingFromCloud(false);
         return result;
       }
 
       const cloudCounts = await getCloudCounts();
       if (!cloudCounts) {
-        console.warn('[FamilyTree] Could not fetch cloud counts, assuming up-to-date');
-        await safeSetItem(LAST_CLOUD_SYNC_KEY, String(Date.now()));
-        setIsLoadingFromCloud(false);
-        return { success: true };
+        console.warn('[FamilyTree] Could not fetch cloud counts, doing full sync to be safe');
+        const result = await fullReloadFromCloud();
+        return result;
       }
 
       const indDiff = Math.abs(cloudCounts.individuals - localIndCount);
@@ -375,19 +380,18 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
       if (indDiff === 0 && famDiff === 0) {
         console.log('[FamilyTree] Data is up-to-date (local:', localIndCount, 'ind,', localFamCount, 'fam | cloud:', cloudCounts.individuals, 'ind,', cloudCounts.families, 'fam)');
         await safeSetItem(LAST_CLOUD_SYNC_KEY, String(Date.now()));
-        setIsLoadingFromCloud(false);
         return { success: true };
       }
 
       console.log('[FamilyTree] Data mismatch detected (local:', localIndCount, 'ind,', localFamCount, 'fam | cloud:', cloudCounts.individuals, 'ind,', cloudCounts.families, 'fam) — syncing...');
       const result = await fullReloadFromCloud();
-      setIsLoadingFromCloud(false);
       return result;
     } catch (e) {
       const msg = String(e);
       setCloudError(msg);
-      setIsLoadingFromCloud(false);
       return { success: false, error: msg };
+    } finally {
+      setIsLoadingFromCloud(false);
     }
   }, [treeData, fullReloadFromCloud]);
 

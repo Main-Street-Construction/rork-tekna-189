@@ -174,115 +174,101 @@ async function _resolveFamilyGedcomIdToUuid(gedcomId: string): Promise<string | 
   }
 }
 
+async function fetchAllPages<T>(
+  table: string,
+  pageSize: number = 1000
+): Promise<{ rows: T[]; error?: string }> {
+  const allRows: T[] = [];
+  let offset = 0;
+  let consecutiveErrors = 0;
+
+  while (true) {
+    const { data: rows, error } = await fetchWithRetry<T>(() =>
+      supabase
+        .from(table)
+        .select('*')
+        .range(offset, offset + pageSize - 1)
+    );
+
+    if (error) {
+      consecutiveErrors++;
+      if (consecutiveErrors >= 2) {
+        return { rows: allRows, error: `Failed fetching ${table}: ${error.message}` };
+      }
+      await new Promise(r => setTimeout(r, 1000));
+      continue;
+    }
+
+    consecutiveErrors = 0;
+
+    if (!rows || rows.length === 0) break;
+
+    for (const row of rows) {
+      allRows.push(row as T);
+    }
+
+    if (rows.length < pageSize) break;
+    offset += pageSize;
+  }
+
+  return { rows: allRows };
+}
+
 export async function loadAllFromSupabase(): Promise<{
   data: FamilyTreeData | null;
   error?: string;
 }> {
   try {
+    console.log('[Supabase] Loading all data in parallel...');
+    const startTime = Date.now();
 
+    const [indResult, famResult, fmResult] = await Promise.all([
+      fetchAllPages<SupabaseIndividual>('individuals'),
+      fetchAllPages<SupabaseFamily>('families'),
+      fetchAllPages<SupabaseFamilyMember>('family_members'),
+    ]);
+
+    if (indResult.error && indResult.rows.length === 0) {
+      return { data: null, error: indResult.error };
+    }
+    if (famResult.error && famResult.rows.length === 0) {
+      return { data: null, error: famResult.error };
+    }
+
+    console.log('[Supabase] Fetched', indResult.rows.length, 'individuals,', famResult.rows.length, 'families,', fmResult.rows.length, 'family_members in', Date.now() - startTime, 'ms');
 
     const individuals = new Map<string, GedcomIndividual>();
     const uuidToGedcomId = new Map<string, string>();
     const familyUuidToGedcomId = new Map<string, string>();
-    let indOffset = 0;
-    const PAGE_SIZE = 1000;
 
-    while (true) {
-      const { data: rows, error: indError } = await fetchWithRetry<SupabaseIndividual>(() =>
-        supabase
-          .from('individuals')
-          .select('*')
-          .range(indOffset, indOffset + PAGE_SIZE - 1)
-      );
-
-      if (indError) {
-        return { data: null, error: indError.message };
-      }
-
-      if (!rows || rows.length === 0) break;
-
-      for (const row of rows) {
-        const typedRow = row as SupabaseIndividual;
-        uuidToGedcomId.set(typedRow.id, typedRow.gedcom_id);
-        const ind = supabaseToIndividual(typedRow);
-        individuals.set(ind.id, ind);
-      }
-
-
-      if (rows.length < PAGE_SIZE) break;
-      indOffset += PAGE_SIZE;
+    for (const row of indResult.rows) {
+      uuidToGedcomId.set(row.id, row.gedcom_id);
+      const ind = supabaseToIndividual(row);
+      individuals.set(ind.id, ind);
     }
 
-
-
-    const familyRows: SupabaseFamily[] = [];
-    let famOffset = 0;
-
-    while (true) {
-      const { data: rows, error: famError } = await fetchWithRetry<SupabaseFamily>(() =>
-        supabase
-          .from('families')
-          .select('*')
-          .range(famOffset, famOffset + PAGE_SIZE - 1)
-      );
-
-      if (famError) {
-        console.error('[Supabase] Error fetching families:', famError);
-        return { data: null, error: famError.message };
-      }
-
-      if (!rows || rows.length === 0) break;
-
-      for (const row of rows) {
-        const typedRow = row as SupabaseFamily;
-        familyRows.push(typedRow);
-        familyUuidToGedcomId.set(typedRow.id, typedRow.gedcom_id);
-      }
-
-
-      if (rows.length < PAGE_SIZE) break;
-      famOffset += PAGE_SIZE;
+    for (const row of famResult.rows) {
+      familyUuidToGedcomId.set(row.id, row.gedcom_id);
     }
 
     const familyChildrenMap = new Map<string, string[]>();
-    let fmOffset = 0;
-
-    while (true) {
-      const { data: rows, error: fmError } = await fetchWithRetry<SupabaseFamilyMember>(() =>
-        supabase
-          .from('family_members')
-          .select('*')
-          .range(fmOffset, fmOffset + PAGE_SIZE - 1)
-      );
-
-      if (fmError) {
-        break;
-      }
-
-      if (!rows || rows.length === 0) break;
-
-      for (const row of rows) {
-        const typedRow = row as SupabaseFamilyMember;
-        if (typedRow.role === 'child') {
-          const familyGedcomId = familyUuidToGedcomId.get(typedRow.family_id);
-          const childGedcomId = uuidToGedcomId.get(typedRow.individual_id);
-          if (familyGedcomId && childGedcomId) {
-            const existing = familyChildrenMap.get(familyGedcomId) ?? [];
+    for (const row of fmResult.rows) {
+      if (row.role === 'child') {
+        const familyGedcomId = familyUuidToGedcomId.get(row.family_id);
+        const childGedcomId = uuidToGedcomId.get(row.individual_id);
+        if (familyGedcomId && childGedcomId) {
+          const existing = familyChildrenMap.get(familyGedcomId);
+          if (existing) {
             existing.push(childGedcomId);
-            familyChildrenMap.set(familyGedcomId, existing);
+          } else {
+            familyChildrenMap.set(familyGedcomId, [childGedcomId]);
           }
         }
       }
-
-
-      if (rows.length < PAGE_SIZE) break;
-      fmOffset += PAGE_SIZE;
     }
 
-
-
     const families = new Map<string, GedcomFamily>();
-    for (const row of familyRows) {
+    for (const row of famResult.rows) {
       const childGedcomIds = familyChildrenMap.get(row.gedcom_id) ?? [];
       const fam = supabaseToFamily(row, uuidToGedcomId, childGedcomIds);
       families.set(fam.id, fam);
@@ -318,9 +304,10 @@ export async function loadAllFromSupabase(): Promise<{
       }
     });
 
-
+    console.log('[Supabase] Data assembly complete:', individuals.size, 'individuals,', families.size, 'families');
     return { data: { individuals, families } };
   } catch (e) {
+    console.error('[Supabase] loadAllFromSupabase crashed:', e);
     return { data: null, error: String(e) };
   }
 }
