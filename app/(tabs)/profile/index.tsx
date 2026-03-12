@@ -33,7 +33,6 @@ import {
   Lock,
   LogIn,
   LogOut,
-  Heart,
   Users,
   FileText,
 } from 'lucide-react-native';
@@ -513,16 +512,6 @@ export default function ProfileScreen() {
                         <Text style={styles.pendingBadgeText}>{pendingEditCount}</Text>
                       </View>
                     )}
-                    <ChevronRight size={14} color={Colors.textLight} />
-                  </TouchableOpacity>
-
-                  <TouchableOpacity
-                    style={styles.pendingEditsBtn}
-                    onPress={() => router.push('/link-spouses')}
-                    activeOpacity={0.7}
-                  >
-                    <Heart size={16} color={Colors.accent} />
-                    <Text style={styles.pendingEditsBtnText}>Link Existing Spouses</Text>
                     <ChevronRight size={14} color={Colors.textLight} />
                   </TouchableOpacity>
 
