@@ -13,13 +13,14 @@ export const [ProfileProvider, useProfile] = createContextHook(() => {
   const loadQuery = useQuery({
     queryKey: ['userProfile'],
     queryFn: async () => {
-
       const stored = await AsyncStorage.getItem(PROFILE_KEY);
       if (stored) {
         return JSON.parse(stored) as UserProfile;
       }
       return null;
     },
+    staleTime: Infinity,
+    gcTime: Infinity,
   });
 
   useEffect(() => {
@@ -36,6 +37,8 @@ export const [ProfileProvider, useProfile] = createContextHook(() => {
       const claimed = await AsyncStorage.getItem(CLAIMED_KEY);
       return claimed === 'true';
     },
+    staleTime: Infinity,
+    gcTime: Infinity,
   });
 
   useEffect(() => {

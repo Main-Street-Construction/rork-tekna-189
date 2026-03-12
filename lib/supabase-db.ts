@@ -274,6 +274,10 @@ export async function loadAllFromSupabase(): Promise<{
       families.set(fam.id, fam);
     }
 
+    let spouseLinksSet = 0;
+    let childLinksSet = 0;
+    let childLinkSkipped = 0;
+
     families.forEach((fam) => {
       if (fam.husbandId) {
         const husband = individuals.get(fam.husbandId);
@@ -282,6 +286,7 @@ export async function loadAllFromSupabase(): Promise<{
             ...husband,
             familiesAsSpouse: [...husband.familiesAsSpouse, fam.id],
           });
+          spouseLinksSet++;
         }
       }
       if (fam.wifeId) {
@@ -291,6 +296,7 @@ export async function loadAllFromSupabase(): Promise<{
             ...wife,
             familiesAsSpouse: [...wife.familiesAsSpouse, fam.id],
           });
+          spouseLinksSet++;
         }
       }
       for (const childId of fam.childrenIds) {
@@ -300,11 +306,23 @@ export async function loadAllFromSupabase(): Promise<{
             ...child,
             familyAsChild: fam.id,
           });
+          childLinksSet++;
+        } else if (child && child.familyAsChild) {
+          childLinkSkipped++;
         }
       }
     });
 
+    let individualsWithParents = 0;
+    let individualsWithSpouseFamilies = 0;
+    individuals.forEach((ind) => {
+      if (ind.familyAsChild) individualsWithParents++;
+      if (ind.familiesAsSpouse.length > 0) individualsWithSpouseFamilies++;
+    });
+
     console.log('[Supabase] Data assembly complete:', individuals.size, 'individuals,', families.size, 'families');
+    console.log('[Supabase] Links: spouseLinks=' + spouseLinksSet + ', childLinksSet=' + childLinksSet + ', childLinkSkipped=' + childLinkSkipped);
+    console.log('[Supabase] Individuals with parents:', individualsWithParents, '/', individuals.size, '| with spouse families:', individualsWithSpouseFamilies);
     return { data: { individuals, families } };
   } catch (e) {
     console.error('[Supabase] loadAllFromSupabase crashed:', e);

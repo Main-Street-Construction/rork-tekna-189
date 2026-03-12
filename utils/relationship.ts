@@ -1,5 +1,5 @@
 import { FamilyTreeData, GedcomIndividual } from '@/types/genealogy';
-import { getParents, getGenderSafe } from '@/utils/gedcom-parser';
+import { getGenderSafe } from '@/utils/gedcom-parser';
 
 export interface CommonAncestorResult {
   ancestorId: string;
@@ -21,9 +21,51 @@ export interface RelationshipResult {
 
 const MAX_GENERATIONS = 20;
 
+function buildParentIndex(data: FamilyTreeData): Map<string, string[]> {
+  const parentIndex = new Map<string, string[]>();
+
+  data.individuals.forEach((person) => {
+    if (person.familyAsChild) {
+      const family = data.families.get(person.familyAsChild);
+      if (family) {
+        const parents: string[] = [];
+        if (family.husbandId && data.individuals.has(family.husbandId)) parents.push(family.husbandId);
+        if (family.wifeId && data.individuals.has(family.wifeId)) parents.push(family.wifeId);
+        if (parents.length > 0) {
+          parentIndex.set(person.id, parents);
+        }
+      }
+    }
+  });
+
+  data.families.forEach((family) => {
+    const parents: string[] = [];
+    if (family.husbandId && data.individuals.has(family.husbandId)) parents.push(family.husbandId);
+    if (family.wifeId && data.individuals.has(family.wifeId)) parents.push(family.wifeId);
+    if (parents.length === 0) return;
+
+    for (const childId of family.childrenIds) {
+      if (!data.individuals.has(childId)) continue;
+      const existing = parentIndex.get(childId);
+      if (!existing) {
+        parentIndex.set(childId, [...parents]);
+      } else {
+        for (const pid of parents) {
+          if (!existing.includes(pid)) {
+            existing.push(pid);
+          }
+        }
+      }
+    }
+  });
+
+  return parentIndex;
+}
+
 function getAncestorMap(
   personId: string,
   data: FamilyTreeData,
+  parentIndex: Map<string, string[]>,
   earlyExitId?: string
 ): Map<string, { generations: number; path: string[] }> {
   const ancestors = new Map<string, { generations: number; path: string[] }>();
@@ -46,13 +88,13 @@ function getAncestorMap(
 
     if (current.generations >= MAX_GENERATIONS) continue;
 
-    const parents = getParents(current.id, data);
-    for (const parent of parents) {
-      if (!ancestors.has(parent.id)) {
+    const parentIds = parentIndex.get(current.id) ?? [];
+    for (const pid of parentIds) {
+      if (!ancestors.has(pid)) {
         queue.push({
-          id: parent.id,
+          id: pid,
           generations: current.generations + 1,
-          path: [...current.path, parent.id],
+          path: [...current.path, pid],
         });
       }
     }
@@ -66,8 +108,9 @@ export function findCommonAncestors(
   person2Id: string,
   data: FamilyTreeData
 ): CommonAncestorResult[] {
-  const ancestors1 = getAncestorMap(person1Id, data);
-  const ancestors2 = getAncestorMap(person2Id, data);
+  const parentIndex = buildParentIndex(data);
+  const ancestors1 = getAncestorMap(person1Id, data, parentIndex);
+  const ancestors2 = getAncestorMap(person2Id, data, parentIndex);
 
 
 
@@ -110,10 +153,9 @@ export function findAllCommonAncestors(
   person2Id: string,
   data: FamilyTreeData
 ): CommonAncestorResult[] {
-
-
-  const ancestors1 = getAncestorMap(person1Id, data);
-  const ancestors2 = getAncestorMap(person2Id, data);
+  const parentIndex = buildParentIndex(data);
+  const ancestors1 = getAncestorMap(person1Id, data, parentIndex);
+  const ancestors2 = getAncestorMap(person2Id, data, parentIndex);
 
   const common: CommonAncestorResult[] = [];
 

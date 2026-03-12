@@ -462,21 +462,44 @@ export function getParents(
   data: FamilyTreeData
 ): GedcomIndividual[] {
   const person = data.individuals.get(personId);
-  if (!person?.familyAsChild) return [];
+  if (!person) return [];
 
-  const family = data.families.get(person.familyAsChild);
-  if (!family) return [];
+  if (person.familyAsChild) {
+    const family = data.families.get(person.familyAsChild);
+    if (family) {
+      const parents: GedcomIndividual[] = [];
+      if (family.husbandId) {
+        const father = data.individuals.get(family.husbandId);
+        if (father) parents.push(father);
+      }
+      if (family.wifeId) {
+        const mother = data.individuals.get(family.wifeId);
+        if (mother) parents.push(mother);
+      }
+      if (parents.length > 0) return parents;
+    }
+  }
 
-  const parents: GedcomIndividual[] = [];
-  if (family.husbandId) {
-    const father = data.individuals.get(family.husbandId);
-    if (father) parents.push(father);
+  const familyIter = data.families.values();
+  let next = familyIter.next();
+  while (!next.done) {
+    const fam = next.value;
+    if (fam.childrenIds.includes(personId)) {
+      const parents: GedcomIndividual[] = [];
+      if (fam.husbandId) {
+        const father = data.individuals.get(fam.husbandId);
+        if (father) parents.push(father);
+      }
+      if (fam.wifeId) {
+        const mother = data.individuals.get(fam.wifeId);
+        if (mother) parents.push(mother);
+      }
+      if (parents.length > 0) return parents;
+    }
+    next = familyIter.next();
   }
-  if (family.wifeId) {
-    const mother = data.individuals.get(family.wifeId);
-    if (mother) parents.push(mother);
-  }
-  return parents;
+
+  return [];
 }
 
 export function getSpouses(

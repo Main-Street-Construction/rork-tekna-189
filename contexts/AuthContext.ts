@@ -88,6 +88,8 @@ export const [AuthProvider, useAuth] = createContextHook(() => {
       return ensureProfileExists(session.user.id);
     },
     enabled: !!session?.user?.id,
+    staleTime: 10 * 60 * 1000,
+    gcTime: 30 * 60 * 1000,
     retry: 2,
     retryDelay: 1000,
   });
