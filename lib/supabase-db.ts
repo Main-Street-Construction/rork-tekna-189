@@ -366,8 +366,8 @@ export async function loadAllFromSupabase(
     reportProgress();
 
     const individuals = new Map<string, GedcomIndividual>();
-    const uuidToGedcomId = new Map<string, string>(indResult.rows.length);
-    const familyUuidToGedcomId = new Map<string, string>(famResult.rows.length);
+    const uuidToGedcomId = new Map<string, string>();
+    const familyUuidToGedcomId = new Map<string, string>();
 
     for (let i = 0; i < indResult.rows.length; i++) {
       const row = indResult.rows[i];
