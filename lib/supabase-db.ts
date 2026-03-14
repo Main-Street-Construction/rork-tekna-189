@@ -1,9 +1,10 @@
 import { supabase } from './supabase';
 import { GedcomIndividual, GedcomFamily, FamilyTreeData, PendingEdit, PendingEditType } from '@/types/genealogy';
 
-const FETCH_TIMEOUT_MS = 30000;
+const FETCH_TIMEOUT_MS = 45000;
 const MAX_RETRIES = 3;
 const RETRY_DELAY_MS = 2000;
+const BATCH_PAGE_SIZE = 500;
 
 interface SupabaseQueryResult<T> {
   data: T[] | null;
@@ -176,7 +177,8 @@ async function _resolveFamilyGedcomIdToUuid(gedcomId: string): Promise<string | 
 
 async function fetchAllPages<T>(
   table: string,
-  pageSize: number = 1000
+  pageSize: number = BATCH_PAGE_SIZE,
+  onBatch?: (batchRows: T[], totalSoFar: number) => void
 ): Promise<{ rows: T[]; error?: string }> {
   const allRows: T[] = [];
   let offset = 0;
@@ -192,10 +194,15 @@ async function fetchAllPages<T>(
 
     if (error) {
       consecutiveErrors++;
-      if (consecutiveErrors >= 2) {
+      console.warn(`[Supabase] Error fetching ${table} at offset ${offset} (attempt ${consecutiveErrors}):`, error.message);
+      if (consecutiveErrors >= 3) {
+        if (allRows.length > 0) {
+          console.warn(`[Supabase] Returning partial ${table} data: ${allRows.length} rows`);
+          return { rows: allRows, error: `Partial fetch of ${table}: ${error.message}` };
+        }
         return { rows: allRows, error: `Failed fetching ${table}: ${error.message}` };
       }
-      await new Promise(r => setTimeout(r, 1000));
+      await new Promise(r => setTimeout(r, 1500 * consecutiveErrors));
       continue;
     }
 
@@ -207,35 +214,86 @@ async function fetchAllPages<T>(
       allRows.push(row as T);
     }
 
+    if (onBatch) {
+      onBatch(rows as T[], allRows.length);
+    }
+
+    console.log(`[Supabase] ${table}: fetched batch ${Math.ceil(offset / pageSize) + 1} (${allRows.length} total rows)`);
+
     if (rows.length < pageSize) break;
     offset += pageSize;
+
+    await new Promise(r => setTimeout(r, 50));
   }
 
   return { rows: allRows };
 }
 
-export async function loadAllFromSupabase(): Promise<{
+export type LoadProgress = {
+  phase: 'individuals' | 'families' | 'members' | 'assembling' | 'done';
+  individualsLoaded: number;
+  familiesLoaded: number;
+  membersLoaded: number;
+};
+
+export async function loadAllFromSupabase(
+  onProgress?: (progress: LoadProgress) => void
+): Promise<{
   data: FamilyTreeData | null;
   error?: string;
 }> {
   try {
-    console.log('[Supabase] Loading all data in parallel...');
+    console.log('[Supabase] Loading data in sequential batches...');
     const startTime = Date.now();
 
-    const [indResult, famResult, fmResult] = await Promise.all([
-      fetchAllPages<SupabaseIndividual>('individuals'),
-      fetchAllPages<SupabaseFamily>('families'),
-      fetchAllPages<SupabaseFamilyMember>('family_members'),
-    ]);
+    const progress: LoadProgress = {
+      phase: 'individuals',
+      individualsLoaded: 0,
+      familiesLoaded: 0,
+      membersLoaded: 0,
+    };
+
+    const reportProgress = () => {
+      if (onProgress) onProgress({ ...progress });
+    };
+
+    reportProgress();
+
+    const indResult = await fetchAllPages<SupabaseIndividual>('individuals', BATCH_PAGE_SIZE, (_batch, total) => {
+      progress.individualsLoaded = total;
+      reportProgress();
+    });
 
     if (indResult.error && indResult.rows.length === 0) {
       return { data: null, error: indResult.error };
     }
+    console.log('[Supabase] Individuals done:', indResult.rows.length, 'in', Date.now() - startTime, 'ms');
+
+    progress.phase = 'families';
+    reportProgress();
+
+    const famResult = await fetchAllPages<SupabaseFamily>('families', BATCH_PAGE_SIZE, (_batch, total) => {
+      progress.familiesLoaded = total;
+      reportProgress();
+    });
+
     if (famResult.error && famResult.rows.length === 0) {
       return { data: null, error: famResult.error };
     }
+    console.log('[Supabase] Families done:', famResult.rows.length, 'in', Date.now() - startTime, 'ms');
 
-    console.log('[Supabase] Fetched', indResult.rows.length, 'individuals,', famResult.rows.length, 'families,', fmResult.rows.length, 'family_members in', Date.now() - startTime, 'ms');
+    progress.phase = 'members';
+    reportProgress();
+
+    const fmResult = await fetchAllPages<SupabaseFamilyMember>('family_members', BATCH_PAGE_SIZE, (_batch, total) => {
+      progress.membersLoaded = total;
+      reportProgress();
+    });
+
+    console.log('[Supabase] Family members done:', fmResult.rows.length, 'in', Date.now() - startTime, 'ms');
+
+    progress.phase = 'assembling';
+    reportProgress();
 
     const individuals = new Map<string, GedcomIndividual>();
     const uuidToGedcomId = new Map<string, string>();
@@ -313,16 +371,12 @@ export async function loadAllFromSupabase(): Promise<{
       }
     });
 
-    let individualsWithParents = 0;
-    let individualsWithSpouseFamilies = 0;
-    individuals.forEach((ind) => {
-      if (ind.familyAsChild) individualsWithParents++;
-      if (ind.familiesAsSpouse.length > 0) individualsWithSpouseFamilies++;
-    });
+    progress.phase = 'done';
+    reportProgress();
 
-    console.log('[Supabase] Data assembly complete:', individuals.size, 'individuals,', families.size, 'families');
+    const elapsed = Date.now() - startTime;
+    console.log('[Supabase] Data assembly complete:', individuals.size, 'individuals,', families.size, 'families in', elapsed, 'ms');
     console.log('[Supabase] Links: spouseLinks=' + spouseLinksSet + ', childLinksSet=' + childLinksSet + ', childLinkSkipped=' + childLinkSkipped);
-    console.log('[Supabase] Individuals with parents:', individualsWithParents, '/', individuals.size, '| with spouse families:', individualsWithSpouseFamilies);
     return { data: { individuals, families } };
   } catch (e) {
     console.error('[Supabase] loadAllFromSupabase crashed:', e);

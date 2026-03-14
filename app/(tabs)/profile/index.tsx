@@ -52,7 +52,7 @@ export default function ProfileScreen() {
     hasData, individualCount, familyCount, clearData, search, getPerson,
     isAdmin,
     pendingEditCount, refreshPendingCount,
-    isLoadingFromCloud, cloudError, refreshFromCloud,
+    isLoadingFromCloud, cloudError, loadProgress, refreshFromCloud,
   } = useFamilyTree();
   const { isSignedIn, user, signOut, signOutPending, isEnabled } = useAuth();
 
@@ -594,7 +594,19 @@ export default function ProfileScreen() {
                   <RefreshCw size={16} color={Colors.accent} />
                 )}
                 <Text style={styles.refreshRowText}>
-                  {refreshMutation.isPending || isLoadingFromCloud ? 'Refreshing...' : 'Refresh from Database'}
+                  {refreshMutation.isPending || isLoadingFromCloud
+                    ? loadProgress
+                      ? loadProgress.phase === 'individuals'
+                        ? `Loading people... (${loadProgress.individualsLoaded})`
+                        : loadProgress.phase === 'families'
+                          ? `Loading families... (${loadProgress.familiesLoaded})`
+                          : loadProgress.phase === 'members'
+                            ? `Loading connections... (${loadProgress.membersLoaded})`
+                            : loadProgress.phase === 'assembling'
+                              ? 'Assembling tree...'
+                              : 'Refreshing...'
+                      : 'Refreshing...'
+                    : 'Refresh from Database'}
                 </Text>
                 <ChevronRight size={14} color={Colors.textLight} />
               </TouchableOpacity>

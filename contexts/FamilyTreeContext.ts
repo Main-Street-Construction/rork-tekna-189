@@ -22,6 +22,7 @@ import {
   reviewPendingEdit as reviewPendingEditApi,
   getPendingEditCount,
   getCloudCounts,
+  LoadProgress,
 } from '@/lib/supabase-db';
 import { PendingEdit } from '@/types/genealogy';
 import { useAuth } from '@/contexts/AuthContext';
@@ -142,15 +143,20 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
   const [pendingEditCount, setPendingEditCount] = useState<number>(0);
   const [isLoadingFromCloud, setIsLoadingFromCloud] = useState<boolean>(false);
   const [cloudError, setCloudError] = useState<string | null>(null);
+  const [loadProgress, setLoadProgress] = useState<LoadProgress | null>(null);
   const bgSyncRef = useRef<boolean>(false);
 
   const canLoadData = isSignedIn && isEnabled;
+
+  const handleProgress = useCallback((progress: LoadProgress) => {
+    setLoadProgress(progress);
+  }, []);
 
   const backgroundSyncFromCloud = useCallback(async () => {
     setIsLoadingFromCloud(true);
     setCloudError(null);
     try {
-      const cloudResult = await loadAllFromSupabase();
+      const cloudResult = await loadAllFromSupabase(handleProgress);
       if (cloudResult.data && cloudResult.data.individuals.size > 0) {
         console.log('[FamilyTree] Background sync complete:', cloudResult.data.individuals.size, 'individuals');
         const serialized = serializeFamilyTreeData(cloudResult.data);
@@ -167,8 +173,9 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
       setCloudError(String(e));
     } finally {
       setIsLoadingFromCloud(false);
+      setLoadProgress(null);
     }
-  }, []);
+  }, [handleProgress]);
 
   const loadQuery = useQuery({
     queryKey: ['familyTree'],
@@ -214,7 +221,7 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
       setIsLoadingFromCloud(true);
       setCloudError(null);
       try {
-        const cloudResult = await loadAllFromSupabase();
+        const cloudResult = await loadAllFromSupabase(handleProgress);
         if (cloudResult.data && cloudResult.data.individuals.size > 0) {
           console.log('[FamilyTree] Loaded from Supabase:', cloudResult.data.individuals.size, 'individuals');
           const serialized = serializeFamilyTreeData(cloudResult.data);
@@ -234,6 +241,7 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
         setCloudError(String(e));
       } finally {
         setIsLoadingFromCloud(false);
+        setLoadProgress(null);
       }
 
       console.log('[FamilyTree] No data found');
@@ -334,7 +342,7 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
     storageDisabled = false;
     await aggressiveCleanup();
 
-    const result = await loadAllFromSupabase();
+    const result = await loadAllFromSupabase(handleProgress);
     if (result.data && result.data.individuals.size > 0) {
       const serialized = serializeFamilyTreeData(result.data);
       const cached = await safeSetItem(STORAGE_KEY, serialized);
@@ -352,7 +360,7 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
       return { success: false, error: result.error };
     }
     return { success: false, error: 'No data found in database' };
-  }, []);
+  }, [handleProgress]);
 
   const refreshFromCloud = useCallback(async (): Promise<{ success: boolean; error?: string }> => {
     setIsLoadingFromCloud(true);
@@ -842,6 +850,7 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
     updateFamily,
     isLoadingFromCloud,
     cloudError,
+    loadProgress,
     refreshFromCloud,
   }), [
     treeData, isReady, hasData, individualCount, familyCount,
@@ -850,6 +859,6 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
     loadPendingEdits, reviewPendingEdit, refreshPendingCount, generateNewId,
     addPerson, updatePerson, addChildToFamily, createFamilyAndAddChild,
     addSpouse, linkExistingSpouses, updateFamily, isLoadingFromCloud,
-    cloudError, refreshFromCloud,
+    cloudError, loadProgress, refreshFromCloud,
   ]);
 });
