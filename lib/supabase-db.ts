@@ -194,7 +194,7 @@ async function fetchAllPages<T>(
       supabase
         .from(table)
         .select(columns)
-        .range(offset, offset + pageSize - 1)
+        .range(offset, offset + pageSize - 1) as unknown as PromiseLike<SupabaseQueryResult<T>>
     );
 
     if (error) {
