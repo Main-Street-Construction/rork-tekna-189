@@ -1,10 +1,11 @@
 import { supabase } from './supabase';
 import { GedcomIndividual, GedcomFamily, FamilyTreeData, PendingEdit, PendingEditType } from '@/types/genealogy';
 
-const FETCH_TIMEOUT_MS = 45000;
+const FETCH_TIMEOUT_MS = 60000;
 const MAX_RETRIES = 3;
-const RETRY_DELAY_MS = 2000;
-const BATCH_PAGE_SIZE = 1000;
+const RETRY_DELAY_MS = 1500;
+const BATCH_PAGE_SIZE = 5000;
+const MAX_CONCURRENT_PAGES = 6;
 
 interface SupabaseQueryResult<T> {
   data: T[] | null;
@@ -179,12 +180,92 @@ const INDIVIDUALS_COLUMNS = 'id,gedcom_id,first_name,last_name,gender,birth_date
 const FAMILIES_COLUMNS = 'id,gedcom_id,husband_id,wife_id,marriage_date,marriage_place' as const;
 const FAMILY_MEMBERS_COLUMNS = 'id,family_id,individual_id,role' as const;
 
+async function getTableCount(table: string): Promise<number | null> {
+  try {
+    const { count, error } = await supabase
+      .from(table)
+      .select('*', { count: 'exact', head: true });
+    if (error) return null;
+    return count ?? null;
+  } catch {
+    return null;
+  }
+}
+
+async function fetchPageRange<T>(
+  table: string,
+  columns: string,
+  from: number,
+  to: number
+): Promise<{ data: T[]; error?: string }> {
+  const result = await fetchWithRetry<T>(() =>
+    supabase
+      .from(table)
+      .select(columns)
+      .range(from, to) as unknown as PromiseLike<SupabaseQueryResult<T>>
+  );
+  if (result.error) {
+    return { data: [], error: result.error.message };
+  }
+  return { data: (result.data ?? []) as T[] };
+}
+
 async function fetchAllPages<T>(
   table: string,
   columns: string = '*',
   pageSize: number = BATCH_PAGE_SIZE,
   onBatch?: (batchRows: T[], totalSoFar: number) => void
 ): Promise<{ rows: T[]; error?: string }> {
+  const totalCount = await getTableCount(table);
+
+  if (totalCount !== null && totalCount <= pageSize) {
+    console.log(`[Supabase] ${table}: single fetch (${totalCount} rows)`);
+    const result = await fetchPageRange<T>(table, columns, 0, totalCount - 1);
+    if (result.error) {
+      return { rows: [], error: result.error };
+    }
+    if (onBatch && result.data.length > 0) {
+      onBatch(result.data, result.data.length);
+    }
+    return { rows: result.data };
+  }
+
+  if (totalCount !== null && totalCount > pageSize) {
+    console.log(`[Supabase] ${table}: parallel fetch ${totalCount} rows in ${Math.ceil(totalCount / pageSize)} pages`);
+    const pageCount = Math.ceil(totalCount / pageSize);
+    const allRows: T[] = [];
+    let completed = 0;
+
+    for (let wave = 0; wave < pageCount; wave += MAX_CONCURRENT_PAGES) {
+      const batch = [];
+      for (let p = wave; p < Math.min(wave + MAX_CONCURRENT_PAGES, pageCount); p++) {
+        const from = p * pageSize;
+        const to = Math.min(from + pageSize - 1, totalCount - 1);
+        batch.push(fetchPageRange<T>(table, columns, from, to));
+      }
+
+      const results = await Promise.all(batch);
+      for (const r of results) {
+        if (r.error) {
+          console.warn(`[Supabase] ${table} page error:`, r.error);
+        }
+        if (r.data.length > 0) {
+          for (let i = 0; i < r.data.length; i++) {
+            allRows.push(r.data[i]);
+          }
+        }
+        completed++;
+        if (onBatch) {
+          onBatch(r.data, allRows.length);
+        }
+      }
+      console.log(`[Supabase] ${table}: completed ${completed}/${pageCount} pages (${allRows.length} rows)`);
+    }
+
+    return { rows: allRows };
+  }
+
+  console.log(`[Supabase] ${table}: sequential fallback (count unavailable)`);
   const allRows: T[] = [];
   let offset = 0;
   let consecutiveErrors = 0;
@@ -199,10 +280,8 @@ async function fetchAllPages<T>(
 
     if (error) {
       consecutiveErrors++;
-      console.warn(`[Supabase] Error fetching ${table} at offset ${offset} (attempt ${consecutiveErrors}):`, error.message);
       if (consecutiveErrors >= 3) {
         if (allRows.length > 0) {
-          console.warn(`[Supabase] Returning partial ${table} data: ${allRows.length} rows`);
           return { rows: allRows, error: `Partial fetch of ${table}: ${error.message}` };
         }
         return { rows: allRows, error: `Failed fetching ${table}: ${error.message}` };
@@ -212,19 +291,14 @@ async function fetchAllPages<T>(
     }
 
     consecutiveErrors = 0;
-
     if (!rows || rows.length === 0) break;
 
     for (const row of rows) {
       allRows.push(row as T);
     }
-
     if (onBatch) {
       onBatch(rows as T[], allRows.length);
     }
-
-    console.log(`[Supabase] ${table}: fetched batch ${Math.ceil(offset / pageSize) + 1} (${allRows.length} total rows)`);
-
     if (rows.length < pageSize) break;
     offset += pageSize;
   }
@@ -292,21 +366,22 @@ export async function loadAllFromSupabase(
     reportProgress();
 
     const individuals = new Map<string, GedcomIndividual>();
-    const uuidToGedcomId = new Map<string, string>();
-    const familyUuidToGedcomId = new Map<string, string>();
+    const uuidToGedcomId = new Map<string, string>(indResult.rows.length);
+    const familyUuidToGedcomId = new Map<string, string>(famResult.rows.length);
 
-    for (const row of indResult.rows) {
+    for (let i = 0; i < indResult.rows.length; i++) {
+      const row = indResult.rows[i];
       uuidToGedcomId.set(row.id, row.gedcom_id);
-      const ind = supabaseToIndividual(row);
-      individuals.set(ind.id, ind);
+      individuals.set(row.gedcom_id, supabaseToIndividual(row));
     }
 
-    for (const row of famResult.rows) {
-      familyUuidToGedcomId.set(row.id, row.gedcom_id);
+    for (let i = 0; i < famResult.rows.length; i++) {
+      familyUuidToGedcomId.set(famResult.rows[i].id, famResult.rows[i].gedcom_id);
     }
 
     const familyChildrenMap = new Map<string, string[]>();
-    for (const row of fmResult.rows) {
+    for (let i = 0; i < fmResult.rows.length; i++) {
+      const row = fmResult.rows[i];
       if (row.role === 'child') {
         const familyGedcomId = familyUuidToGedcomId.get(row.family_id);
         const childGedcomId = uuidToGedcomId.get(row.individual_id);
@@ -322,7 +397,8 @@ export async function loadAllFromSupabase(
     }
 
     const families = new Map<string, GedcomFamily>();
-    for (const row of famResult.rows) {
+    for (let i = 0; i < famResult.rows.length; i++) {
+      const row = famResult.rows[i];
       const childGedcomIds = familyChildrenMap.get(row.gedcom_id) ?? [];
       const fam = supabaseToFamily(row, uuidToGedcomId, childGedcomIds);
       families.set(fam.id, fam);
@@ -335,31 +411,22 @@ export async function loadAllFromSupabase(
     families.forEach((fam) => {
       if (fam.husbandId) {
         const husband = individuals.get(fam.husbandId);
-        if (husband && !husband.familiesAsSpouse.includes(fam.id)) {
-          individuals.set(fam.husbandId, {
-            ...husband,
-            familiesAsSpouse: [...husband.familiesAsSpouse, fam.id],
-          });
+        if (husband) {
+          husband.familiesAsSpouse.push(fam.id);
           spouseLinksSet++;
         }
       }
       if (fam.wifeId) {
         const wife = individuals.get(fam.wifeId);
-        if (wife && !wife.familiesAsSpouse.includes(fam.id)) {
-          individuals.set(fam.wifeId, {
-            ...wife,
-            familiesAsSpouse: [...wife.familiesAsSpouse, fam.id],
-          });
+        if (wife) {
+          wife.familiesAsSpouse.push(fam.id);
           spouseLinksSet++;
         }
       }
-      for (const childId of fam.childrenIds) {
-        const child = individuals.get(childId);
+      for (let c = 0; c < fam.childrenIds.length; c++) {
+        const child = individuals.get(fam.childrenIds[c]);
         if (child && !child.familyAsChild) {
-          individuals.set(childId, {
-            ...child,
-            familyAsChild: fam.id,
-          });
+          child.familyAsChild = fam.id;
           childLinksSet++;
         } else if (child && child.familyAsChild) {
           childLinkSkipped++;

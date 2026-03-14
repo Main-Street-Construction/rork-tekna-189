@@ -32,7 +32,7 @@ const RAW_GEDCOM_KEY = 'raw_gedcom';
 
 const LAST_CLOUD_SYNC_KEY = 'last_cloud_sync';
 const DATA_FORMAT_VERSION_KEY = 'data_format_version';
-const CURRENT_DATA_FORMAT_VERSION = '6';
+const CURRENT_DATA_FORMAT_VERSION = '7';
 const CLOUD_SYNC_INTERVAL = 12 * 60 * 60 * 1000;
 const MAX_ASYNC_STORAGE_BYTES = 4 * 1024 * 1024;
 

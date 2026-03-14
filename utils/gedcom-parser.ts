@@ -781,17 +781,121 @@ export function describeRelationship(
   return `${steps}-step distant relation`;
 }
 
-export function serializeFamilyTreeData(data: FamilyTreeData): string {
-  const obj = {
-    individuals: Array.from(data.individuals.entries()),
-    families: Array.from(data.families.entries()),
+type CompactIndividual = [
+  string,
+  string,
+  string,
+  string,
+  string,
+  string | 0,
+  string | 0,
+  string | 0,
+  string | 0,
+  string[],
+  string | 0,
+  string | 0,
+  string | 0,
+];
+
+type CompactFamily = [
+  string,
+  string | 0,
+  string | 0,
+  string[],
+  string | 0,
+  string | 0,
+];
+
+function compactIndividual(ind: GedcomIndividual): CompactIndividual {
+  return [
+    ind.id,
+    ind.name,
+    ind.givenName,
+    ind.surname,
+    ind.sex,
+    ind.birthDate || 0,
+    ind.birthPlace || 0,
+    ind.deathDate || 0,
+    ind.deathPlace || 0,
+    ind.familiesAsSpouse,
+    ind.familyAsChild || 0,
+    ind.occupation || 0,
+    ind.note || 0,
+  ];
+}
+
+function expandIndividual(c: CompactIndividual): GedcomIndividual {
+  const ind: GedcomIndividual = {
+    id: c[0],
+    name: c[1],
+    givenName: c[2],
+    surname: c[3],
+    sex: c[4] as 'M' | 'F' | 'U',
+    familiesAsSpouse: c[9],
   };
-  return JSON.stringify(obj);
+  if (c[5]) ind.birthDate = c[5] as string;
+  if (c[6]) ind.birthPlace = c[6] as string;
+  if (c[7]) ind.deathDate = c[7] as string;
+  if (c[8]) ind.deathPlace = c[8] as string;
+  if (c[10]) ind.familyAsChild = c[10] as string;
+  if (c[11]) ind.occupation = c[11] as string;
+  if (c[12]) ind.note = c[12] as string;
+  return ind;
+}
+
+function compactFamily(fam: GedcomFamily): CompactFamily {
+  return [
+    fam.id,
+    fam.husbandId || 0,
+    fam.wifeId || 0,
+    fam.childrenIds,
+    fam.marriageDate || 0,
+    fam.marriagePlace || 0,
+  ];
+}
+
+function expandFamily(c: CompactFamily): GedcomFamily {
+  const fam: GedcomFamily = {
+    id: c[0],
+    childrenIds: c[3],
+  };
+  if (c[1]) fam.husbandId = c[1] as string;
+  if (c[2]) fam.wifeId = c[2] as string;
+  if (c[4]) fam.marriageDate = c[4] as string;
+  if (c[5]) fam.marriagePlace = c[5] as string;
+  return fam;
+}
+
+export function serializeFamilyTreeData(data: FamilyTreeData): string {
+  const compactInd: CompactIndividual[] = [];
+  data.individuals.forEach((ind) => {
+    compactInd.push(compactIndividual(ind));
+  });
+  const compactFam: CompactFamily[] = [];
+  data.families.forEach((fam) => {
+    compactFam.push(compactFamily(fam));
+  });
+  return JSON.stringify({ v: 7, i: compactInd, f: compactFam });
 }
 
 export function deserializeFamilyTreeData(json: string): FamilyTreeData {
   try {
     const obj = JSON.parse(json);
+
+    if (obj.v === 7 && obj.i) {
+      const individuals = new Map<string, GedcomIndividual>();
+      for (let idx = 0; idx < obj.i.length; idx++) {
+        const ind = expandIndividual(obj.i[idx]);
+        individuals.set(ind.id, ind);
+      }
+      const families = new Map<string, GedcomFamily>();
+      for (let idx = 0; idx < obj.f.length; idx++) {
+        const fam = expandFamily(obj.f[idx]);
+        families.set(fam.id, fam);
+      }
+      return { individuals, families };
+    }
+
     return {
       individuals: new Map(obj.individuals || []),
       families: new Map(obj.families || []),
