@@ -439,11 +439,14 @@ export function getGenderSafe(
   if (!person) return 'U';
   if (person.sex !== 'U') return person.sex;
 
-  for (const famId of person.familiesAsSpouse) {
-    const family = data.families.get(famId);
-    if (!family) continue;
-    if (family.husbandId === personId) return 'M';
-    if (family.wifeId === personId) return 'F';
+  const spouseFams = person.familiesAsSpouse;
+  if (Array.isArray(spouseFams)) {
+    for (const famId of spouseFams) {
+      const family = data.families.get(famId);
+      if (!family) continue;
+      if (family.husbandId === personId) return 'M';
+      if (family.wifeId === personId) return 'F';
+    }
   }
 
   if (person.familyAsChild) {
@@ -484,7 +487,7 @@ export function getParents(
   let next = familyIter.next();
   while (!next.done) {
     const fam = next.value;
-    if (fam.childrenIds.includes(personId)) {
+    if (Array.isArray(fam.childrenIds) && fam.childrenIds.includes(personId)) {
       const parents: GedcomIndividual[] = [];
       if (fam.husbandId) {
         const father = data.individuals.get(fam.husbandId);
@@ -510,7 +513,8 @@ export function getSpouses(
   if (!person) return [];
 
   const spouses: GedcomIndividual[] = [];
-  for (const famId of person.familiesAsSpouse) {
+  const spouseFamIds = Array.isArray(person.familiesAsSpouse) ? person.familiesAsSpouse : [];
+  for (const famId of spouseFamIds) {
     const family = data.families.get(famId);
     if (!family) continue;
 
@@ -534,11 +538,12 @@ export function getChildren(
   if (!person) return [];
 
   const children: GedcomIndividual[] = [];
-  for (const famId of person.familiesAsSpouse) {
+  const childFamIds = Array.isArray(person.familiesAsSpouse) ? person.familiesAsSpouse : [];
+  for (const famId of childFamIds) {
     const family = data.families.get(famId);
     if (!family) continue;
-
-    for (const childId of family.childrenIds) {
+    const kidIds = Array.isArray(family.childrenIds) ? family.childrenIds : [];
+    for (const childId of kidIds) {
       const child = data.individuals.get(childId);
       if (child) children.push(child);
     }
@@ -556,7 +561,8 @@ export function getSiblings(
   const family = data.families.get(person.familyAsChild);
   if (!family) return [];
 
-  return family.childrenIds
+  const sibIds = Array.isArray(family.childrenIds) ? family.childrenIds : [];
+  return sibIds
     .filter((id) => id !== personId)
     .map((id) => data.individuals.get(id))
     .filter((p): p is GedcomIndividual => p !== undefined);
@@ -827,11 +833,11 @@ function compactIndividual(ind: GedcomIndividual): CompactIndividual {
 function expandIndividual(c: CompactIndividual): GedcomIndividual {
   const ind: GedcomIndividual = {
     id: c[0],
-    name: c[1],
-    givenName: c[2],
-    surname: c[3],
-    sex: c[4] as 'M' | 'F' | 'U',
-    familiesAsSpouse: c[9],
+    name: c[1] || '',
+    givenName: c[2] || '',
+    surname: c[3] || '',
+    sex: (c[4] === 'M' || c[4] === 'F') ? c[4] : 'U',
+    familiesAsSpouse: Array.isArray(c[9]) ? c[9] : [],
   };
   if (c[5]) ind.birthDate = c[5] as string;
   if (c[6]) ind.birthPlace = c[6] as string;
@@ -857,7 +863,7 @@ function compactFamily(fam: GedcomFamily): CompactFamily {
 function expandFamily(c: CompactFamily): GedcomFamily {
   const fam: GedcomFamily = {
     id: c[0],
-    childrenIds: c[3],
+    childrenIds: Array.isArray(c[3]) ? c[3] : [],
   };
   if (c[1]) fam.husbandId = c[1] as string;
   if (c[2]) fam.wifeId = c[2] as string;

@@ -53,7 +53,9 @@ function buildParentIndex(data: FamilyTreeData): Map<string, string[]> {
   });
 
   data.families.forEach((family) => {
-    for (const childId of family.childrenIds) {
+    const children = family.childrenIds;
+    if (!Array.isArray(children)) return;
+    for (const childId of children) {
       addParents(childId, family.husbandId, family.wifeId);
     }
   });
@@ -65,10 +67,12 @@ function buildChildIndex(data: FamilyTreeData): Map<string, string[]> {
   const childIndex = new Map<string, string[]>();
 
   data.families.forEach((family) => {
+    const children = family.childrenIds;
+    if (!Array.isArray(children)) return;
     const addChildren = (parentId: string) => {
       if (!data.individuals.has(parentId)) return;
       const existing = childIndex.get(parentId) ?? [];
-      for (const childId of family.childrenIds) {
+      for (const childId of children) {
         if (data.individuals.has(childId) && !existing.includes(childId)) {
           existing.push(childId);
         }
@@ -87,7 +91,8 @@ function buildSpouseIndex(data: FamilyTreeData): Map<string, string[]> {
 
   data.families.forEach((family) => {
     if (family.husbandId && family.wifeId &&
-        data.individuals.has(family.husbandId) && data.individuals.has(family.wifeId)) {
+        data.individuals.has(family.husbandId) && data.individuals.has(family.wifeId) &&
+        typeof family.husbandId === 'string' && typeof family.wifeId === 'string') {
       const hSpouses = spouseIndex.get(family.husbandId) ?? [];
       if (!hSpouses.includes(family.wifeId)) hSpouses.push(family.wifeId);
       spouseIndex.set(family.husbandId, hSpouses);
@@ -307,7 +312,9 @@ export function isSpouse(
 ): boolean {
   const person = data.individuals.get(person1Id);
   if (!person) return false;
-  for (const famId of person.familiesAsSpouse) {
+  const spouseFams = person.familiesAsSpouse;
+  if (!Array.isArray(spouseFams)) return false;
+  for (const famId of spouseFams) {
     const family = data.families.get(famId);
     if (!family) continue;
     if (family.husbandId === person2Id || family.wifeId === person2Id) {
