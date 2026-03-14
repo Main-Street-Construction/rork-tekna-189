@@ -1,26 +1,16 @@
-# Remove 7 unused dependencies from the project
+# Optimize data loading speed
 
-## Summary
+**What changes:**
 
-After scanning every source file in the project, 7 packages listed in the app's dependency list were never imported or used anywhere in the code. They have been removed.
+- [x] **Fetch all three data tables at the same time** instead of one after another — this alone should cut load time by roughly 60%
+- [x] **Increase batch size from 500 to 1000** rows per request — safe for text-only data, means fewer round trips
+- [x] **Remove the artificial 50ms pause** between batches — unnecessary for lightweight text
+- [x] **Request only the columns actually used** instead of everything (`select('*')`) — smaller responses, faster transfers
+- [x] **Update the progress indicator** to reflect parallel loading (shows all three progressing simultaneously)
 
-## Packages removed
+**Expected impact:**
 
-- [x] expo-blur
-- [x] expo-clipboard
-- [x] expo-image
-- [x] expo-linear-gradient
-- [x] expo-symbols
-- [x] expo-font
-- [x] expo-web-browser
+- Initial load should be ~2–3× faster
+- Background syncs will also benefit
+- No changes to how data is stored, displayed, or used — purely a speed improvement
 
-## What stayed the same
-
-- **No feature changes** — only `package.json` and `app.json` updated
-- **No structural or design changes**
-
-## Steps
-
-- [x] Remove the 7 packages from `package.json`
-- [x] Re-run the package installer to update the lock file
-- [x] Clean up `app.json` plugin references

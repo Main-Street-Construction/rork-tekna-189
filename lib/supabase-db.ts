@@ -4,7 +4,7 @@ import { GedcomIndividual, GedcomFamily, FamilyTreeData, PendingEdit, PendingEdi
 const FETCH_TIMEOUT_MS = 45000;
 const MAX_RETRIES = 3;
 const RETRY_DELAY_MS = 2000;
-const BATCH_PAGE_SIZE = 500;
+const BATCH_PAGE_SIZE = 1000;
 
 interface SupabaseQueryResult<T> {
   data: T[] | null;
@@ -175,8 +175,13 @@ async function _resolveFamilyGedcomIdToUuid(gedcomId: string): Promise<string | 
   }
 }
 
+const INDIVIDUALS_COLUMNS = 'id,gedcom_id,first_name,last_name,gender,birth_date,birth_place,death_date,death_place,notes' as const;
+const FAMILIES_COLUMNS = 'id,gedcom_id,husband_id,wife_id,marriage_date,marriage_place' as const;
+const FAMILY_MEMBERS_COLUMNS = 'id,family_id,individual_id,role' as const;
+
 async function fetchAllPages<T>(
   table: string,
+  columns: string = '*',
   pageSize: number = BATCH_PAGE_SIZE,
   onBatch?: (batchRows: T[], totalSoFar: number) => void
 ): Promise<{ rows: T[]; error?: string }> {
@@ -188,7 +193,7 @@ async function fetchAllPages<T>(
     const { data: rows, error } = await fetchWithRetry<T>(() =>
       supabase
         .from(table)
-        .select('*')
+        .select(columns)
         .range(offset, offset + pageSize - 1)
     );
 
@@ -222,15 +227,13 @@ async function fetchAllPages<T>(
 
     if (rows.length < pageSize) break;
     offset += pageSize;
-
-    await new Promise(r => setTimeout(r, 50));
   }
 
   return { rows: allRows };
 }
 
 export type LoadProgress = {
-  phase: 'individuals' | 'families' | 'members' | 'assembling' | 'done';
+  phase: 'loading' | 'assembling' | 'done';
   individualsLoaded: number;
   familiesLoaded: number;
   membersLoaded: number;
@@ -243,11 +246,11 @@ export async function loadAllFromSupabase(
   error?: string;
 }> {
   try {
-    console.log('[Supabase] Loading data in sequential batches...');
+    console.log('[Supabase] Loading data in parallel batches...');
     const startTime = Date.now();
 
     const progress: LoadProgress = {
-      phase: 'individuals',
+      phase: 'loading',
       individualsLoaded: 0,
       familiesLoaded: 0,
       membersLoaded: 0,
@@ -259,37 +262,30 @@ export async function loadAllFromSupabase(
 
     reportProgress();
 
-    const indResult = await fetchAllPages<SupabaseIndividual>('individuals', BATCH_PAGE_SIZE, (_batch, total) => {
-      progress.individualsLoaded = total;
-      reportProgress();
-    });
+    const [indResult, famResult, fmResult] = await Promise.all([
+      fetchAllPages<SupabaseIndividual>('individuals', INDIVIDUALS_COLUMNS, BATCH_PAGE_SIZE, (_batch, total) => {
+        progress.individualsLoaded = total;
+        reportProgress();
+      }),
+      fetchAllPages<SupabaseFamily>('families', FAMILIES_COLUMNS, BATCH_PAGE_SIZE, (_batch, total) => {
+        progress.familiesLoaded = total;
+        reportProgress();
+      }),
+      fetchAllPages<SupabaseFamilyMember>('family_members', FAMILY_MEMBERS_COLUMNS, BATCH_PAGE_SIZE, (_batch, total) => {
+        progress.membersLoaded = total;
+        reportProgress();
+      }),
+    ]);
 
     if (indResult.error && indResult.rows.length === 0) {
       return { data: null, error: indResult.error };
     }
     console.log('[Supabase] Individuals done:', indResult.rows.length, 'in', Date.now() - startTime, 'ms');
 
-    progress.phase = 'families';
-    reportProgress();
-
-    const famResult = await fetchAllPages<SupabaseFamily>('families', BATCH_PAGE_SIZE, (_batch, total) => {
-      progress.familiesLoaded = total;
-      reportProgress();
-    });
-
     if (famResult.error && famResult.rows.length === 0) {
       return { data: null, error: famResult.error };
     }
     console.log('[Supabase] Families done:', famResult.rows.length, 'in', Date.now() - startTime, 'ms');
-
-    progress.phase = 'members';
-    reportProgress();
-
-    const fmResult = await fetchAllPages<SupabaseFamilyMember>('family_members', BATCH_PAGE_SIZE, (_batch, total) => {
-      progress.membersLoaded = total;
-      reportProgress();
-    });
-
     console.log('[Supabase] Family members done:', fmResult.rows.length, 'in', Date.now() - startTime, 'ms');
 
     progress.phase = 'assembling';

@@ -596,15 +596,11 @@ export default function ProfileScreen() {
                 <Text style={styles.refreshRowText}>
                   {refreshMutation.isPending || isLoadingFromCloud
                     ? loadProgress
-                      ? loadProgress.phase === 'individuals'
-                        ? `Loading people... (${loadProgress.individualsLoaded})`
-                        : loadProgress.phase === 'families'
-                          ? `Loading families... (${loadProgress.familiesLoaded})`
-                          : loadProgress.phase === 'members'
-                            ? `Loading connections... (${loadProgress.membersLoaded})`
-                            : loadProgress.phase === 'assembling'
-                              ? 'Assembling tree...'
-                              : 'Refreshing...'
+                      ? loadProgress.phase === 'loading'
+                        ? `Loading... (${loadProgress.individualsLoaded} people, ${loadProgress.familiesLoaded} families, ${loadProgress.membersLoaded} links)`
+                        : loadProgress.phase === 'assembling'
+                          ? 'Assembling tree...'
+                          : 'Refreshing...'
                       : 'Refreshing...'
                     : 'Refresh from Database'}
                 </Text>
