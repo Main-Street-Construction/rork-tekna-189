@@ -230,12 +230,6 @@ export default React.memo(function RelationshipPathView({
 
       {renderForkLines()}
 
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        contentContainerStyle={styles.fanScrollContent}
-        style={styles.fanScroll}
-      >
         <View style={[styles.fanContainer, isCapture && styles.captureFanContainer]}>
           <View style={styles.fanBranch}>
             <View style={styles.branchHeader}>
@@ -299,7 +293,6 @@ export default React.memo(function RelationshipPathView({
             )}
           </View>
         </View>
-      </ScrollView>
 
       {maxBranchLen > 4 && (
         <View style={styles.depthNote}>
@@ -428,27 +421,18 @@ const styles = StyleSheet.create({
     borderRadius: 1,
   },
 
-  fanScroll: {
-    flexGrow: 0,
-  },
-  fanScrollContent: {
-    paddingHorizontal: 8,
-    minWidth: '100%',
-  },
   fanContainer: {
     flexDirection: 'row',
-    paddingHorizontal: 8,
-    gap: 12,
-    minWidth: '100%',
+    paddingHorizontal: 12,
+    gap: 6,
   },
   captureFanContainer: {
     paddingHorizontal: 16,
-    gap: 16,
+    gap: 8,
   },
   fanBranch: {
     flex: 1,
     alignItems: 'center',
-    minWidth: 160,
   },
   branchNodeWrap: {
     alignItems: 'center',
@@ -457,20 +441,20 @@ const styles = StyleSheet.create({
   branchHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
-    marginBottom: 6,
-    paddingVertical: 6,
-    paddingHorizontal: 10,
+    gap: 4,
+    marginBottom: 4,
+    paddingVertical: 4,
+    paddingHorizontal: 8,
     backgroundColor: 'rgba(44, 57, 48, 0.04)',
     borderRadius: 12,
   },
   branchDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
+    width: 6,
+    height: 6,
+    borderRadius: 3,
   },
   branchLabel: {
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '600' as const,
     color: Colors.textSecondary,
   },
@@ -495,13 +479,12 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: Colors.card,
-    borderRadius: 12,
-    paddingVertical: 10,
-    paddingHorizontal: 12,
+    borderRadius: 10,
+    paddingVertical: 8,
+    paddingHorizontal: 8,
     borderWidth: 1,
     borderColor: Colors.cardBorder,
     width: '100%',
-    maxWidth: 200,
     ...Platform.select({
       ios: {
         shadowColor: '#000',
@@ -516,10 +499,9 @@ const styles = StyleSheet.create({
     }),
   },
   capturePersonNode: {
-    borderRadius: 14,
-    paddingVertical: 11,
-    paddingHorizontal: 14,
-    maxWidth: 220,
+    borderRadius: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 10,
   },
   endpointNode: {
     borderColor: Colors.accent,
@@ -542,9 +524,9 @@ const styles = StyleSheet.create({
     borderColor: '#3B6B4A',
     borderWidth: 2,
     backgroundColor: 'rgba(59, 107, 74, 0.06)',
-    maxWidth: 260,
-    paddingVertical: 12,
-    paddingHorizontal: 14,
+    maxWidth: 280,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
     ...Platform.select({
       ios: {
         shadowColor: '#3B6B4A',
@@ -570,9 +552,9 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(59, 107, 74, 0.08)',
   },
   ancestorAvatar: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
+    width: 30,
+    height: 30,
+    borderRadius: 15,
     borderWidth: 2,
     borderColor: 'rgba(255, 255, 255, 0.6)',
   },
@@ -581,25 +563,25 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(255, 255, 255, 0.5)',
   },
   captureAncestorAvatar: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-  },
-  captureEndpointAvatar: {
     width: 32,
     height: 32,
     borderRadius: 16,
   },
+  captureEndpointAvatar: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+  },
   nodeAvatar: {
-    width: 30,
-    height: 30,
-    borderRadius: 15,
+    width: 26,
+    height: 26,
+    borderRadius: 13,
     justifyContent: 'center',
     alignItems: 'center',
   },
   nodeAvatarText: {
     color: Colors.white,
-    fontSize: 10,
+    fontSize: 9,
     fontWeight: '700' as const,
   },
   captureAvatarText: {
@@ -607,20 +589,21 @@ const styles = StyleSheet.create({
   },
   nodeTextContainer: {
     flex: 1,
-    marginLeft: 10,
+    marginLeft: 6,
+    overflow: 'hidden',
   },
   nameRow: {
     flexDirection: 'row',
     alignItems: 'center',
   },
   nodeName: {
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '600' as const,
     color: Colors.text,
     flexShrink: 1,
   },
   captureNodeName: {
-    fontSize: 13,
+    fontSize: 12,
   },
   endpointName: {
     color: Colors.accent,
@@ -629,16 +612,16 @@ const styles = StyleSheet.create({
   ancestorName: {
     color: '#3B6B4A',
     fontWeight: '700' as const,
-    fontSize: 14,
+    fontSize: 13,
   },
   captureAncestorNameText: {
-    fontSize: 15,
+    fontSize: 14,
   },
   captureEndpointNameText: {
     fontWeight: '700' as const,
   },
   nodeDate: {
-    fontSize: 10,
+    fontSize: 9,
     color: Colors.textSecondary,
     marginTop: 1,
   },
@@ -648,8 +631,8 @@ const styles = StyleSheet.create({
   },
   genBadge: {
     position: 'absolute',
-    top: -8,
-    right: -4,
+    top: -7,
+    right: -2,
     backgroundColor: Colors.backgroundDark,
     paddingHorizontal: 6,
     paddingVertical: 2,
@@ -666,15 +649,15 @@ const styles = StyleSheet.create({
   },
   connector: {
     alignItems: 'center',
-    height: 28,
+    height: 22,
     justifyContent: 'center',
   },
   captureConnector: {
-    height: 24,
+    height: 20,
   },
   connectorLine: {
     width: 2,
-    height: 12,
+    height: 10,
     borderRadius: 1,
   },
   captureConnectorLine: {
