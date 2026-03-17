@@ -142,9 +142,14 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
   const [isReady, setIsReady] = useState<boolean>(false);
   const [pendingEditCount, setPendingEditCount] = useState<number>(0);
   const [isLoadingFromCloud, setIsLoadingFromCloud] = useState<boolean>(false);
+  const [isBackgroundSyncing, setIsBackgroundSyncing] = useState<boolean>(false);
   const [cloudError, setCloudError] = useState<string | null>(null);
   const [loadProgress, setLoadProgress] = useState<LoadProgress | null>(null);
+  const [lastSyncResult, setLastSyncResult] = useState<string | null>(null);
   const bgSyncRef = useRef<boolean>(false);
+  const bgSyncInFlightRef = useRef<boolean>(false);
+  const cloudRetryCountRef = useRef<number>(0);
+  const MAX_AUTO_RETRIES = 3;
 
   const canLoadData = isSignedIn && isEnabled;
 
@@ -152,18 +157,41 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
     setLoadProgress(progress);
   }, []);
 
+  const persistCloudData = useCallback(async (data: FamilyTreeData): Promise<boolean> => {
+    try {
+      const serialized = serializeFamilyTreeData(data);
+      const cached = await safeSetItem(STORAGE_KEY, serialized);
+      if (cached) {
+        await safeSetItem(LAST_CLOUD_SYNC_KEY, String(Date.now()));
+        await safeSetItem(DATA_FORMAT_VERSION_KEY, CURRENT_DATA_FORMAT_VERSION);
+      }
+      return cached;
+    } catch (e) {
+      console.warn('[FamilyTree] Failed to persist cloud data:', e);
+      return false;
+    }
+  }, []);
+
   const backgroundSyncFromCloud = useCallback(async () => {
-    setIsLoadingFromCloud(true);
+    if (bgSyncInFlightRef.current) {
+      console.log('[FamilyTree] Background sync already in flight, skipping');
+      return;
+    }
+    bgSyncInFlightRef.current = true;
+    setIsBackgroundSyncing(true);
     setCloudError(null);
     try {
       const cloudResult = await loadAllFromSupabase(handleProgress);
       if (cloudResult.data && cloudResult.data.individuals.size > 0) {
         console.log('[FamilyTree] Background sync complete:', cloudResult.data.individuals.size, 'individuals');
-        const serialized = serializeFamilyTreeData(cloudResult.data);
-        await safeSetItem(STORAGE_KEY, serialized);
-        await safeSetItem(LAST_CLOUD_SYNC_KEY, String(Date.now()));
-        await safeSetItem(DATA_FORMAT_VERSION_KEY, CURRENT_DATA_FORMAT_VERSION);
+        await persistCloudData(cloudResult.data);
         setTreeData(cloudResult.data);
+        cloudRetryCountRef.current = 0;
+        if (cloudResult.error) {
+          setLastSyncResult(`Synced with warnings: ${cloudResult.error}`);
+        } else {
+          setLastSyncResult(`Synced ${cloudResult.data.individuals.size.toLocaleString()} people`);
+        }
       } else if (cloudResult.error) {
         console.warn('[FamilyTree] Background sync error:', cloudResult.error);
         setCloudError(cloudResult.error);
@@ -172,10 +200,56 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
       console.warn('[FamilyTree] Background sync failed:', e);
       setCloudError(String(e));
     } finally {
-      setIsLoadingFromCloud(false);
+      bgSyncInFlightRef.current = false;
+      setIsBackgroundSyncing(false);
       setLoadProgress(null);
     }
-  }, [handleProgress]);
+  }, [handleProgress, persistCloudData]);
+
+  const loadFromCloudWithRetry = useCallback(async (): Promise<FamilyTreeData | null> => {
+    setIsLoadingFromCloud(true);
+    setCloudError(null);
+
+    for (let attempt = 0; attempt <= MAX_AUTO_RETRIES; attempt++) {
+      try {
+        if (attempt > 0) {
+          console.log(`[FamilyTree] Cloud load retry ${attempt}/${MAX_AUTO_RETRIES}...`);
+          await new Promise(r => setTimeout(r, 2000 * attempt));
+        }
+
+        const cloudResult = await loadAllFromSupabase(handleProgress);
+
+        if (cloudResult.data && cloudResult.data.individuals.size > 0) {
+          console.log('[FamilyTree] Loaded from Supabase:', cloudResult.data.individuals.size, 'individuals');
+          await persistCloudData(cloudResult.data);
+          cloudRetryCountRef.current = 0;
+
+          if (cloudResult.error) {
+            console.warn('[FamilyTree] Load completed with partial warning:', cloudResult.error);
+            setLastSyncResult(`Loaded with warnings: ${cloudResult.error}`);
+          }
+
+          return cloudResult.data;
+        }
+
+        if (cloudResult.error) {
+          console.warn(`[FamilyTree] Cloud load attempt ${attempt + 1} error:`, cloudResult.error);
+          if (attempt === MAX_AUTO_RETRIES) {
+            setCloudError(cloudResult.error);
+          }
+        }
+      } catch (e) {
+        console.warn(`[FamilyTree] Cloud load attempt ${attempt + 1} crashed:`, e);
+        if (attempt === MAX_AUTO_RETRIES) {
+          setCloudError(String(e));
+        }
+      }
+    }
+
+    setIsLoadingFromCloud(false);
+    setLoadProgress(null);
+    return null;
+  }, [handleProgress, persistCloudData]);
 
   const loadQuery = useQuery({
     queryKey: ['familyTree'],
@@ -200,75 +274,67 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
 
       if (stored) {
         console.log('[FamilyTree] Found local cached data, loading instantly');
-        const localData = deserializeFamilyTreeData(stored);
-        if (localData.individuals.size > 0) {
-          const lastSync = await safeGetItem(LAST_CLOUD_SYNC_KEY);
-          const lastSyncTime = lastSync ? parseInt(lastSync, 10) : 0;
-          const timeSinceSync = Date.now() - lastSyncTime;
-
-          if (timeSinceSync > CLOUD_SYNC_INTERVAL) {
-            console.log('[FamilyTree] Cache stale, will sync from cloud in background');
+        try {
+          const localData = deserializeFamilyTreeData(stored);
+          if (localData.individuals.size > 0) {
+            console.log('[FamilyTree] Cache loaded:', localData.individuals.size, 'individuals');
             bgSyncRef.current = true;
-          } else {
-            console.log('[FamilyTree] Cache fresh (synced', Math.round(timeSinceSync / 60000), 'min ago)');
+            return localData;
           }
-
-          return localData;
+        } catch (e) {
+          console.warn('[FamilyTree] Cache deserialization failed, clearing:', e);
+          await safeRemoveItem(STORAGE_KEY);
         }
       }
 
       console.log('[FamilyTree] No local cache or empty, loading from cloud...');
-      setIsLoadingFromCloud(true);
-      setCloudError(null);
-      try {
-        const cloudResult = await loadAllFromSupabase(handleProgress);
-        if (cloudResult.data && cloudResult.data.individuals.size > 0) {
-          console.log('[FamilyTree] Loaded from Supabase:', cloudResult.data.individuals.size, 'individuals');
-          const serialized = serializeFamilyTreeData(cloudResult.data);
-          const cached = await safeSetItem(STORAGE_KEY, serialized);
-          if (cached) {
-            await safeSetItem(LAST_CLOUD_SYNC_KEY, String(Date.now()));
-            await safeSetItem(DATA_FORMAT_VERSION_KEY, CURRENT_DATA_FORMAT_VERSION);
-          }
-          return cloudResult.data;
-        }
-        if (cloudResult.error) {
-          console.warn('[FamilyTree] Supabase load error:', cloudResult.error);
-          setCloudError(cloudResult.error);
-        }
-      } catch (e) {
-        console.warn('[FamilyTree] Supabase load failed:', e);
-        setCloudError(String(e));
-      } finally {
-        setIsLoadingFromCloud(false);
-        setLoadProgress(null);
+      const cloudData = await loadFromCloudWithRetry();
+
+      if (cloudData) {
+        return cloudData;
       }
 
-      console.log('[FamilyTree] No data found');
+      console.log('[FamilyTree] No data found after all attempts');
       return null;
     },
     enabled: canLoadData,
     staleTime: CLOUD_SYNC_INTERVAL,
     gcTime: CLOUD_SYNC_INTERVAL * 2,
-    retry: 2,
-    retryDelay: (attempt) => Math.min(1000 * Math.pow(2, attempt), 10000),
+    retry: 1,
+    retryDelay: 5000,
   });
 
   useEffect(() => {
     if (loadQuery.data !== undefined) {
       setTreeData(loadQuery.data);
       setIsReady(true);
+      setIsLoadingFromCloud(false);
+      setLoadProgress(null);
+
       if (bgSyncRef.current) {
         bgSyncRef.current = false;
-        void backgroundSyncFromCloud();
+        setTimeout(() => {
+          void backgroundSyncFromCloud();
+        }, 500);
       }
     }
   }, [loadQuery.data, backgroundSyncFromCloud]);
 
   useEffect(() => {
+    if (loadQuery.error && !treeData) {
+      console.warn('[FamilyTree] Query error:', loadQuery.error);
+      setCloudError(String(loadQuery.error));
+      setIsLoadingFromCloud(false);
+      setLoadProgress(null);
+      setIsReady(true);
+    }
+  }, [loadQuery.error, treeData]);
+
+  useEffect(() => {
     if (!canLoadData) {
       setTreeData(null);
       setIsReady(false);
+      setLastSyncResult(null);
     }
   }, [canLoadData]);
 
@@ -849,8 +915,10 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
     linkExistingSpouses,
     updateFamily,
     isLoadingFromCloud,
+    isBackgroundSyncing,
     cloudError,
     loadProgress,
+    lastSyncResult,
     refreshFromCloud,
   }), [
     treeData, isReady, hasData, individualCount, familyCount,
@@ -859,6 +927,6 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
     loadPendingEdits, reviewPendingEdit, refreshPendingCount, generateNewId,
     addPerson, updatePerson, addChildToFamily, createFamilyAndAddChild,
     addSpouse, linkExistingSpouses, updateFamily, isLoadingFromCloud,
-    cloudError, loadProgress, refreshFromCloud,
+    isBackgroundSyncing, cloudError, loadProgress, lastSyncResult, refreshFromCloud,
   ]);
 });

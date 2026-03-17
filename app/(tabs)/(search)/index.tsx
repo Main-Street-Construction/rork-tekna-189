@@ -37,7 +37,7 @@ export default function SearchScreen() {
 function SearchScreenContent() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { hasData, search, individualCount, familyCount, isReady, treeData } = useFamilyTree();
+  const { hasData, search, individualCount, familyCount, isReady, treeData, isBackgroundSyncing, isLoadingFromCloud, loadProgress, cloudError } = useFamilyTree();
   const { profile, hasClaimed } = useProfile();
   const { addEntry } = useSearchHistory();
   const [query, setQuery] = useState<string>('');
@@ -47,8 +47,8 @@ function SearchScreenContent() {
   const inputRef = useRef<TextInput>(null);
   const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const isLoading = !isReady;
-  const canSearch = hasData && !isLoading;
+  const isLoading = !isReady && !hasData;
+  const canSearch = hasData;
 
   const handleSearch = useCallback(
     (text: string) => {
@@ -287,10 +287,33 @@ function SearchScreenContent() {
               <Text style={styles.chipLabel}>Families</Text>
             </View>
             <View style={styles.spacer} />
-            <TouchableOpacity style={styles.miniBtn} onPress={handleImport} activeOpacity={0.7}>
-              <Upload size={13} color={Colors.accent} />
-              <Text style={styles.miniBtnText}>Load Other</Text>
-            </TouchableOpacity>
+            {isBackgroundSyncing ? (
+              <View style={styles.syncIndicator}>
+                <ActivityIndicator size="small" color={Colors.accent} />
+                <Text style={styles.syncText}>Syncing...</Text>
+              </View>
+            ) : (
+              <TouchableOpacity style={styles.miniBtn} onPress={handleImport} activeOpacity={0.7}>
+                <Upload size={13} color={Colors.accent} />
+                <Text style={styles.miniBtnText}>Load Other</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+        )}
+
+        {isLoadingFromCloud && !hasData && loadProgress && (
+          <View style={styles.loadProgressRow}>
+            <ActivityIndicator size="small" color={Colors.accent} />
+            <Text style={styles.loadProgressText}>
+              Loading: {loadProgress.individualsLoaded.toLocaleString()} people{loadProgress.individualsExpected ? ` / ${loadProgress.individualsExpected.toLocaleString()}` : ''}...
+            </Text>
+          </View>
+        )}
+
+        {cloudError && !hasData && (
+          <View style={styles.errorRow}>
+            <AlertCircle size={14} color={Colors.danger} />
+            <Text style={styles.errorText} numberOfLines={2}>Load error. Pull down or tap Import to retry.</Text>
           </View>
         )}
 
@@ -503,5 +526,38 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingBottom: 10,
     fontWeight: '500' as const,
+  },
+  syncIndicator: {
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+    gap: 6,
+  },
+  syncText: {
+    fontSize: 12,
+    color: Colors.accent,
+    fontWeight: '500' as const,
+  },
+  loadProgressRow: {
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+    marginTop: 10,
+    gap: 8,
+  },
+  loadProgressText: {
+    fontSize: 13,
+    color: Colors.textSecondary,
+    fontWeight: '500' as const,
+  },
+  errorRow: {
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+    marginTop: 10,
+    gap: 6,
+  },
+  errorText: {
+    fontSize: 13,
+    color: Colors.danger,
+    fontWeight: '500' as const,
+    flex: 1,
   },
 });

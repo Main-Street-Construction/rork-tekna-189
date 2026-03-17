@@ -1,11 +1,11 @@
 import { supabase } from './supabase';
 import { GedcomIndividual, GedcomFamily, FamilyTreeData, PendingEdit, PendingEditType } from '@/types/genealogy';
 
-const FETCH_TIMEOUT_MS = 60000;
-const MAX_RETRIES = 3;
-const RETRY_DELAY_MS = 1500;
-const BATCH_PAGE_SIZE = 1000;
-const MAX_CONCURRENT_PAGES = 10;
+const FETCH_TIMEOUT_MS = 90000;
+const MAX_RETRIES = 4;
+const RETRY_DELAY_MS = 1000;
+const BATCH_PAGE_SIZE = 5000;
+const MAX_CONCURRENT_PAGES = 8;
 
 interface SupabaseQueryResult<T> {
   data: T[] | null;
@@ -210,44 +210,80 @@ async function fetchPageRange<T>(
   return { data: (result.data ?? []) as T[] };
 }
 
+async function fetchPageWithRetry<T>(
+  table: string,
+  columns: string,
+  from: number,
+  to: number,
+  maxRetries: number = MAX_RETRIES
+): Promise<{ data: T[]; error?: string; pageFrom: number }> {
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    const result = await fetchPageRange<T>(table, columns, from, to);
+    if (!result.error) {
+      return { data: result.data, pageFrom: from };
+    }
+    console.warn(`[Supabase] ${table} page ${from}-${to} attempt ${attempt + 1} failed:`, result.error);
+    if (attempt < maxRetries - 1) {
+      await new Promise(r => setTimeout(r, RETRY_DELAY_MS * Math.pow(2, attempt)));
+    } else {
+      return { data: [], error: result.error, pageFrom: from };
+    }
+  }
+  return { data: [], error: 'Max retries exceeded', pageFrom: from };
+}
+
 async function fetchAllPages<T>(
   table: string,
   columns: string = '*',
   pageSize: number = BATCH_PAGE_SIZE,
   onBatch?: (batchRows: T[], totalSoFar: number) => void
-): Promise<{ rows: T[]; error?: string }> {
-  const totalCount = await getTableCount(table);
+): Promise<{ rows: T[]; error?: string; expectedCount?: number }> {
+  let totalCount = await getTableCount(table);
+
+  if (totalCount === null) {
+    console.warn(`[Supabase] ${table}: count unavailable, retrying...`);
+    await new Promise(r => setTimeout(r, 1000));
+    totalCount = await getTableCount(table);
+  }
+
+  if (totalCount !== null && totalCount === 0) {
+    console.log(`[Supabase] ${table}: empty table`);
+    return { rows: [], expectedCount: 0 };
+  }
 
   if (totalCount !== null && totalCount <= pageSize) {
     console.log(`[Supabase] ${table}: single fetch (${totalCount} rows)`);
-    const result = await fetchPageRange<T>(table, columns, 0, totalCount - 1);
-    if (result.error) {
-      return { rows: [], error: result.error };
+    const result = await fetchPageWithRetry<T>(table, columns, 0, totalCount - 1);
+    if (result.error && result.data.length === 0) {
+      return { rows: [], error: result.error, expectedCount: totalCount };
     }
     if (onBatch && result.data.length > 0) {
       onBatch(result.data, result.data.length);
     }
-    return { rows: result.data };
+    return { rows: result.data, expectedCount: totalCount };
   }
 
   if (totalCount !== null && totalCount > pageSize) {
-    console.log(`[Supabase] ${table}: parallel fetch ${totalCount} rows in ${Math.ceil(totalCount / pageSize)} pages`);
     const pageCount = Math.ceil(totalCount / pageSize);
+    console.log(`[Supabase] ${table}: parallel fetch ${totalCount} rows in ${pageCount} pages (batch size ${pageSize})`);
     const allRows: T[] = [];
     let completed = 0;
+    const failedPages: { from: number; to: number }[] = [];
 
     for (let wave = 0; wave < pageCount; wave += MAX_CONCURRENT_PAGES) {
       const batch = [];
       for (let p = wave; p < Math.min(wave + MAX_CONCURRENT_PAGES, pageCount); p++) {
         const from = p * pageSize;
         const to = Math.min(from + pageSize - 1, totalCount - 1);
-        batch.push(fetchPageRange<T>(table, columns, from, to));
+        batch.push(fetchPageWithRetry<T>(table, columns, from, to));
       }
 
       const results = await Promise.all(batch);
       for (const r of results) {
         if (r.error) {
-          console.warn(`[Supabase] ${table} page error:`, r.error);
+          console.warn(`[Supabase] ${table} page starting at ${r.pageFrom} failed after retries:`, r.error);
+          const to = Math.min(r.pageFrom + pageSize - 1, totalCount - 1);
+          failedPages.push({ from: r.pageFrom, to });
         }
         if (r.data.length > 0) {
           for (let i = 0; i < r.data.length; i++) {
@@ -262,7 +298,41 @@ async function fetchAllPages<T>(
       console.log(`[Supabase] ${table}: completed ${completed}/${pageCount} pages (${allRows.length} rows)`);
     }
 
-    return { rows: allRows };
+    if (failedPages.length > 0) {
+      console.log(`[Supabase] ${table}: retrying ${failedPages.length} failed pages...`);
+      for (const fp of failedPages) {
+        await new Promise(r => setTimeout(r, 2000));
+        const retry = await fetchPageWithRetry<T>(table, columns, fp.from, fp.to, 3);
+        if (retry.data.length > 0) {
+          for (let i = 0; i < retry.data.length; i++) {
+            allRows.push(retry.data[i]);
+          }
+          if (onBatch) {
+            onBatch(retry.data, allRows.length);
+          }
+          console.log(`[Supabase] ${table}: recovered page ${fp.from}-${fp.to} (${retry.data.length} rows)`);
+        } else {
+          console.warn(`[Supabase] ${table}: page ${fp.from}-${fp.to} permanently failed`);
+        }
+      }
+    }
+
+    const loadedPct = totalCount > 0 ? Math.round((allRows.length / totalCount) * 100) : 100;
+    console.log(`[Supabase] ${table}: loaded ${allRows.length}/${totalCount} (${loadedPct}%)`);
+
+    if (allRows.length === 0) {
+      return { rows: [], error: `Failed to load any rows from ${table}`, expectedCount: totalCount };
+    }
+
+    if (allRows.length < totalCount) {
+      return {
+        rows: allRows,
+        error: `Partial load: got ${allRows.length}/${totalCount} from ${table}`,
+        expectedCount: totalCount,
+      };
+    }
+
+    return { rows: allRows, expectedCount: totalCount };
   }
 
   console.log(`[Supabase] ${table}: sequential fallback (count unavailable)`);
@@ -280,7 +350,7 @@ async function fetchAllPages<T>(
 
     if (error) {
       consecutiveErrors++;
-      if (consecutiveErrors >= 3) {
+      if (consecutiveErrors >= 5) {
         if (allRows.length > 0) {
           return { rows: allRows, error: `Partial fetch of ${table}: ${error.message}` };
         }
@@ -311,6 +381,10 @@ export type LoadProgress = {
   individualsLoaded: number;
   familiesLoaded: number;
   membersLoaded: number;
+  individualsExpected?: number;
+  familiesExpected?: number;
+  membersExpected?: number;
+  partialWarning?: string;
 };
 
 export async function loadAllFromSupabase(
@@ -351,16 +425,29 @@ export async function loadAllFromSupabase(
       }),
     ]);
 
+    progress.individualsExpected = indResult.expectedCount;
+    progress.familiesExpected = famResult.expectedCount;
+    progress.membersExpected = fmResult.expectedCount;
+
     if (indResult.error && indResult.rows.length === 0) {
       return { data: null, error: indResult.error };
     }
-    console.log('[Supabase] Individuals done:', indResult.rows.length, 'in', Date.now() - startTime, 'ms');
+    console.log('[Supabase] Individuals done:', indResult.rows.length, '/', indResult.expectedCount ?? '?', 'in', Date.now() - startTime, 'ms');
 
     if (famResult.error && famResult.rows.length === 0) {
       return { data: null, error: famResult.error };
     }
-    console.log('[Supabase] Families done:', famResult.rows.length, 'in', Date.now() - startTime, 'ms');
-    console.log('[Supabase] Family members done:', fmResult.rows.length, 'in', Date.now() - startTime, 'ms');
+    console.log('[Supabase] Families done:', famResult.rows.length, '/', famResult.expectedCount ?? '?', 'in', Date.now() - startTime, 'ms');
+    console.log('[Supabase] Family members done:', fmResult.rows.length, '/', fmResult.expectedCount ?? '?', 'in', Date.now() - startTime, 'ms');
+
+    const warnings: string[] = [];
+    if (indResult.error) warnings.push(indResult.error);
+    if (famResult.error) warnings.push(famResult.error);
+    if (fmResult.error) warnings.push(fmResult.error);
+    if (warnings.length > 0) {
+      progress.partialWarning = warnings.join('; ');
+      reportProgress();
+    }
 
     progress.phase = 'assembling';
     reportProgress();
@@ -440,7 +527,15 @@ export async function loadAllFromSupabase(
     const elapsed = Date.now() - startTime;
     console.log('[Supabase] Data assembly complete:', individuals.size, 'individuals,', families.size, 'families in', elapsed, 'ms');
     console.log('[Supabase] Links: spouseLinks=' + spouseLinksSet + ', childLinksSet=' + childLinksSet + ', childLinkSkipped=' + childLinkSkipped);
-    return { data: { individuals, families } };
+
+    if (progress.partialWarning) {
+      console.warn('[Supabase] Load completed with warnings:', progress.partialWarning);
+    }
+
+    return {
+      data: { individuals, families },
+      error: progress.partialWarning,
+    };
   } catch (e) {
     console.error('[Supabase] loadAllFromSupabase crashed:', e);
     return { data: null, error: String(e) };
