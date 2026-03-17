@@ -12,10 +12,11 @@ Loading takes 5+ minutes even on fast connections. The bottleneck is **many sequ
 - [x] Waves of up to 8 concurrent pages per table
 - [x] All 3 tables (individuals, families, family_members) fetched in parallel
 
-### 2. Larger batch size (1000 → 5000 rows per page) - DONE
+### 2. Batch size tuned to Supabase row limit - DONE
 
-- [x] Fewer HTTP round-trips, less overhead
-- [x] Batch size increased to 5000
+- [x] Batch size set to 1000 (Supabase default max rows per response)
+- [x] Concurrent pages increased to 15 to compensate
+- [x] Fix: previous 5000 page size caused silent truncation to 1000 rows per page
 
 ### 3. Faster in-memory assembly - DONE
 
