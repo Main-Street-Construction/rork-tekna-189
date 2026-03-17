@@ -22,6 +22,7 @@ import {
   reviewPendingEdit as reviewPendingEditApi,
   getPendingEditCount,
   getCloudCounts,
+  fetchIndividualByGedcomId,
   LoadProgress,
 } from '@/lib/supabase-db';
 import { PendingEdit } from '@/types/genealogy';
@@ -766,10 +767,32 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
     ): Promise<{ success: boolean; familyId?: string; error?: string }> => {
       if (!treeData) return { success: false, error: 'No tree data loaded' };
 
-      const person1 = treeData.individuals.get(person1Id);
-      const person2 = treeData.individuals.get(person2Id);
-      if (!person1) return { success: false, error: 'Person 1 not found' };
-      if (!person2) return { success: false, error: 'Person 2 not found' };
+      let person1 = treeData.individuals.get(person1Id);
+      let person2 = treeData.individuals.get(person2Id);
+
+      if (!person1) {
+        console.log('[FamilyTree] Person 1 not in local cache, fetching from Supabase:', person1Id);
+        const fetched = await fetchIndividualByGedcomId(person1Id);
+        if (fetched) {
+          person1 = fetched;
+          const updatedIndividuals = new Map(treeData.individuals);
+          updatedIndividuals.set(person1Id, fetched);
+          setTreeData({ ...treeData, individuals: updatedIndividuals });
+        }
+      }
+      if (!person2) {
+        console.log('[FamilyTree] Person 2 not in local cache, fetching from Supabase:', person2Id);
+        const fetched = await fetchIndividualByGedcomId(person2Id);
+        if (fetched) {
+          person2 = fetched;
+          const updatedIndividuals = new Map(treeData.individuals);
+          updatedIndividuals.set(person2Id, fetched);
+          setTreeData({ ...treeData, individuals: updatedIndividuals });
+        }
+      }
+
+      if (!person1) return { success: false, error: `Person 1 (${person1Id}) not found in local data or database` };
+      if (!person2) return { success: false, error: `Person 2 (${person2Id}) not found in local data or database` };
 
       const existingFamily = Array.from(treeData.families.values()).find((f) => {
         return (

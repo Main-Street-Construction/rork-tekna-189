@@ -570,6 +570,26 @@ export async function getCloudCounts(): Promise<{ individuals: number; families:
   }
 }
 
+export async function fetchIndividualByGedcomId(gedcomId: string): Promise<GedcomIndividual | null> {
+  try {
+    const { data, error } = await supabase
+      .from('individuals')
+      .select(INDIVIDUALS_COLUMNS)
+      .eq('gedcom_id', gedcomId)
+      .limit(1);
+
+    if (error || !data || data.length === 0) {
+      console.log('[Supabase] fetchIndividualByGedcomId: not found for', gedcomId, error?.message);
+      return null;
+    }
+
+    return supabaseToIndividual(data[0] as SupabaseIndividual);
+  } catch (e) {
+    console.error('[Supabase] fetchIndividualByGedcomId crashed:', e);
+    return null;
+  }
+}
+
 export async function updateIndividualInSupabase(
   individual: GedcomIndividual
 ): Promise<{ success: boolean; error?: string }> {

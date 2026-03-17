@@ -9,7 +9,7 @@ import {
   Alert,
   RefreshControl,
 } from 'react-native';
-import { Stack, useRouter } from 'expo-router';
+import { Stack } from 'expo-router';
 import {
   Check,
   X,
@@ -45,7 +45,7 @@ const EDIT_TYPE_ICONS: Record<string, React.ReactNode> = {
 };
 
 export default function PendingEditsScreen() {
-  const router = useRouter();
+
   const {
     loadPendingEdits,
     reviewPendingEdit,
@@ -75,7 +75,7 @@ export default function PendingEditsScreen() {
 
   useEffect(() => {
     setLoading(true);
-    loadEdits().finally(() => setLoading(false));
+    void loadEdits().finally(() => setLoading(false));
   }, [loadEdits]);
 
   const handleRefresh = useCallback(async () => {
@@ -84,21 +84,19 @@ export default function PendingEditsScreen() {
     setRefreshing(false);
   }, [loadEdits]);
 
-  const applyEdit = useCallback(async (edit: PendingEdit): Promise<boolean> => {
+  const applyEdit = useCallback(async (edit: PendingEdit): Promise<{ success: boolean; error?: string }> => {
     const data = edit.data as Record<string, unknown>;
     try {
       if (edit.edit_type === 'update_person') {
         const individual = data.individual as GedcomIndividual;
-        if (!individual) return false;
-        const result = await updatePerson(individual);
-        return result.success;
+        if (!individual) return { success: false, error: 'Missing individual data in edit' };
+        return await updatePerson(individual);
       }
 
       if (edit.edit_type === 'add_person') {
         const individual = data.individual as GedcomIndividual;
-        if (!individual) return false;
-        const result = await addPerson(individual);
-        return result.success;
+        if (!individual) return { success: false, error: 'Missing individual data in edit' };
+        return await addPerson(individual);
       }
 
       if (edit.edit_type === 'add_child') {
@@ -107,16 +105,14 @@ export default function PendingEditsScreen() {
         const parentId = data.parentId as string | undefined;
         const spouseId = data.spouseId as string | undefined;
 
-        if (!child) return false;
+        if (!child) return { success: false, error: 'Missing child data in edit' };
 
         if (familyId) {
-          const result = await addChildToFamily(child, familyId);
-          return result.success;
+          return await addChildToFamily(child, familyId);
         } else if (parentId) {
-          const result = await createFamilyAndAddChild(child, parentId, spouseId);
-          return result.success;
+          return await createFamilyAndAddChild(child, parentId, spouseId);
         }
-        return false;
+        return { success: false, error: 'Missing familyId or parentId' };
       }
 
       if (edit.edit_type === 'add_spouse') {
@@ -125,10 +121,9 @@ export default function PendingEditsScreen() {
         const mDate = data.marriageDate as string | undefined;
         const mPlace = data.marriagePlace as string | undefined;
 
-        if (!spouse || !targetPersonId) return false;
+        if (!spouse || !targetPersonId) return { success: false, error: 'Missing spouse or target person data' };
 
-        const result = await addSpouse(targetPersonId, spouse, mDate, mPlace);
-        return result.success;
+        return await addSpouse(targetPersonId, spouse, mDate, mPlace);
       }
 
       if (edit.edit_type === 'link_spouses') {
@@ -137,10 +132,10 @@ export default function PendingEditsScreen() {
         const mDate = data.marriageDate as string | undefined;
         const mPlace = data.marriagePlace as string | undefined;
 
-        if (!person1Id || !person2Id) return false;
+        if (!person1Id || !person2Id) return { success: false, error: 'Missing person IDs for spouse link' };
 
-        const result = await linkExistingSpouses(person1Id, person2Id, mDate, mPlace);
-        return result.success;
+        console.log('[PendingEdits] Applying link_spouses:', person1Id, '+', person2Id);
+        return await linkExistingSpouses(person1Id, person2Id, mDate, mPlace);
       }
 
       if (edit.edit_type === 'edit_marriage') {
@@ -148,24 +143,23 @@ export default function PendingEditsScreen() {
         const marriageDate = data.marriageDate as string | undefined;
         const marriagePlace = data.marriagePlace as string | undefined;
 
-        if (!familyId || !treeData) return false;
+        if (!familyId || !treeData) return { success: false, error: 'Missing family ID or tree data' };
 
         const family = treeData.families.get(familyId);
-        if (!family) return false;
+        if (!family) return { success: false, error: `Family ${familyId} not found` };
 
         const updatedFamily: GedcomFamily = {
           ...family,
           marriageDate: marriageDate || undefined,
           marriagePlace: marriagePlace || undefined,
         };
-        const result = await updateFamily(updatedFamily);
-        return result.success;
+        return await updateFamily(updatedFamily);
       }
 
-      return false;
+      return { success: false, error: 'Unknown edit type' };
     } catch (e) {
       console.error('[PendingEdits] Error applying edit:', e);
-      return false;
+      return { success: false, error: String(e) };
     }
   }, [updatePerson, addPerson, addChildToFamily, createFamilyAndAddChild, addSpouse, linkExistingSpouses, updateFamily, treeData]);
 
@@ -179,16 +173,18 @@ export default function PendingEditsScreen() {
           text: 'Approve',
           onPress: async () => {
             setProcessingId(edit.id);
-            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+            void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
 
-            const applied = await applyEdit(edit);
-            if (applied) {
+            const result = await applyEdit(edit);
+            if (result.success) {
               await reviewPendingEdit(edit.id, 'approved');
               setEdits((prev) => prev.filter((e) => e.id !== edit.id));
-              Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+              void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
             } else {
-              Alert.alert('Error', 'Failed to apply this edit. It may reference data that no longer exists.');
-              await reviewPendingEdit(edit.id, 'rejected', 'Failed to apply');
+              const errorMsg = result.error ?? 'Unknown error';
+              console.error('[PendingEdits] Failed to apply edit:', errorMsg);
+              Alert.alert('Error', `Failed to apply: ${errorMsg}`);
+              await reviewPendingEdit(edit.id, 'rejected', errorMsg);
               setEdits((prev) => prev.filter((e) => e.id !== edit.id));
             }
             setProcessingId(null);
@@ -209,7 +205,7 @@ export default function PendingEditsScreen() {
           style: 'destructive',
           onPress: async () => {
             setProcessingId(edit.id);
-            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+            void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
             await reviewPendingEdit(edit.id, 'rejected');
             setEdits((prev) => prev.filter((e) => e.id !== edit.id));
             setProcessingId(null);
