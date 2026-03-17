@@ -58,6 +58,7 @@ export default function PendingEditsScreen() {
     linkExistingSpouses,
     updateFamily,
     treeData,
+    generateNewId,
   } = useFamilyTree();
 
   const [edits, setEdits] = useState<PendingEdit[]>([]);
@@ -96,7 +97,10 @@ export default function PendingEditsScreen() {
       if (edit.edit_type === 'add_person') {
         const individual = data.individual as GedcomIndividual;
         if (!individual) return { success: false, error: 'Missing individual data in edit' };
-        return await addPerson(individual);
+        const freshId = generateNewId('I');
+        console.log('[PendingEdits] Regenerated add_person ID:', individual.id, '->', freshId);
+        const freshIndividual: GedcomIndividual = { ...individual, id: freshId };
+        return await addPerson(freshIndividual);
       }
 
       if (edit.edit_type === 'add_child') {
@@ -107,10 +111,14 @@ export default function PendingEditsScreen() {
 
         if (!child) return { success: false, error: 'Missing child data in edit' };
 
+        const freshChildId = generateNewId('I');
+        console.log('[PendingEdits] Regenerated add_child ID:', child.id, '->', freshChildId);
+        const freshChild: GedcomIndividual = { ...child, id: freshChildId, familiesAsSpouse: child.familiesAsSpouse ?? [] };
+
         if (familyId) {
-          return await addChildToFamily(child, familyId);
+          return await addChildToFamily(freshChild, familyId);
         } else if (parentId) {
-          return await createFamilyAndAddChild(child, parentId, spouseId);
+          return await createFamilyAndAddChild(freshChild, parentId, spouseId);
         }
         return { success: false, error: 'Missing familyId or parentId' };
       }
@@ -123,7 +131,11 @@ export default function PendingEditsScreen() {
 
         if (!spouse || !targetPersonId) return { success: false, error: 'Missing spouse or target person data' };
 
-        return await addSpouse(targetPersonId, spouse, mDate, mPlace);
+        const freshSpouseId = generateNewId('I');
+        console.log('[PendingEdits] Regenerated add_spouse ID:', spouse.id, '->', freshSpouseId);
+        const freshSpouse: GedcomIndividual = { ...spouse, id: freshSpouseId, familiesAsSpouse: spouse.familiesAsSpouse ?? [] };
+
+        return await addSpouse(targetPersonId, freshSpouse, mDate, mPlace);
       }
 
       if (edit.edit_type === 'link_spouses') {
@@ -161,7 +173,7 @@ export default function PendingEditsScreen() {
       console.error('[PendingEdits] Error applying edit:', e);
       return { success: false, error: String(e) };
     }
-  }, [updatePerson, addPerson, addChildToFamily, createFamilyAndAddChild, addSpouse, linkExistingSpouses, updateFamily, treeData]);
+  }, [updatePerson, addPerson, addChildToFamily, createFamilyAndAddChild, addSpouse, linkExistingSpouses, updateFamily, treeData, generateNewId]);
 
   const handleApprove = useCallback(async (edit: PendingEdit) => {
     Alert.alert(

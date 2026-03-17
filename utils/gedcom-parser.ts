@@ -470,19 +470,26 @@ export function getParents(
   if (person.familyAsChild) {
     const family = data.families.get(person.familyAsChild);
     if (family) {
-      const parents: GedcomIndividual[] = [];
-      if (family.husbandId) {
-        const father = data.individuals.get(family.husbandId);
-        if (father) parents.push(father);
+      const childIds = Array.isArray(family.childrenIds) ? family.childrenIds : [];
+      if (childIds.includes(personId)) {
+        const parents: GedcomIndividual[] = [];
+        if (family.husbandId) {
+          const father = data.individuals.get(family.husbandId);
+          if (father) parents.push(father);
+        }
+        if (family.wifeId) {
+          const mother = data.individuals.get(family.wifeId);
+          if (mother) parents.push(mother);
+        }
+        if (parents.length > 0) return parents;
+      } else {
+        console.warn('[getParents] Person', personId, 'has familyAsChild =', person.familyAsChild,
+          'but is NOT in that family\'s childrenIds. Falling through to scan.');
       }
-      if (family.wifeId) {
-        const mother = data.individuals.get(family.wifeId);
-        if (mother) parents.push(mother);
-      }
-      if (parents.length > 0) return parents;
     }
   }
 
+  const allMatchingFamilies: { family: GedcomFamily; parents: GedcomIndividual[] }[] = [];
   const familyIter = data.families.values();
   let next = familyIter.next();
   while (!next.done) {
@@ -497,9 +504,27 @@ export function getParents(
         const mother = data.individuals.get(fam.wifeId);
         if (mother) parents.push(mother);
       }
-      if (parents.length > 0) return parents;
+      if (parents.length > 0) {
+        allMatchingFamilies.push({ family: fam, parents });
+      }
     }
     next = familyIter.next();
+  }
+
+  if (allMatchingFamilies.length > 1) {
+    console.warn('[getParents] Person', personId, 'found in', allMatchingFamilies.length,
+      'families:', allMatchingFamilies.map(f => f.family.id).join(', '));
+  }
+
+  if (allMatchingFamilies.length > 0) {
+    const best = allMatchingFamilies.reduce((a, b) => {
+      return b.parents.length > a.parents.length ? b : a;
+    });
+
+    if (!person.familyAsChild || person.familyAsChild !== best.family.id) {
+      person.familyAsChild = best.family.id;
+    }
+    return best.parents;
   }
 
   return [];

@@ -561,12 +561,15 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
       if (!treeData) return { success: false, error: 'No tree data loaded' };
 
       const family = treeData.families.get(familyId);
-      if (!family) return { success: false, error: 'Family not found' };
+      if (!family) return { success: false, error: 'Family not found: ' + familyId };
 
       console.log('[FamilyTree] Adding child', childIndividual.id, 'to family', familyId);
+      console.log('[FamilyTree] Family husband:', family.husbandId, 'wife:', family.wifeId);
+      console.log('[FamilyTree] Child familiesAsSpouse:', childIndividual.familiesAsSpouse);
 
       const updatedChild: GedcomIndividual = {
         ...childIndividual,
+        familiesAsSpouse: Array.isArray(childIndividual.familiesAsSpouse) ? childIndividual.familiesAsSpouse : [],
         familyAsChild: familyId,
       };
 
@@ -590,12 +593,17 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
       const indResult = await createIndividualInSupabase(updatedChild);
       if (!indResult.success) {
         console.error('[FamilyTree] Cloud create child failed:', indResult.error);
+        return { success: false, error: 'Child saved locally but cloud sync failed: ' + indResult.error };
       }
+
       const famResult = await upsertFamilyInSupabase(updatedFamily);
       if (!famResult.success) {
         console.error('[FamilyTree] Cloud update family failed:', famResult.error);
+        return { success: false, error: 'Child created but family link failed: ' + famResult.error };
       }
 
+      console.log('[FamilyTree] Successfully added child', updatedChild.id, 'to family', familyId,
+        '- parents:', family.husbandId, '/', family.wifeId);
       return { success: true };
     },
     [treeData, persistTreeData]
@@ -614,6 +622,11 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
 
       const parent1 = treeData.individuals.get(parent1Id);
       const parent2 = parent2Id ? treeData.individuals.get(parent2Id) : undefined;
+
+      if (!parent1) {
+        console.error('[FamilyTree] Parent1 not found:', parent1Id);
+        return { success: false, error: 'Parent not found: ' + parent1Id };
+      }
 
       let husbandId: string | undefined;
       let wifeId: string | undefined;
@@ -634,6 +647,8 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
         }
       }
 
+      console.log('[FamilyTree] New family', newFamilyId, '- husband:', husbandId, 'wife:', wifeId, 'child:', childIndividual.id);
+
       const newFamily: GedcomFamily = {
         id: newFamilyId,
         husbandId,
@@ -643,6 +658,7 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
 
       const updatedChild: GedcomIndividual = {
         ...childIndividual,
+        familiesAsSpouse: Array.isArray(childIndividual.familiesAsSpouse) ? childIndividual.familiesAsSpouse : [],
         familyAsChild: newFamilyId,
       };
 
@@ -677,14 +693,20 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
       };
       await persistTreeData(newTree);
 
-      await createIndividualInSupabase(updatedChild);
-      await upsertFamilyInSupabase(newFamily);
-      if (parent1) {
-        await updateIndividualInSupabase(updatedIndividuals.get(parent1Id)!);
+      const indResult = await createIndividualInSupabase(updatedChild);
+      if (!indResult.success) {
+        console.error('[FamilyTree] Cloud create child failed:', indResult.error);
+        return { success: false, familyId: newFamilyId, error: 'Child saved locally but cloud sync failed: ' + indResult.error };
       }
-      if (parent2 && parent2Id) {
-        await updateIndividualInSupabase(updatedIndividuals.get(parent2Id)!);
+
+      const famResult = await upsertFamilyInSupabase(newFamily);
+      if (!famResult.success) {
+        console.error('[FamilyTree] Cloud create family failed:', famResult.error);
+        return { success: false, familyId: newFamilyId, error: 'Family link failed in cloud: ' + famResult.error };
       }
+
+      console.log('[FamilyTree] Successfully created family', newFamilyId,
+        'with child', updatedChild.id, '- parents:', husbandId, '/', wifeId);
 
       return { success: true, familyId: newFamilyId };
     },

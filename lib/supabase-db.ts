@@ -618,40 +618,56 @@ export async function createIndividualInSupabase(
   individual: GedcomIndividual
 ): Promise<{ success: boolean; error?: string }> {
   try {
-
     const row = individualToSupabaseRow(individual);
 
     const { data: existing } = await supabase
       .from('individuals')
-      .select('id')
+      .select('id,first_name,last_name')
       .eq('gedcom_id', individual.id)
       .limit(1);
 
     if (existing && existing.length > 0) {
+      const ex = existing[0];
+      const exFirst = ((ex as Record<string, unknown>).first_name as string || '').trim().toLowerCase();
+      const exLast = ((ex as Record<string, unknown>).last_name as string || '').trim().toLowerCase();
+      const newFirst = ((row.first_name as string) || '').trim().toLowerCase();
+      const newLast = ((row.last_name as string) || '').trim().toLowerCase();
 
+      if (exFirst && newFirst && exFirst !== newFirst && exLast !== newLast) {
+        console.error(
+          '[Supabase] ID COLLISION detected for gedcom_id', individual.id,
+          '- existing person:', exFirst, exLast,
+          '- new person:', newFirst, newLast,
+          '- refusing to overwrite'
+        );
+        return {
+          success: false,
+          error: `ID collision: ${individual.id} already belongs to "${exFirst} ${exLast}", cannot overwrite with "${newFirst} ${newLast}". Please reload data.`,
+        };
+      }
+
+      console.log('[Supabase] Updating existing individual:', individual.id, newFirst, newLast);
       const { error } = await supabase
         .from('individuals')
         .update(row)
         .eq('gedcom_id', individual.id);
       if (error) {
-
         return { success: false, error: error.message };
       }
       return { success: true };
     }
 
+    console.log('[Supabase] Inserting new individual:', individual.id, row.first_name, row.last_name);
     const { error } = await supabase
       .from('individuals')
       .insert(row);
 
     if (error) {
-
       return { success: false, error: error.message };
     }
 
     return { success: true };
   } catch (e) {
-
     return { success: false, error: String(e) };
   }
 }
@@ -731,7 +747,7 @@ export async function upsertFamilyInSupabase(
           .limit(1);
 
         if (!existingMember || existingMember.length === 0) {
-          const { error: _fmError } = await supabase
+          const { error: fmError } = await supabase
             .from('family_members')
             .insert({
               family_id: familyUuid,
@@ -739,6 +755,11 @@ export async function upsertFamilyInSupabase(
               role: 'child',
             });
 
+          if (fmError) {
+            console.error('[Supabase] FAILED to create family_member link: child', childGedcomId, 'in family', family.id, '-', fmError.message);
+          } else {
+            console.log('[Supabase] Linked child', childGedcomId, 'to family', family.id);
+          }
         }
       }
     }
