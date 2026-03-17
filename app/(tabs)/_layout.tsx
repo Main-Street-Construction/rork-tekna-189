@@ -2,8 +2,12 @@ import { Tabs } from 'expo-router';
 import { Search, Clock, User, GitFork } from 'lucide-react-native';
 import React from 'react';
 import Colors from '@/constants/colors';
+import { useFamilyTree } from '@/contexts/FamilyTreeContext';
 
 export default function TabLayout() {
+  const { isAdmin, pendingEditCount } = useFamilyTree();
+  const badgeCount = isAdmin && pendingEditCount > 0 ? pendingEditCount.toString() : undefined;
+
   return (
     <Tabs
       screenOptions={{
@@ -46,6 +50,8 @@ export default function TabLayout() {
         options={{
           title: 'Profile',
           tabBarIcon: ({ color, size }) => <User size={size} color={color} />,
+          tabBarBadge: badgeCount,
+          tabBarBadgeStyle: badgeCount ? { backgroundColor: Colors.accent, fontSize: 10, fontWeight: '700' as const } : undefined,
         }}
       />
     </Tabs>
