@@ -89,8 +89,9 @@ export default React.memo(function RelationshipPathView({
         : person.sex === 'M'
           ? Colors.male
           : Colors.textSecondary;
-    const initials =
-      (person.givenName?.[0] ?? '') + (person.surname?.[0] ?? '');
+    const given = person.givenName ?? '';
+    const sur = person.surname ?? '';
+    const initials = (given[0] ?? '') + (sur[0] ?? '') || '?';
 
     const hasHandler = !!onPersonPress;
     const NodeWrapper = hasHandler ? TouchableOpacity : View;
@@ -154,12 +155,9 @@ export default React.memo(function RelationshipPathView({
                 <Sparkles size={12} color={Colors.accent} style={{ marginLeft: 4 }} />
               )}
             </View>
-            {person.birthDate && (
-              <Text style={[styles.nodeDate, isCapture && styles.captureNodeDate]}>
-                {person.birthDate}
-                {person.deathDate ? ` — ${person.deathDate}` : ''}
-              </Text>
-            )}
+            {person.birthDate ? (
+              <Text style={[styles.nodeDate, isCapture && styles.captureNodeDate]}>{person.birthDate}{person.deathDate ? ` — ${person.deathDate}` : ''}</Text>
+            ) : null}
           </View>
           {genLabel && (
             <View style={styles.genBadge}>
@@ -229,14 +227,11 @@ export default React.memo(function RelationshipPathView({
       </View>
 
       {renderForkLines()}
-
-        <View style={[styles.fanContainer, isCapture && styles.captureFanContainer]}>
+      <View style={[styles.fanContainer, isCapture && styles.captureFanContainer]}>
           <View style={styles.fanBranch}>
             <View style={styles.branchHeader}>
               <View style={[styles.branchDot, { backgroundColor: Colors.male }]} />
-              <Text style={[styles.branchLabel, isCapture && styles.captureBranchLabel]}>
-                To {person1.givenName}
-              </Text>
+              <Text style={[styles.branchLabel, isCapture && styles.captureBranchLabel]}>{'To ' + (person1.givenName || '?')}</Text>
             </View>
             {path1.length > 1 ? (
               path1.slice(1).map((personId, idx) => {
@@ -266,9 +261,7 @@ export default React.memo(function RelationshipPathView({
           <View style={styles.fanBranch}>
             <View style={styles.branchHeader}>
               <View style={[styles.branchDot, { backgroundColor: Colors.female }]} />
-              <Text style={[styles.branchLabel, isCapture && styles.captureBranchLabel]}>
-                To {person2.givenName}
-              </Text>
+              <Text style={[styles.branchLabel, isCapture && styles.captureBranchLabel]}>{'To ' + (person2.givenName || '?')}</Text>
             </View>
             {path2.length > 1 ? (
               path2.slice(1).map((personId, idx) => {
