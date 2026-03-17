@@ -4,8 +4,8 @@ import { GedcomIndividual, GedcomFamily, FamilyTreeData, PendingEdit, PendingEdi
 const FETCH_TIMEOUT_MS = 60000;
 const MAX_RETRIES = 3;
 const RETRY_DELAY_MS = 1500;
-const BATCH_PAGE_SIZE = 5000;
-const MAX_CONCURRENT_PAGES = 6;
+const BATCH_PAGE_SIZE = 1000;
+const MAX_CONCURRENT_PAGES = 10;
 
 interface SupabaseQueryResult<T> {
   data: T[] | null;
