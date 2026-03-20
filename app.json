@@ -28,14 +28,14 @@
       "favicon": "./assets/images/favicon.png"
     },
     "plugins": [
-      [
-        "expo-router",
-        {
-          "origin": "https://rork-tekna-189.vercel.app/"
-        }
-      ],
-      "expo-mail-composer"
-    ],
+  [
+    "expo-router",
+    {
+      "origin": "https://rork-tekna-189.vercel.app/"
+    }
+  ],
+  "expo-mail-composer"
+],
     "experiments": {
       "typedRoutes": true
     }
