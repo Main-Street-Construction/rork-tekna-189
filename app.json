@@ -31,10 +31,16 @@
       [
         "expo-router",
         {
-          "origin": "https://rork.com/"
+          "origin": "https://rork-tekna-189.vercel.app/"
         }
       ],
       "expo-mail-composer"
+    ],
+    "experiments": {
+      "typedRoutes": true
+    }
+  }
+}      "expo-mail-composer"
     ],
     "experiments": {
       "typedRoutes": true
