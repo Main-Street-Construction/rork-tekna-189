@@ -6,7 +6,7 @@
     "start": "bunx rork start -p tq8ag59j6470p9qfopjrc --tunnel",
     "start-web": "bunx rork start -p tq8ag59j6470p9qfopjrc --web --tunnel",
     "start-web-dev": "DEBUG=expo* bunx rork start -p tq8ag59j6470p9qfopjrc --web --tunnel",
-    "lint": "expo lint"
+    "lint": "expo lint",
     "build:web": "expo export -p web"
   },
   "dependencies": {
