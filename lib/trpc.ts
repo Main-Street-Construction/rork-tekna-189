@@ -19,8 +19,3 @@ export const trpcClient = trpc.createClient({
     }),
   ],
 });
-```
-
-**Step 4 — Add to Vercel env vars:**
-```
-EXPO_PUBLIC_RORK_API_BASE_URL=https://rork-tekna-189.vercel.app
