@@ -19,6 +19,7 @@ import {
   AlertTriangle,
   CheckCircle,
   XCircle,
+  Trash2,
 } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
@@ -126,6 +127,56 @@ export default function AdminScreen() {
       ]
     );
   }, [updateUserMutation]);
+
+  const deleteUserMutation = useMutation({
+    mutationFn: async (targetUserId: string) => {
+      const { data, error } = await supabase.rpc('admin_delete_user', {
+        target_user_id: targetUserId,
+      });
+      if (error) throw new Error(error.message);
+      const result = data as { success: boolean; error?: string };
+      if (!result.success) {
+        throw new Error(result.error ?? 'Delete failed');
+      }
+      return result;
+    },
+    onSuccess: () => {
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      void queryClient.invalidateQueries({ queryKey: ['adminUsersList'] });
+    },
+    onError: (error: Error) => {
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+      Alert.alert('Error', error.message);
+    },
+    onSettled: () => {
+      setUpdatingUserId(null);
+    },
+  });
+
+  const handleDeleteUser = useCallback((targetUser: AdminUserRow) => {
+    if (targetUser.id === user?.id) {
+      Alert.alert('Cannot Delete', 'You cannot delete your own account.');
+      return;
+    }
+
+    const displayName = targetUser.email ?? targetUser.id.slice(0, 8) + '...';
+
+    Alert.alert(
+      'Delete User',
+      `Are you sure you want to permanently delete ${displayName}? This action cannot be undone.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: () => {
+            setUpdatingUserId(targetUser.id);
+            deleteUserMutation.mutate(targetUser.id);
+          },
+        },
+      ]
+    );
+  }, [deleteUserMutation, user?.id]);
 
   const handleToggleAdmin = useCallback((targetUser: AdminUserRow) => {
     if (targetUser.id === user?.id) {
@@ -306,6 +357,18 @@ export default function AdminScreen() {
                         testID={`toggle-admin-${u.id}`}
                       />
                     </View>
+                    {!isSelf && (
+                      <>
+                        <View style={styles.toggleDivider} />
+                        <TouchableOpacity
+                          style={styles.deleteBtn}
+                          onPress={() => handleDeleteUser(u)}
+                          testID={`delete-user-${u.id}`}
+                        >
+                          <Trash2 size={16} color={Colors.danger} />
+                        </TouchableOpacity>
+                      </>
+                    )}
                   </View>
                 )}
               </View>
@@ -522,5 +585,10 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: Colors.textSecondary,
     fontWeight: '500' as const,
+  },
+  deleteBtn: {
+    paddingHorizontal: 14,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
 });
