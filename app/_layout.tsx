@@ -1,4 +1,7 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClient } from "@tanstack/react-query";
+import { PersistQueryClientProvider } from "@tanstack/react-query-persist-client";
+import { createAsyncStoragePersister } from "@tanstack/query-async-storage-persister";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Stack } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
 import React, { useEffect, useState, useCallback } from "react";
@@ -25,7 +28,9 @@ const queryClient = new QueryClient({
     },
   },
 });
-
+const asyncStoragePersister = createAsyncStoragePersister({
+  storage: AsyncStorage,
+});
 function RootLayoutNav() {
   return (
     <Stack
@@ -113,7 +118,10 @@ export default function RootLayout() {
 
   return (
     <trpc.Provider client={trpcClient} queryClient={queryClient}>
-      <QueryClientProvider client={queryClient}>
+  <PersistQueryClientProvider
+    client={queryClient}
+    persistOptions={{ persister: asyncStoragePersister }}
+  >
         <GestureHandlerRootView style={{ flex: 1 }}>
           <AuthProvider>
             <FamilyTreeProvider>
@@ -128,7 +136,7 @@ export default function RootLayout() {
             </FamilyTreeProvider>
           </AuthProvider>
         </GestureHandlerRootView>
-      </QueryClientProvider>
+      </PersistQueryClientProvider>
     </trpc.Provider>
   );
 }
