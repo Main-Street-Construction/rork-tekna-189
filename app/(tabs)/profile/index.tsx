@@ -371,7 +371,7 @@ export default function ProfileScreen() {
                 <Lock size={16} color={Colors.textLight} />
               </View>
             ) : showClaimSearch ? (
-              <View style={styles.claimSearchContainer}>
+              <View style={styles.claimSearchContainer} pointerEvents="box-none">
                 <View style={styles.claimWarning}>
                   <AlertTriangle size={14} color={Colors.danger} />
                   <Text style={styles.claimWarningText}>
@@ -967,6 +967,10 @@ const styles = StyleSheet.create({
     marginTop: 8,
     overflow: Platform.OS === 'web' ? 'visible' : 'hidden',
     maxHeight: 260,
+    ...Platform.select({
+      web: { zIndex: 999, position: 'relative' } as any,
+      default: {},
+    }),
   },
   claimResultItem: {
     flexDirection: 'row',
