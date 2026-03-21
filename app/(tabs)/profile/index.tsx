@@ -965,7 +965,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: Colors.cardBorder,
     marginTop: 8,
-    overflow: 'hidden',
+    overflow: Platform.OS === 'web' ? 'visible' : 'hidden',
     maxHeight: 260,
   },
   claimResultItem: {
