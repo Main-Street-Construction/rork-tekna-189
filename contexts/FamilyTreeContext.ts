@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { File, Directory, Paths } from 'expo-file-system';
-import { useMutation, useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import createContextHook from '@nkzw/create-context-hook';
 import { FamilyTreeData, GedcomIndividual, GedcomFamily } from '@/types/genealogy';
 import {
@@ -139,6 +139,7 @@ async function safeGetItemWithFileCache(key: string): Promise<string | null> {
 
 export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
   const { isAdmin, user, isSignedIn, isEnabled } = useAuth();
+  const queryClient = useQueryClient();
   const [treeData, setTreeData] = useState<FamilyTreeData | null>(null);
   const [isReady, setIsReady] = useState<boolean>(false);
   const [pendingEditCount, setPendingEditCount] = useState<number>(0);
@@ -150,6 +151,7 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
   const bgSyncRef = useRef<boolean>(false);
   const bgSyncInFlightRef = useRef<boolean>(false);
   const cloudRetryCountRef = useRef<number>(0);
+  const prevCanLoadRef = useRef<boolean>(false);
   const MAX_AUTO_RETRIES = 3;
 
   const canLoadData = isSignedIn && isEnabled;
@@ -331,14 +333,29 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
     }
   }, [loadQuery.error, treeData]);
 
+  // Invalidate the query whenever the user signs in or becomes enabled,
+  // so stale persisted cache doesn't block the fresh load.
+  useEffect(() => {
+    const justBecameActive = canLoadData && !prevCanLoadRef.current;
+    prevCanLoadRef.current = canLoadData;
+
+    if (justBecameActive) {
+      console.log('[FamilyTree] Auth became active, invalidating query for fresh load...');
+      void queryClient.invalidateQueries({ queryKey: ['familyTree'] });
+    }
+  }, [canLoadData, queryClient]);
+
+  // When signed out, clear state and remove the cached query so the next
+  // sign-in always triggers a real fetch.
   useEffect(() => {
     if (!canLoadData) {
       setTreeData(null);
       setIsReady(false);
       setLastSyncResult(null);
+      queryClient.removeQueries({ queryKey: ['familyTree'] });
     }
-  }, [canLoadData]);
-  
+  }, [canLoadData, queryClient]);
+
   const importMutation = useMutation({
     mutationFn: async (gedcomContent: string) => {
       console.log('[FamilyTree] Importing GEDCOM data...');
@@ -354,7 +371,8 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
       setIsReady(true);
     },
   });
-const clearMutation = useMutation({
+
+  const clearMutation = useMutation({
     mutationFn: async () => {
       storageDisabled = false;
       await safeRemoveItem(STORAGE_KEY);
@@ -932,33 +950,33 @@ const clearMutation = useMutation({
   const isImporting = importMutation.isPending;
   const importError = importMutation.error;
 
-useEffect(() => {
-  if (!canLoadData) return;
+  useEffect(() => {
+    if (!canLoadData) return;
 
-  const handleOnline = () => {
-    if (!hasData || cloudError) {
-      console.log('[FamilyTree] Network restored, triggering refresh...');
-      void backgroundSyncFromCloud();
+    const handleOnline = () => {
+      if (!hasData || cloudError) {
+        console.log('[FamilyTree] Network restored, triggering refresh...');
+        void backgroundSyncFromCloud();
+      }
+    };
+
+    if (Platform.OS === 'web') {
+      window.addEventListener('online', handleOnline);
+      return () => window.removeEventListener('online', handleOnline);
     }
-  };
+  }, [canLoadData, hasData, cloudError, backgroundSyncFromCloud]);
 
-  if (Platform.OS === 'web') {
-    window.addEventListener('online', handleOnline);
-    return () => window.removeEventListener('online', handleOnline);
-  }
-}, [canLoadData, hasData, cloudError, backgroundSyncFromCloud]);
+  useEffect(() => {
+    if (!canLoadData || hasData || !isReady) return;
+    if (!cloudError) return;
 
-useEffect(() => {
-  if (!canLoadData || hasData || !isReady) return;
-  if (!cloudError) return;
+    const timer = setTimeout(() => {
+      console.log('[FamilyTree] Auto-retrying after error...');
+      void backgroundSyncFromCloud();
+    }, 5000);
 
-  const timer = setTimeout(() => {
-    console.log('[FamilyTree] Auto-retrying after error...');
-    void backgroundSyncFromCloud();
-  }, 5000);
-
-  return () => clearTimeout(timer);
-}, [canLoadData, hasData, isReady, cloudError, backgroundSyncFromCloud]);
+    return () => clearTimeout(timer);
+  }, [canLoadData, hasData, isReady, cloudError, backgroundSyncFromCloud]);
 
   return useMemo(() => ({
     treeData,
