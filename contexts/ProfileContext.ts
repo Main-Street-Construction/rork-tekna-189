@@ -8,10 +8,10 @@ import { useAuth } from '@/contexts/AuthContext';
 
 const PROFILE_KEY = 'user_profile';
 const CLAIMED_KEY = 'identity_claimed';
-const { user } = useAuth();
+
 export const [ProfileProvider, useProfile] = createContextHook(() => {
   const [profile, setProfile] = useState<UserProfile | null>(null);
-const { user } = useAuth();
+  const { user } = useAuth();
   const loadQuery = useQuery({
     queryKey: ['userProfile'],
     queryFn: async () => {
@@ -48,6 +48,7 @@ const { user } = useAuth();
   loadProfileFromSupabase(user.id).then((remote) => {
     if (!remote) return;
     if (remote.root_person_id && remote.is_claimed) {
+      // Restore from Supabase
       const restored: UserProfile = {
         id: user.id,
         displayName: remote.display_name ?? '',
@@ -61,6 +62,22 @@ const { user } = useAuth();
       setIsClaimed(true);
       void AsyncStorage.setItem(PROFILE_KEY, JSON.stringify(restored));
       void AsyncStorage.setItem(CLAIMED_KEY, 'true');
+    } else {
+      // Supabase has no claim yet — check AsyncStorage and sync up
+      AsyncStorage.getItem(PROFILE_KEY).then((stored) => {
+        if (!stored) return;
+        const local = JSON.parse(stored) as UserProfile;
+        if (local.rootPersonId) {
+          void saveProfileToSupabase(user.id, {
+            display_name: local.displayName,
+            email: local.email,
+            avatar_initials: local.avatarInitials,
+            root_person_id: local.rootPersonId,
+            root_person_name: local.rootPersonName,
+            is_claimed: true,
+          });
+        }
+      }).catch(() => {});
     }
   });
 }, [user?.id]);
