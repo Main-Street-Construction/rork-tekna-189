@@ -45,6 +45,14 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useRouter } from 'expo-router';
 import { GedcomIndividual } from '@/types/genealogy';
 
+// Helper: cross-platform confirm dialog
+function confirmDialog(message: string): boolean {
+  if (Platform.OS === 'web') {
+    return window.confirm(message);
+  }
+  return false; // native uses Alert.alert callbacks instead
+}
+
 export default function ProfileScreen() {
   const router = useRouter();
   const { profile, hasProfile, hasClaimed, isClaimed, saveProfile, claimIdentity, resetClaim, isSaving } = useProfile();
@@ -81,7 +89,11 @@ export default function ProfileScreen() {
       setTimeout(() => setFeedbackSent(false), 4000);
     },
     onError: (error: Error) => {
-      Alert.alert('Error', error.message || 'Something went wrong sending feedback.');
+      if (Platform.OS === 'web') {
+        window.alert(error.message || 'Something went wrong sending feedback.');
+      } else {
+        Alert.alert('Error', error.message || 'Something went wrong sending feedback.');
+      }
     },
   });
 
@@ -100,7 +112,11 @@ export default function ProfileScreen() {
 
   const handleSave = useCallback(() => {
     if (!displayName.trim()) {
-      Alert.alert('Name Required', 'Please enter your display name.');
+      if (Platform.OS === 'web') {
+        window.alert('Please enter your display name.');
+      } else {
+        Alert.alert('Name Required', 'Please enter your display name.');
+      }
       return;
     }
     void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
@@ -112,21 +128,28 @@ export default function ProfileScreen() {
   }, [displayName, email, saveProfile]);
 
   const handleClearData = useCallback(() => {
-    Alert.alert(
-      'Clear Family Data',
-      'This will remove all imported GEDCOM data. Your profile and search history will be kept.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Clear Data',
-          style: 'destructive',
-          onPress: () => {
-            void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
-            clearData();
+    if (Platform.OS === 'web') {
+      if (window.confirm('This will remove all imported GEDCOM data. Your profile and search history will be kept.\n\nClear data?')) {
+        void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+        clearData();
+      }
+    } else {
+      Alert.alert(
+        'Clear Family Data',
+        'This will remove all imported GEDCOM data. Your profile and search history will be kept.',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Clear Data',
+            style: 'destructive',
+            onPress: () => {
+              void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+              clearData();
+            },
           },
-        },
-      ]
-    );
+        ]
+      );
+    }
   }, [clearData]);
 
   const handleImport = useCallback(() => {
@@ -147,46 +170,50 @@ export default function ProfileScreen() {
   );
 
   const handleClaimPerson = useCallback(
-  (person: GedcomIndividual) => {
-    Keyboard.dismiss();
-    if (Platform.OS === 'web') {
-      if (window.confirm(`Are you sure you want to claim "${person.name}" as yourself?\n\nThis cannot be changed later.`)) {
-        void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-        void claimIdentity(person.id, person.name).then(() => {
-          setShowClaimSearch(false);
-          setClaimQuery('');
-          setClaimResults([]);
-          setDisplayName(person.name);
-        });
-      }
-    } else {
-      Alert.alert(
-        'Claim Your Identity',
-        `Are you sure you want to claim "${person.name}" as yourself?\n\nThis cannot be changed later.`,
-        [
-          { text: 'Cancel', style: 'cancel' },
-          {
-            text: 'Claim',
-            style: 'default',
-            onPress: async () => {
-              void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-              await claimIdentity(person.id, person.name);
-              setShowClaimSearch(false);
-              setClaimQuery('');
-              setClaimResults([]);
-              setDisplayName(person.name);
+    (person: GedcomIndividual) => {
+      Keyboard.dismiss();
+      if (Platform.OS === 'web') {
+        if (window.confirm(`Are you sure you want to claim "${person.name}" as yourself?\n\nThis cannot be changed later.`)) {
+          void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+          void claimIdentity(person.id, person.name).then(() => {
+            setShowClaimSearch(false);
+            setClaimQuery('');
+            setClaimResults([]);
+            setDisplayName(person.name);
+          });
+        }
+      } else {
+        Alert.alert(
+          'Claim Your Identity',
+          `Are you sure you want to claim "${person.name}" as yourself?\n\nThis cannot be changed later.`,
+          [
+            { text: 'Cancel', style: 'cancel' },
+            {
+              text: 'Claim',
+              style: 'default',
+              onPress: async () => {
+                void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+                await claimIdentity(person.id, person.name);
+                setShowClaimSearch(false);
+                setClaimQuery('');
+                setClaimResults([]);
+                setDisplayName(person.name);
+              },
             },
-          },
-        ]
-      );
-    }
-  },
-  [claimIdentity]
-);
+          ]
+        );
+      }
+    },
+    [claimIdentity]
+  );
 
   const handleSendFeedback = useCallback(() => {
     if (!feedbackMessage.trim()) {
-      Alert.alert('Empty Message', 'Please write a message before sending.');
+      if (Platform.OS === 'web') {
+        window.alert('Please write a message before sending.');
+      } else {
+        Alert.alert('Empty Message', 'Please write a message before sending.');
+      }
       return;
     }
     Keyboard.dismiss();
@@ -197,25 +224,35 @@ export default function ProfileScreen() {
     if (isClaimed) {
       const personStillExists = profile?.rootPersonId ? !!getPerson(profile.rootPersonId) : false;
       if (!personStillExists) {
-        Alert.alert(
-          'Identity Not Found',
-          'Your previously claimed identity could not be found in the current database. This may be due to a data update. Would you like to re-claim?',
-          [
-            { text: 'Cancel', style: 'cancel' },
-            {
-              text: 'Re-Claim',
-              onPress: async () => {
-                await resetClaim();
-                setShowClaimSearch(true);
+        if (Platform.OS === 'web') {
+          if (window.confirm('Your previously claimed identity could not be found in the current database. This may be due to a data update.\n\nWould you like to re-claim?')) {
+            void resetClaim().then(() => setShowClaimSearch(true));
+          }
+        } else {
+          Alert.alert(
+            'Identity Not Found',
+            'Your previously claimed identity could not be found in the current database. This may be due to a data update. Would you like to re-claim?',
+            [
+              { text: 'Cancel', style: 'cancel' },
+              {
+                text: 'Re-Claim',
+                onPress: async () => {
+                  await resetClaim();
+                  setShowClaimSearch(true);
+                },
               },
-            },
-          ]
-        );
+            ]
+          );
+        }
       } else {
-        Alert.alert(
-          'Identity Locked',
-          `You are permanently linked to "${profile?.rootPersonName}". Your identity can only be changed if there is a database error.`
-        );
+        if (Platform.OS === 'web') {
+          window.alert(`You are permanently linked to "${profile?.rootPersonName}". Your identity can only be changed if there is a database error.`);
+        } else {
+          Alert.alert(
+            'Identity Locked',
+            `You are permanently linked to "${profile?.rootPersonName}". Your identity can only be changed if there is a database error.`
+          );
+        }
       }
       return;
     }
@@ -223,17 +260,24 @@ export default function ProfileScreen() {
   }, [isClaimed, profile?.rootPersonId, profile?.rootPersonName, getPerson, resetClaim]);
 
   const handleSignOut = useCallback(() => {
-    Alert.alert('Sign Out', 'Are you sure you want to sign out?', [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Sign Out',
-        style: 'destructive',
-        onPress: () => {
-          void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-          void signOut();
+    if (Platform.OS === 'web') {
+      if (window.confirm('Are you sure you want to sign out?')) {
+        void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+        void signOut();
+      }
+    } else {
+      Alert.alert('Sign Out', 'Are you sure you want to sign out?', [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Sign Out',
+          style: 'destructive',
+          onPress: () => {
+            void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+            void signOut();
+          },
         },
-      },
-    ]);
+      ]);
+    }
   }, [signOut]);
 
   const handleRefresh = useCallback(() => {
@@ -420,14 +464,13 @@ export default function ProfileScreen() {
                   <View style={styles.claimResultsList}>
                     {claimResults.map((person) => (
                       <TouchableOpacity
-  key={person.id}
-  style={styles.claimResultItem}
-  onPress={() => {
-    console.log('pressed', person.name); // add this
-    handleClaimPerson(person);
-  }}
-  activeOpacity={0.7}
->
+                        key={person.id}
+                        style={styles.claimResultItem}
+                        onPress={() => {
+                          handleClaimPerson(person);
+                        }}
+                        activeOpacity={0.7}
+                      >
                         <View
                           style={[
                             styles.claimResultDot,
