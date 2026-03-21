@@ -770,7 +770,49 @@ export async function upsertFamilyInSupabase(
     return { success: false, error: String(e) };
   }
 }
+export async function saveProfileToSupabase(
+  userId: string,
+  profile: {
+    display_name: string;
+    email?: string;
+    avatar_initials?: string;
+    root_person_id?: string;
+    root_person_name?: string;
+    is_claimed: boolean;
+  }
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    const { error } = await supabase
+      .from('profiles')
+      .update(profile)
+      .eq('id', userId);
+    if (error) return { success: false, error: error.message };
+    return { success: true };
+  } catch (e) {
+    return { success: false, error: String(e) };
+  }
+}
 
+export async function loadProfileFromSupabase(userId: string): Promise<{
+  display_name: string | null;
+  email: string | null;
+  avatar_initials: string | null;
+  root_person_id: string | null;
+  root_person_name: string | null;
+  is_claimed: boolean;
+} | null> {
+  try {
+    const { data, error } = await supabase
+      .from('profiles')
+      .select('display_name, email, avatar_initials, root_person_id, root_person_name, is_claimed')
+      .eq('id', userId)
+      .single();
+    if (error || !data) return null;
+    return data as any;
+  } catch {
+    return null;
+  }
+}
 export async function submitPendingEdit(
   editType: PendingEditType,
   targetId: string,
