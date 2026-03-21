@@ -147,8 +147,19 @@ export default function ProfileScreen() {
   );
 
   const handleClaimPerson = useCallback(
-    (person: GedcomIndividual) => {
-      Keyboard.dismiss();
+  (person: GedcomIndividual) => {
+    Keyboard.dismiss();
+    if (Platform.OS === 'web') {
+      if (window.confirm(`Are you sure you want to claim "${person.name}" as yourself?\n\nThis cannot be changed later.`)) {
+        void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        void claimIdentity(person.id, person.name).then(() => {
+          setShowClaimSearch(false);
+          setClaimQuery('');
+          setClaimResults([]);
+          setDisplayName(person.name);
+        });
+      }
+    } else {
       Alert.alert(
         'Claim Your Identity',
         `Are you sure you want to claim "${person.name}" as yourself?\n\nThis cannot be changed later.`,
@@ -168,9 +179,10 @@ export default function ProfileScreen() {
           },
         ]
       );
-    },
-    [claimIdentity]
-  );
+    }
+  },
+  [claimIdentity]
+);
 
   const handleSendFeedback = useCallback(() => {
     if (!feedbackMessage.trim()) {
@@ -408,11 +420,14 @@ export default function ProfileScreen() {
                   <View style={styles.claimResultsList}>
                     {claimResults.map((person) => (
                       <TouchableOpacity
-                        key={person.id}
-                        style={styles.claimResultItem}
-                        onPress={() => handleClaimPerson(person)}
-                        activeOpacity={0.7}
-                      >
+  key={person.id}
+  style={styles.claimResultItem}
+  onPress={() => {
+    console.log('pressed', person.name); // add this
+    handleClaimPerson(person);
+  }}
+  activeOpacity={0.7}
+>
                         <View
                           style={[
                             styles.claimResultDot,
