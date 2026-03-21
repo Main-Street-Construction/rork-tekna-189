@@ -13,6 +13,7 @@ import { SearchHistoryProvider } from "@/contexts/SearchHistoryContext";
 import OnboardingTutorial from "@/components/OnboardingTutorial";
 import Colors from "@/constants/colors";
 import { trpc, trpcClient } from "@/lib/trpc";
+import { inject } from "@vercel/analytics";
 
 void SplashScreen.preventAutoHideAsync();
 
@@ -92,6 +93,7 @@ function RootLayoutNav() {
 const ONBOARDING_KEY = 'onboarding_completed';
 
 export default function RootLayout() {
+  inject();
   const [showOnboarding, setShowOnboarding] = useState<boolean>(false);
   const [onboardingChecked, setOnboardingChecked] = useState<boolean>(false);
 
