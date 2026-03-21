@@ -338,7 +338,7 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
       setLastSyncResult(null);
     }
   }, [canLoadData]);
-
+  
   const importMutation = useMutation({
     mutationFn: async (gedcomContent: string) => {
       console.log('[FamilyTree] Importing GEDCOM data...');
@@ -354,8 +354,7 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
       setIsReady(true);
     },
   });
-
-  const clearMutation = useMutation({
+const clearMutation = useMutation({
     mutationFn: async () => {
       storageDisabled = false;
       await safeRemoveItem(STORAGE_KEY);
@@ -932,6 +931,34 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
   const hasData = treeData !== null && individualCount > 0;
   const isImporting = importMutation.isPending;
   const importError = importMutation.error;
+
+useEffect(() => {
+  if (!canLoadData) return;
+
+  const handleOnline = () => {
+    if (!hasData || cloudError) {
+      console.log('[FamilyTree] Network restored, triggering refresh...');
+      void backgroundSyncFromCloud();
+    }
+  };
+
+  if (Platform.OS === 'web') {
+    window.addEventListener('online', handleOnline);
+    return () => window.removeEventListener('online', handleOnline);
+  }
+}, [canLoadData, hasData, cloudError, backgroundSyncFromCloud]);
+
+useEffect(() => {
+  if (!canLoadData || hasData || !isReady) return;
+  if (!cloudError) return;
+
+  const timer = setTimeout(() => {
+    console.log('[FamilyTree] Auto-retrying after error...');
+    void backgroundSyncFromCloud();
+  }, 5000);
+
+  return () => clearTimeout(timer);
+}, [canLoadData, hasData, isReady, cloudError, backgroundSyncFromCloud]);
 
   return useMemo(() => ({
     treeData,
