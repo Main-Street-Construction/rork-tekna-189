@@ -81,6 +81,10 @@ function RootLayoutNav() {
         name="privacy-policy/index"
         options={{ title: "Privacy Policy" }}
       />
+      <Stack.Screen
+        name="update-password"
+        options={{ presentation: "modal", title: "Update Password" }}
+      />
     </Stack>
   );
 }

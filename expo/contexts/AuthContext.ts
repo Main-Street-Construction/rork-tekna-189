@@ -1,6 +1,9 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
+import { Platform } from 'react-native';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import createContextHook from '@nkzw/create-context-hook';
+import * as Linking from 'expo-linking';
+import { router as expoRouter } from 'expo-router';
 import { supabase } from '@/lib/supabase';
 import type { Session, User } from '@supabase/supabase-js';
 
@@ -66,13 +69,23 @@ export const [AuthProvider, useAuth] = createContextHook(() => {
       setSessionLoading(false);
     });
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, s) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, s) => {
       setSession(s);
       if (!s) {
         setProfileRow(null);
         queryClient.removeQueries({ queryKey: ['authProfile'] });
       } else {
         void queryClient.invalidateQueries({ queryKey: ['authProfile'] });
+      }
+      if (event === 'PASSWORD_RECOVERY') {
+        console.log('[Auth] PASSWORD_RECOVERY event detected, navigating to update-password');
+        setTimeout(() => {
+          try {
+            expoRouter.push('/update-password');
+          } catch (e) {
+            console.warn('[Auth] Failed to navigate to update-password:', e);
+          }
+        }, 100);
       }
     });
 
@@ -162,7 +175,13 @@ export const [AuthProvider, useAuth] = createContextHook(() => {
 
   const resetPasswordMutation = useMutation({
     mutationFn: async ({ email }: { email: string }) => {
-      const { error } = await supabase.auth.resetPasswordForEmail(email);
+      const appUrl = Platform.OS === 'web'
+        ? `${typeof window !== 'undefined' ? window.location.origin : ''}/update-password`
+        : Linking.createURL('/update-password');
+      console.log('[Auth] Sending password reset with redirectTo:', appUrl);
+      const { error } = await supabase.auth.resetPasswordForEmail(email, {
+        redirectTo: appUrl,
+      });
       if (error) throw error;
     },
   });
