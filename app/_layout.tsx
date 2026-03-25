@@ -28,9 +28,11 @@ const queryClient = new QueryClient({
     },
   },
 });
+
 const asyncStoragePersister = createAsyncStoragePersister({
   storage: AsyncStorage,
 });
+
 function RootLayoutNav() {
   return (
     <Stack
@@ -42,50 +44,18 @@ function RootLayoutNav() {
       }}
     >
       <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-      <Stack.Screen
-        name="person/[id]"
-        options={{ title: "Person" }}
-      />
-      <Stack.Screen
-        name="import-data/index"
-        options={{ presentation: "modal", title: "Import Data" }}
-      />
-      <Stack.Screen
-        name="edit-person/[id]"
-        options={{ presentation: "modal", title: "Edit Person" }}
-      />
-      <Stack.Screen
-        name="add-child/[parentId]"
-        options={{ presentation: "modal", title: "Add Child" }}
-      />
-      <Stack.Screen
-        name="add-spouse/[personId]"
-        options={{ presentation: "modal", title: "Add Spouse" }}
-      />
-      <Stack.Screen
-        name="pending-edits/index"
-        options={{ title: "Pending Edits" }}
-      />
-      <Stack.Screen
-        name="link-spouses/index"
-        options={{ presentation: "modal", title: "Link Spouses" }}
-      />
-      <Stack.Screen
-        name="edit-marriage/[familyId]"
-        options={{ presentation: "modal", title: "Edit Marriage" }}
-      />
-      <Stack.Screen
-        name="auth"
-        options={{ presentation: "modal", title: "Account" }}
-      />
-      <Stack.Screen
-        name="admin/index"
-        options={{ title: "Admin Panel" }}
-      />
-      <Stack.Screen
-        name="privacy-policy/index"
-        options={{ title: "Privacy Policy" }}
-      />
+      <Stack.Screen name="person/[id]" options={{ title: "Person" }} />
+      <Stack.Screen name="import-data/index" options={{ presentation: "modal", title: "Import Data" }} />
+      <Stack.Screen name="edit-person/[id]" options={{ presentation: "modal", title: "Edit Person" }} />
+      <Stack.Screen name="add-child/[parentId]" options={{ presentation: "modal", title: "Add Child" }} />
+      <Stack.Screen name="add-spouse/[personId]" options={{ presentation: "modal", title: "Add Spouse" }} />
+      <Stack.Screen name="pending-edits/index" options={{ title: "Pending Edits" }} />
+      <Stack.Screen name="link-spouses/index" options={{ presentation: "modal", title: "Link Spouses" }} />
+      <Stack.Screen name="edit-marriage/[familyId]" options={{ presentation: "modal", title: "Edit Marriage" }} />
+      <Stack.Screen name="auth" options={{ presentation: "modal", title: "Account" }} />
+      <Stack.Screen name="admin/index" options={{ title: "Admin Panel" }} />
+      <Stack.Screen name="privacy-policy/index" options={{ title: "Privacy Policy" }} />
+      <Stack.Screen name="update-password" options={{ presentation: "modal", title: "Update Password" }} />
     </Stack>
   );
 }
@@ -93,9 +63,12 @@ function RootLayoutNav() {
 const ONBOARDING_KEY = 'onboarding_completed';
 
 export default function RootLayout() {
-  inject();
   const [showOnboarding, setShowOnboarding] = useState<boolean>(false);
   const [onboardingChecked, setOnboardingChecked] = useState<boolean>(false);
+
+  useEffect(() => {
+    inject();
+  }, []);
 
   useEffect(() => {
     AsyncStorage.getItem(ONBOARDING_KEY).then((value) => {
@@ -119,10 +92,10 @@ export default function RootLayout() {
 
   return (
     <trpc.Provider client={trpcClient} queryClient={queryClient}>
-  <PersistQueryClientProvider
-    client={queryClient}
-    persistOptions={{ persister: asyncStoragePersister }}
-  >
+      <PersistQueryClientProvider
+        client={queryClient}
+        persistOptions={{ persister: asyncStoragePersister }}
+      >
         <GestureHandlerRootView style={{ flex: 1 }}>
           <AuthProvider>
             <FamilyTreeProvider>
