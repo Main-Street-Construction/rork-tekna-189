@@ -3,11 +3,15 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useQuery, useMutation } from '@tanstack/react-query';
 import createContextHook from '@nkzw/create-context-hook';
 import { UserProfile } from '@/types/genealogy';
+import { useAuth } from '@/contexts/AuthContext';
+import { submitIdentityClaim, clearIdentityClaim } from '@/lib/supabase-rpc';
+import { supabase } from '@/lib/supabase';
 
 const PROFILE_KEY = 'user_profile';
 const CLAIMED_KEY = 'identity_claimed';
 
 export const [ProfileProvider, useProfile] = createContextHook(() => {
+  const { isSignedIn, profileRow } = useAuth();
   const [profile, setProfile] = useState<UserProfile | null>(null);
 
   const loadQuery = useQuery({
@@ -47,6 +51,64 @@ export const [ProfileProvider, useProfile] = createContextHook(() => {
     }
   }, [claimedQuery.data]);
 
+  const syncClaimFromServer = useCallback(async () => {
+    if (!isSignedIn || !profileRow?.claimed_gedcom_id) return;
+
+    const gedcomId = profileRow.claimed_gedcom_id;
+    const { data } = await supabase
+      .from('individuals')
+      .select('gedcom_id, first_name, last_name')
+      .eq('gedcom_id', gedcomId)
+      .limit(1);
+
+    const row = data?.[0] as { first_name?: string; last_name?: string } | undefined;
+    const personName = row
+      ? [row.first_name, row.last_name].filter(Boolean).join(' ')
+      : profile?.rootPersonName ?? 'Claimed person';
+
+    await AsyncStorage.setItem(CLAIMED_KEY, 'true');
+    setIsClaimed(true);
+
+    const existing = profile ?? {
+      id: Date.now().toString(),
+      displayName: personName,
+      createdAt: Date.now(),
+    };
+    const updated: UserProfile = {
+      ...existing,
+      rootPersonId: gedcomId,
+      rootPersonName: personName,
+      displayName: personName,
+    };
+    const initials = updated.displayName
+      .split(' ')
+      .map((w) => w[0])
+      .join('')
+      .toUpperCase()
+      .slice(0, 2);
+    updated.avatarInitials = initials;
+    await AsyncStorage.setItem(PROFILE_KEY, JSON.stringify(updated));
+    setProfile(updated);
+  }, [isSignedIn, profileRow?.claimed_gedcom_id, profile]);
+
+  useEffect(() => {
+    if (profileRow?.claimed_gedcom_id) {
+      void syncClaimFromServer();
+    }
+  }, [profileRow?.claimed_gedcom_id, syncClaimFromServer]);
+
+  useEffect(() => {
+    if (!isSignedIn || profileRow?.claimed_gedcom_id) return;
+    if (!profile?.rootPersonId || !isClaimed) return;
+
+    void (async () => {
+      const result = await submitIdentityClaim(profile.rootPersonId!);
+      if (result.success) {
+        console.log('[Profile] Migrated local claim to server:', profile.rootPersonId);
+      }
+    })();
+  }, [isSignedIn, profileRow?.claimed_gedcom_id, profile?.rootPersonId, isClaimed]);
+
   const saveMutation = useMutation({
     mutationFn: async (newProfile: UserProfile) => {
       await AsyncStorage.setItem(PROFILE_KEY, JSON.stringify(newProfile));
@@ -78,6 +140,7 @@ export const [ProfileProvider, useProfile] = createContextHook(() => {
   );
 
   const resetClaim = useCallback(async () => {
+    await clearIdentityClaim();
     await AsyncStorage.removeItem(CLAIMED_KEY);
     setIsClaimed(false);
     const existing = profile;
@@ -89,11 +152,15 @@ export const [ProfileProvider, useProfile] = createContextHook(() => {
       };
       saveMutation.mutate(updated);
     }
-
   }, [profile, saveMutation]);
 
   const claimIdentity = useCallback(
     async (personId: string, personName: string) => {
+      const serverResult = await submitIdentityClaim(personId);
+      if (!serverResult.success) {
+        throw new Error(serverResult.error ?? 'Failed to claim identity');
+      }
+
       const existing = profile ?? {
         id: Date.now().toString(),
         displayName: personName,

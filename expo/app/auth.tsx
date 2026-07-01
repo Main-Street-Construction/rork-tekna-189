@@ -11,10 +11,14 @@ import {
   ScrollView,
 } from 'react-native';
 import { Stack, useRouter } from 'expo-router';
-import { Mail, Lock, LogIn, UserPlus, ArrowLeft, Eye, EyeOff, CheckCircle, Send } from 'lucide-react-native';
+import { Mail, Lock, LogIn, UserPlus, ArrowLeft, Eye, EyeOff, CheckCircle, Send, User } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import Colors from '@/constants/colors';
 import { useAuth } from '@/contexts/AuthContext';
+import { setProfileFullName, notifyAdminsAccessRequest } from '@/lib/supabase-rpc';
+
+const PENDING_FULL_NAME_KEY = 'pending_signup_full_name';
 
 type AuthMode = 'signup' | 'signin' | 'reset' | 'confirm_email';
 
@@ -27,6 +31,7 @@ export default function AuthScreen() {
 
   const [mode, setMode] = useState<AuthMode>('signup');
   const [email, setEmail] = useState<string>('');
+  const [fullName, setFullName] = useState<string>('');
   const [password, setPassword] = useState<string>('');
   const [confirmPassword, setConfirmPassword] = useState<string>('');
   const [showPassword, setShowPassword] = useState<boolean>(false);
@@ -69,6 +74,10 @@ export default function AuthScreen() {
     }
 
     if (mode === 'signup') {
+      if (!fullName.trim()) {
+        setErrorMessage('Please enter your full name.');
+        return;
+      }
       if (password !== confirmPassword) {
         setErrorMessage('Passwords do not match.');
         return;
@@ -83,8 +92,21 @@ export default function AuthScreen() {
       } else {
         const result = await signUp(email.trim(), password);
         void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-        if (result.needsEmailConfirmation) {
+        const trimmedName = fullName.trim();
 
+        if (result.session && result.user) {
+          const nameResult = await setProfileFullName(trimmedName);
+          if (nameResult.success && nameResult.userId) {
+            void notifyAdminsAccessRequest(nameResult.userId);
+          }
+        } else if (result.needsEmailConfirmation) {
+          await AsyncStorage.setItem(
+            PENDING_FULL_NAME_KEY,
+            JSON.stringify({ email: email.trim().toLowerCase(), fullName: trimmedName })
+          );
+        }
+
+        if (result.needsEmailConfirmation) {
           setPendingEmail(email.trim());
           setMode('confirm_email');
         } else {
@@ -106,7 +128,7 @@ export default function AuthScreen() {
         setErrorMessage(msg);
       }
     }
-  }, [email, password, confirmPassword, mode, signIn, signUp, resetPassword, router]);
+  }, [email, fullName, password, confirmPassword, mode, signIn, signUp, resetPassword, router]);
 
   const handleResendConfirmation = useCallback(async () => {
     setErrorMessage('');
@@ -337,6 +359,20 @@ export default function AuthScreen() {
 
               {mode === 'signup' && (
                 <>
+                  <View style={styles.inputDivider} />
+                  <View style={styles.inputRow}>
+                    <User size={18} color={Colors.textSecondary} />
+                    <TextInput
+                      style={styles.input}
+                      placeholder="Full Name"
+                      placeholderTextColor={Colors.textLight}
+                      value={fullName}
+                      onChangeText={setFullName}
+                      autoCapitalize="words"
+                      autoCorrect={false}
+                      testID="auth-fullname-input"
+                    />
+                  </View>
                   <View style={styles.inputDivider} />
                   <View style={styles.inputRow}>
                     <Lock size={18} color={Colors.textSecondary} />

@@ -35,7 +35,33 @@ const LAST_CLOUD_SYNC_KEY = 'last_cloud_sync';
 const DATA_FORMAT_VERSION_KEY = 'data_format_version';
 const CURRENT_DATA_FORMAT_VERSION = '7';
 const CLOUD_SYNC_INTERVAL = 12 * 60 * 60 * 1000;
+const PARTIAL_SYNC_THRESHOLD = 0.95;
 const MAX_ASYNC_STORAGE_BYTES = 4 * 1024 * 1024;
+
+function shouldRejectCloudReplace(
+  incoming: FamilyTreeData,
+  current: FamilyTreeData | null,
+  claimedGedcomId: string | undefined,
+  partialWarning?: string
+): boolean {
+  if (!current) return false;
+
+  const currentCount = current.individuals.size;
+  const incomingCount = incoming.individuals.size;
+
+  if (claimedGedcomId && !incoming.individuals.has(claimedGedcomId)) {
+    return true;
+  }
+
+  if (partialWarning && currentCount > 0) {
+    const ratio = incomingCount / currentCount;
+    if (ratio < PARTIAL_SYNC_THRESHOLD) {
+      return true;
+    }
+  }
+
+  return false;
+}
 
 let storageDisabled = false;
 
@@ -138,7 +164,7 @@ async function safeGetItemWithFileCache(key: string): Promise<string | null> {
 }
 
 export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
-  const { isAdmin, user, isSignedIn, isEnabled } = useAuth();
+  const { isAdmin, user, isSignedIn, isEnabled, profileRow } = useAuth();
   const [treeData, setTreeData] = useState<FamilyTreeData | null>(null);
   const [isReady, setIsReady] = useState<boolean>(false);
   const [pendingEditCount, setPendingEditCount] = useState<number>(0);
@@ -184,6 +210,12 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
     try {
       const cloudResult = await loadAllFromSupabase(handleProgress);
       if (cloudResult.data && cloudResult.data.individuals.size > 0) {
+        const claimedId = profileRow?.claimed_gedcom_id ?? undefined;
+        if (shouldRejectCloudReplace(cloudResult.data, treeData, claimedId, cloudResult.error)) {
+          console.warn('[FamilyTree] Background sync skipped — would lose claimed person or partial data');
+          setCloudError(cloudResult.error ?? 'Sync skipped to protect your claimed identity or incomplete data.');
+          return;
+        }
         console.log('[FamilyTree] Background sync complete:', cloudResult.data.individuals.size, 'individuals');
         await persistCloudData(cloudResult.data);
         setTreeData(cloudResult.data);
@@ -205,7 +237,7 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
       setIsBackgroundSyncing(false);
       setLoadProgress(null);
     }
-  }, [handleProgress, persistCloudData]);
+  }, [handleProgress, persistCloudData, profileRow?.claimed_gedcom_id, treeData]);
 
   const loadFromCloudWithRetry = useCallback(async (): Promise<FamilyTreeData | null> => {
     setIsLoadingFromCloud(true);
@@ -391,6 +423,25 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
   const getPerson = useCallback(
     (id: string): GedcomIndividual | undefined => {
       return treeData?.individuals.get(id);
+    },
+    [treeData]
+  );
+
+  const resolveClaimedPerson = useCallback(
+    async (gedcomId: string): Promise<GedcomIndividual | null> => {
+      const local = treeData?.individuals.get(gedcomId);
+      if (local) return local;
+
+      const fetched = await fetchIndividualByGedcomId(gedcomId);
+      if (!fetched || !treeData) return fetched;
+
+      const updatedIndividuals = new Map(treeData.individuals);
+      updatedIndividuals.set(gedcomId, fetched);
+      const newTree = { ...treeData, individuals: updatedIndividuals };
+      setTreeData(newTree);
+      const serialized = serializeFamilyTreeData(newTree);
+      await safeSetItem(STORAGE_KEY, serialized);
+      return fetched;
     },
     [treeData]
   );
@@ -943,6 +994,7 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
     clearData,
     search,
     getPerson,
+    resolveClaimedPerson,
     isImporting,
     importError,
     isAdmin,
@@ -967,7 +1019,7 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
     refreshFromCloud,
   }), [
     treeData, isReady, hasData, individualCount, familyCount,
-    importGedcom, clearData, search, getPerson, isImporting, importError,
+    importGedcom, clearData, search, getPerson, resolveClaimedPerson, isImporting, importError,
     isAdmin, pendingEditCount, submitEdit,
     loadPendingEdits, reviewPendingEdit, refreshPendingCount, generateNewId,
     addPerson, updatePerson, addChildToFamily, createFamilyAndAddChild,

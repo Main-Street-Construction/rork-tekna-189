@@ -67,7 +67,7 @@ export default function RelationshipScreen() {
 
 function RelationshipScreenContent() {
   const router = useRouter();
-  const { hasData, search, treeData, isReady, getPerson } = useFamilyTree();
+  const { hasData, search, treeData, isReady, resolveClaimedPerson } = useFamilyTree();
   const { profile, hasClaimed } = useProfile();
   const { addRelationshipEntry } = useSearchHistory();
   const [person1, setPerson1] = useState<GedcomIndividual | null>(null);
@@ -205,74 +205,70 @@ function RelationshipScreenContent() {
 
   const handleAutofillMe = useCallback(() => {
     if (!hasClaimed || !profile?.rootPersonId) {
-      console.log('[RelationshipScreen] Autofill failed - hasClaimed:', hasClaimed, 'rootPersonId:', profile?.rootPersonId);
       return;
     }
-    const claimedPerson = getPerson(profile.rootPersonId);
-    console.log('[RelationshipScreen] Autofill - looking up rootPersonId:', profile.rootPersonId, 'found:', !!claimedPerson);
-    if (!claimedPerson) {
-      Alert.alert(
-        'Identity Not Found',
-        'Your claimed identity could not be found in the current tree data. You may need to re-claim your identity in the Profile tab.',
-        [{ text: 'OK' }]
-      );
-      return;
-    }
-    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
 
-    if (selectingSlot === 1) {
-      animateTransition(() => {
-        setPerson1(claimedPerson);
-        setSelectingSlot(2);
+    void (async () => {
+      const claimedPerson = await resolveClaimedPerson(profile.rootPersonId!);
+      if (!claimedPerson) {
+        Alert.alert(
+          'Identity Not Found',
+          'Your claimed identity could not be found in the current tree data. You may need to re-claim your identity in the Profile tab.',
+          [{ text: 'OK' }]
+        );
+        return;
+      }
+      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+
+      if (selectingSlot === 1) {
+        animateTransition(() => {
+          setPerson1(claimedPerson);
+          setSelectingSlot(2);
+          setQuery('');
+          setResults([]);
+        });
+      } else {
+        const p1 = person1;
+        const td = treeData;
+
+        setPerson2(claimedPerson);
         setQuery('');
         setResults([]);
-      });
-    } else {
-      const p1 = person1;
-      const td = treeData;
+        setShowResult(true);
+        setIsCalculating(true);
+        setExpandedIndex(null);
 
-      setPerson2(claimedPerson);
-      setQuery('');
-      setResults([]);
-      setShowResult(true);
-      setIsCalculating(true);
-      setExpandedIndex(null);
-
-      if (td && p1) {
-        const p1Id = p1.id;
-        const p2Id = claimedPerson.id;
-        setTimeout(() => {
-          try {
-            console.log('[RelationshipScreen] Starting multi-calculation (autofill)...');
-            const result = calculateAllRelationships(p1Id, p2Id, td);
-
-            setMultiResult(result);
-            setIsCalculating(false);
-            void Haptics.notificationAsync(
-              Haptics.NotificationFeedbackType.Success
-            );
-            if (result) {
-              addRelationshipEntry({
-                person1Id: p1Id,
-                person1Name: p1.name,
-                person2Id: p2Id,
-                person2Name: claimedPerson.name,
-                relationshipResult: result.closestRelationship,
-                pathCount: result.entries.length,
-              });
+        if (td && p1) {
+          const p1Id = p1.id;
+          const p2Id = claimedPerson.id;
+          setTimeout(() => {
+            try {
+              const result = calculateAllRelationships(p1Id, p2Id, td);
+              setMultiResult(result);
+              setIsCalculating(false);
+              void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+              if (result) {
+                addRelationshipEntry({
+                  person1Id: p1Id,
+                  person1Name: p1.name,
+                  person2Id: p2Id,
+                  person2Name: claimedPerson.name,
+                  relationshipResult: result.closestRelationship,
+                  pathCount: result.entries.length,
+                });
+              }
+            } catch (e) {
+              console.error('[RelationshipScreen] Autofill calculation error:', e);
+              setMultiResult(null);
+              setIsCalculating(false);
             }
-          } catch (e) {
-            console.error('[RelationshipScreen] Autofill calculation error:', e);
-            setMultiResult(null);
-            setIsCalculating(false);
-          }
-        }, 300);
-      } else {
-        console.error('[RelationshipScreen] Missing data for autofill calculation');
-        setIsCalculating(false);
+          }, 300);
+        } else {
+          setIsCalculating(false);
+        }
       }
-    }
-  }, [hasClaimed, profile?.rootPersonId, getPerson, selectingSlot, treeData, person1, addRelationshipEntry, animateTransition]);
+    })();
+  }, [hasClaimed, profile?.rootPersonId, resolveClaimedPerson, selectingSlot, treeData, person1, addRelationshipEntry, animateTransition]);
 
   const handleReset = useCallback(() => {
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);

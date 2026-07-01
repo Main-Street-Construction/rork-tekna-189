@@ -1,21 +1,53 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { Platform } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import createContextHook from '@nkzw/create-context-hook';
 import * as Linking from 'expo-linking';
 import { router as expoRouter } from 'expo-router';
 import { supabase } from '@/lib/supabase';
+import {
+  setProfileFullName,
+  notifyAdminsAccessRequest,
+} from '@/lib/supabase-rpc';
+import {
+  registerAdminPushNotifications,
+  unregisterAdminPushNotifications,
+} from '@/lib/push-notifications';
 import type { Session, User } from '@supabase/supabase-js';
+
+const PENDING_FULL_NAME_KEY = 'pending_signup_full_name';
 
 export interface UserProfileRow {
   id: string;
   is_enabled: boolean;
   is_admin: boolean;
+  full_name: string | null;
+  claimed_gedcom_id: string | null;
+  claimed_at: string | null;
 }
 
-const PROFILE_COLUMNS = 'id, is_enabled, is_admin';
+const PROFILE_COLUMNS = 'id, is_enabled, is_admin, full_name, claimed_gedcom_id, claimed_at';
 
-async function ensureProfileExists(userId: string): Promise<UserProfileRow | null> {
+async function applyPendingFullName(userId: string, email: string): Promise<void> {
+  try {
+    const stored = await AsyncStorage.getItem(PENDING_FULL_NAME_KEY);
+    if (!stored) return;
+
+    const parsed = JSON.parse(stored) as { email: string; fullName: string };
+    if (parsed.email.toLowerCase() !== email.toLowerCase()) return;
+
+    const result = await setProfileFullName(parsed.fullName);
+    if (result.success && result.userId) {
+      await AsyncStorage.removeItem(PENDING_FULL_NAME_KEY);
+      void notifyAdminsAccessRequest(result.userId);
+    }
+  } catch (e) {
+    console.warn('[Auth] applyPendingFullName failed:', e);
+  }
+}
+
+async function ensureProfileExists(userId: string, email?: string): Promise<UserProfileRow | null> {
   try {
     const { data: existing, error: fetchErr } = await supabase
       .from('profiles')
@@ -24,6 +56,15 @@ async function ensureProfileExists(userId: string): Promise<UserProfileRow | nul
       .single();
 
     if (existing && !fetchErr) {
+      if (email && !existing.full_name) {
+        await applyPendingFullName(userId, email);
+        const { data: refreshed } = await supabase
+          .from('profiles')
+          .select(PROFILE_COLUMNS)
+          .eq('id', userId)
+          .single();
+        return (refreshed as UserProfileRow) ?? (existing as UserProfileRow);
+      }
       return existing as UserProfileRow;
     }
 
@@ -46,12 +87,36 @@ async function ensureProfileExists(userId: string): Promise<UserProfileRow | nul
           .single();
         return (retry as UserProfileRow) ?? null;
       }
-      return { id: userId, is_enabled: false, is_admin: false };
+      return {
+        id: userId,
+        is_enabled: false,
+        is_admin: false,
+        full_name: null,
+        claimed_gedcom_id: null,
+        claimed_at: null,
+      };
+    }
+
+    if (email) {
+      await applyPendingFullName(userId, email);
+      const { data: refreshed } = await supabase
+        .from('profiles')
+        .select(PROFILE_COLUMNS)
+        .eq('id', userId)
+        .single();
+      return (refreshed as UserProfileRow) ?? (created as UserProfileRow);
     }
 
     return created as UserProfileRow;
   } catch {
-    return { id: userId, is_enabled: false, is_admin: false };
+    return {
+      id: userId,
+      is_enabled: false,
+      is_admin: false,
+      full_name: null,
+      claimed_gedcom_id: null,
+      claimed_at: null,
+    };
   }
 }
 
@@ -73,12 +138,12 @@ export const [AuthProvider, useAuth] = createContextHook(() => {
       setSession(s);
       if (!s) {
         setProfileRow(null);
+        void unregisterAdminPushNotifications();
         queryClient.removeQueries({ queryKey: ['authProfile'] });
       } else {
         void queryClient.invalidateQueries({ queryKey: ['authProfile'] });
       }
       if (event === 'PASSWORD_RECOVERY') {
-        console.log('[Auth] PASSWORD_RECOVERY event detected, navigating to update-password');
         setTimeout(() => {
           try {
             expoRouter.push('/update-password');
@@ -98,7 +163,7 @@ export const [AuthProvider, useAuth] = createContextHook(() => {
     queryKey: ['authProfile', session?.user?.id],
     queryFn: async (): Promise<UserProfileRow | null> => {
       if (!session?.user?.id) return null;
-      return ensureProfileExists(session.user.id);
+      return ensureProfileExists(session.user.id, session.user.email ?? undefined);
     },
     enabled: !!session?.user?.id,
     staleTime: 10 * 60 * 1000,
@@ -113,10 +178,19 @@ export const [AuthProvider, useAuth] = createContextHook(() => {
     }
   }, [profileQuery.data]);
 
+  useEffect(() => {
+    if (profileRow?.is_admin && session) {
+      void registerAdminPushNotifications();
+    }
+  }, [profileRow?.is_admin, session]);
+
   const signInMutation = useMutation({
     mutationFn: async ({ email, password }: { email: string; password: string }) => {
       const { data, error } = await supabase.auth.signInWithPassword({ email, password });
       if (error) throw error;
+      if (data.user) {
+        await ensureProfileExists(data.user.id, data.user.email ?? email);
+      }
       return data;
     },
   });
@@ -134,7 +208,7 @@ export const [AuthProvider, useAuth] = createContextHook(() => {
       }
       const needsEmailConfirmation = !data.session && !!data.user;
       if (data.session && data.user) {
-        await ensureProfileExists(data.user.id);
+        await ensureProfileExists(data.user.id, data.user.email ?? email);
       }
       return { ...data, needsEmailConfirmation };
     },
@@ -142,6 +216,7 @@ export const [AuthProvider, useAuth] = createContextHook(() => {
 
   const signOutMutation = useMutation({
     mutationFn: async () => {
+      await unregisterAdminPushNotifications();
       const { error } = await supabase.auth.signOut();
       if (error) throw error;
     },
@@ -178,7 +253,6 @@ export const [AuthProvider, useAuth] = createContextHook(() => {
       const appUrl = Platform.OS === 'web'
         ? `${typeof window !== 'undefined' ? window.location.origin : ''}/update-password`
         : Linking.createURL('/update-password');
-      console.log('[Auth] Sending password reset with redirectTo:', appUrl);
       const { error } = await supabase.auth.resetPasswordForEmail(email, {
         redirectTo: appUrl,
       });

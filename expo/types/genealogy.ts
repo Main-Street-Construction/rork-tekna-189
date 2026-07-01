@@ -73,4 +73,6 @@ export interface PendingEdit {
   status: PendingEditStatus;
   reviewed_at?: string;
   reviewer_note?: string;
+  submitter_email?: string | null;
+  submitter_name?: string | null;
 }
