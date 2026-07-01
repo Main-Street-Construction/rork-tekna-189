@@ -49,7 +49,7 @@ export default function ProfileScreen() {
   const router = useRouter();
   const { profile, hasProfile, hasClaimed, isClaimed, saveProfile, claimIdentity, resetClaim, isSaving } = useProfile();
   const {
-    hasData, individualCount, familyCount, clearData, search, getPerson,
+    hasData, individualCount, familyCount, clearData, search, resolveClaimedPerson,
     isAdmin,
     pendingEditCount, refreshPendingCount,
     isLoadingFromCloud, cloudError, loadProgress, refreshFromCloud,
@@ -158,12 +158,16 @@ export default function ProfileScreen() {
             text: 'Claim',
             style: 'default',
             onPress: async () => {
-              void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-              await claimIdentity(person.id, person.name);
-              setShowClaimSearch(false);
-              setClaimQuery('');
-              setClaimResults([]);
-              setDisplayName(person.name);
+              try {
+                await claimIdentity(person.id, person.name);
+                void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+                setShowClaimSearch(false);
+                setClaimQuery('');
+                setClaimResults([]);
+                setDisplayName(person.name);
+              } catch (e) {
+                Alert.alert('Claim Failed', e instanceof Error ? e.message : 'Could not claim identity.');
+              }
             },
           },
         ]
@@ -183,32 +187,36 @@ export default function ProfileScreen() {
 
   const handleStartClaim = useCallback(() => {
     if (isClaimed) {
-      const personStillExists = profile?.rootPersonId ? !!getPerson(profile.rootPersonId) : false;
-      if (!personStillExists) {
-        Alert.alert(
-          'Identity Not Found',
-          'Your previously claimed identity could not be found in the current database. This may be due to a data update. Would you like to re-claim?',
-          [
-            { text: 'Cancel', style: 'cancel' },
-            {
-              text: 'Re-Claim',
-              onPress: async () => {
-                await resetClaim();
-                setShowClaimSearch(true);
+      void (async () => {
+        const personStillExists = profile?.rootPersonId
+          ? !!(await resolveClaimedPerson(profile.rootPersonId))
+          : false;
+        if (!personStillExists) {
+          Alert.alert(
+            'Identity Not Found',
+            'Your previously claimed identity could not be found in the current database. This may be due to a data update. Would you like to re-claim?',
+            [
+              { text: 'Cancel', style: 'cancel' },
+              {
+                text: 'Re-Claim',
+                onPress: async () => {
+                  await resetClaim();
+                  setShowClaimSearch(true);
+                },
               },
-            },
-          ]
-        );
-      } else {
-        Alert.alert(
-          'Identity Locked',
-          `You are permanently linked to "${profile?.rootPersonName}". Your identity can only be changed if there is a database error.`
-        );
-      }
+            ]
+          );
+        } else {
+          Alert.alert(
+            'Identity Locked',
+            `You are permanently linked to "${profile?.rootPersonName}". Your identity can only be changed if there is a database error.`
+          );
+        }
+      })();
       return;
     }
     setShowClaimSearch(true);
-  }, [isClaimed, profile?.rootPersonId, profile?.rootPersonName, getPerson, resetClaim]);
+  }, [isClaimed, profile?.rootPersonId, profile?.rootPersonName, resolveClaimedPerson, resetClaim]);
 
   const handleSignOut = useCallback(() => {
     Alert.alert('Sign Out', 'Are you sure you want to sign out?', [
@@ -522,6 +530,16 @@ export default function ProfileScreen() {
                   >
                     <Users size={16} color={Colors.accent} />
                     <Text style={styles.pendingEditsBtnText}>Manage Users</Text>
+                    <ChevronRight size={14} color={Colors.textLight} />
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={styles.pendingEditsBtn}
+                    onPress={() => router.push('/admin/data')}
+                    activeOpacity={0.7}
+                  >
+                    <Database size={16} color={Colors.accent} />
+                    <Text style={styles.pendingEditsBtnText}>Genealogy Data Console</Text>
                     <ChevronRight size={14} color={Colors.textLight} />
                   </TouchableOpacity>
                 </>

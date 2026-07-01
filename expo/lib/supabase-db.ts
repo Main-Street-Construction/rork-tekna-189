@@ -803,6 +803,12 @@ export async function submitPendingEdit(
 
 export async function fetchPendingEdits(): Promise<{ edits: PendingEdit[]; error?: string }> {
   try {
+    const { data: rpcData, error: rpcError } = await supabase.rpc('admin_list_pending_edits');
+
+    if (!rpcError && rpcData) {
+      return { edits: (rpcData ?? []) as PendingEdit[] };
+    }
+
     const { data, error } = await supabase
       .from('pending_edits')
       .select('*')
@@ -810,16 +816,17 @@ export async function fetchPendingEdits(): Promise<{ edits: PendingEdit[]; error
       .order('submitted_at', { ascending: false });
 
     if (error) {
-
       if (error.message.includes('does not exist') || error.code === '42P01') {
         return { edits: [], error: 'Pending edits table not set up.' };
+      }
+      if (rpcError) {
+        return { edits: [], error: rpcError.message };
       }
       return { edits: [], error: error.message };
     }
 
     return { edits: (data ?? []) as PendingEdit[] };
   } catch (e) {
-
     return { edits: [], error: String(e) };
   }
 }

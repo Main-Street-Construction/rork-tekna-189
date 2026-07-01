@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { Stack } from "expo-router";
+import { Stack, useRouter } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
 import React, { useEffect, useState, useCallback } from "react";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
@@ -11,6 +11,10 @@ import { SearchHistoryProvider } from "@/contexts/SearchHistoryContext";
 import OnboardingTutorial from "@/components/OnboardingTutorial";
 import Colors from "@/constants/colors";
 import { trpc, trpcClient } from "@/lib/trpc";
+import {
+  addNotificationResponseListener,
+  getLastNotificationResponse,
+} from "@/lib/push-notifications";
 
 void SplashScreen.preventAutoHideAsync();
 
@@ -26,9 +30,34 @@ const queryClient = new QueryClient({
   },
 });
 
+function NotificationDeepLinkHandler() {
+  const router = useRouter();
+
+  useEffect(() => {
+    const navigateFromNotification = (data: Record<string, unknown>) => {
+      if (data.type === 'access_request') {
+        router.push('/admin');
+      }
+    };
+
+    const last = getLastNotificationResponse();
+    if (last) {
+      const data = last.notification.request.content.data as Record<string, unknown>;
+      navigateFromNotification(data);
+    }
+
+    const sub = addNotificationResponseListener(navigateFromNotification);
+    return () => sub.remove();
+  }, [router]);
+
+  return null;
+}
+
 function RootLayoutNav() {
   return (
-    <Stack
+    <>
+      <NotificationDeepLinkHandler />
+      <Stack
       screenOptions={{
         headerBackTitle: "Back",
         headerStyle: { backgroundColor: Colors.background },
@@ -78,6 +107,10 @@ function RootLayoutNav() {
         options={{ title: "Admin Panel" }}
       />
       <Stack.Screen
+        name="admin/data"
+        options={{ title: "Data Console" }}
+      />
+      <Stack.Screen
         name="privacy-policy/index"
         options={{ title: "Privacy Policy" }}
       />
@@ -86,6 +119,7 @@ function RootLayoutNav() {
         options={{ presentation: "modal", title: "Update Password" }}
       />
     </Stack>
+    </>
   );
 }
 

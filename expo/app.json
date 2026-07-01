@@ -2,7 +2,7 @@
   "expo": {
     "name": "Tekna",
     "slug": "family-tree-research-app",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "rork-app",
@@ -15,14 +15,19 @@
     },
     "ios": {
       "supportsTablet": false,
-      "bundleIdentifier": "app.rork.family-tree-research-app"
+      "bundleIdentifier": "app.rork.family-tree-research-app",
+      "buildNumber": "2",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
     },
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/adaptive-icon.png",
         "backgroundColor": "#ffffff"
       },
-      "package": "app.rork.family_tree_research_app"
+      "package": "app.rork.family_tree_research_app",
+      "versionCode": 2
     },
     "web": {
       "favicon": "./assets/images/favicon.png"
@@ -34,10 +39,26 @@
           "origin": "https://rork.com/"
         }
       ],
-      "expo-mail-composer"
+      "expo-mail-composer",
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/images/icon.png",
+          "color": "#4A7C59",
+          "sounds": []
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true
+    },
+    "extra": {
+      "router": {
+        "origin": "https://rork.com/"
+      },
+      "eas": {
+        "projectId": "74ab90a2-add3-4a18-80f3-8a418ac13b96"
+      }
     }
   }
 }

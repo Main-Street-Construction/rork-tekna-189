@@ -41,11 +41,12 @@ export default function PrivacyPolicyScreen() {
         </Section>
 
         <Section title="Information We Collect">
-          <BulletPoint text="Account Information: When you create an account, we collect your email address and password. Passwords are securely hashed and never stored in plain text." />
+          <BulletPoint text="Account Information: When you create an account, we collect your email address, password, and full name. Passwords are securely hashed and never stored in plain text." />
           <BulletPoint text="Profile Information: You may optionally provide a display name and link your identity to a person in the family tree database." />
           <BulletPoint text="Family Tree Data: The app accesses shared genealogical data (names, dates, places, and family relationships) stored in our database. This data is managed by the administrator." />
           <BulletPoint text="Usage Data: We store your search history and relationship calculations locally on your device to improve your experience." />
           <BulletPoint text="Feedback: If you submit feedback through the app, we collect the message content and your display name." />
+          <BulletPoint text="Push Notifications (admins only): If you are an administrator, the app may store a device push token to notify you when someone requests account access. You can deny notification permission in your device settings." />
         </Section>
 
         <Section title="How We Use Your Information">
