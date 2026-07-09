@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { Platform } from 'react-native';
+import { AppState, AppStateStatus, Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { File, Directory, Paths } from 'expo-file-system';
 import { useMutation, useQuery } from '@tanstack/react-query';
@@ -37,6 +37,9 @@ const LAST_CLOUD_SYNC_KEY = 'last_cloud_sync';
 const DATA_FORMAT_VERSION_KEY = 'data_format_version';
 const CURRENT_DATA_FORMAT_VERSION = '7';
 const CLOUD_SYNC_INTERVAL = 12 * 60 * 60 * 1000;
+const AUTO_SYNC_ON_LAUNCH_INTERVAL = 60 * 60 * 1000;
+const BG_SYNC_START_DELAY_MS = 4000;
+const AUTO_SYNC_DEBOUNCE_MS = 30_000;
 const PARTIAL_SYNC_THRESHOLD = 0.95;
 const MAX_ASYNC_STORAGE_BYTES = 4 * 1024 * 1024;
 
@@ -47,6 +50,20 @@ function safeFamiliesAsSpouse(arr: string[] | undefined | null): string[] {
 function addFamilyToSpouseList(list: string[] | undefined | null, familyId: string): string[] {
   const safe = safeFamiliesAsSpouse(list);
   return safe.includes(familyId) ? safe : [...safe, familyId];
+}
+
+async function getLastSyncAgeMs(): Promise<number | null> {
+  const raw = await safeGetItem(LAST_CLOUD_SYNC_KEY);
+  if (!raw) return null;
+  const ts = parseInt(raw, 10);
+  if (Number.isNaN(ts)) return null;
+  return Date.now() - ts;
+}
+
+async function isAutoSyncDue(maxAgeMs: number): Promise<boolean> {
+  const age = await getLastSyncAgeMs();
+  if (age === null) return true;
+  return age >= maxAgeMs;
 }
 
 function shouldRejectCloudReplace(
@@ -186,6 +203,8 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
   const [lastSyncResult, setLastSyncResult] = useState<string | null>(null);
   const bgSyncRef = useRef<boolean>(false);
   const bgSyncInFlightRef = useRef<boolean>(false);
+  const lastAutoSyncAttemptRef = useRef(0);
+  const bgSyncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const cloudRetryCountRef = useRef<number>(0);
   const MAX_AUTO_RETRIES = 3;
 
@@ -249,6 +268,39 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
       setLoadProgress(null);
     }
   }, [handleProgress, persistCloudData, profileRow?.claimed_gedcom_id, treeData]);
+
+  const scheduleAutoSync = useCallback(
+    (reason: string, maxAgeMs: number, delayMs: number) => {
+      if (bgSyncTimerRef.current) {
+        clearTimeout(bgSyncTimerRef.current);
+        bgSyncTimerRef.current = null;
+      }
+
+      bgSyncTimerRef.current = setTimeout(() => {
+        bgSyncTimerRef.current = null;
+        void (async () => {
+          if (bgSyncInFlightRef.current) return;
+
+          const now = Date.now();
+          if (now - lastAutoSyncAttemptRef.current < AUTO_SYNC_DEBOUNCE_MS) {
+            console.log('[FamilyTree] Auto-sync debounced');
+            return;
+          }
+
+          const syncDue = await isAutoSyncDue(maxAgeMs);
+          if (!syncDue) {
+            console.log('[FamilyTree] Auto-sync skipped — data is fresh enough');
+            return;
+          }
+
+          lastAutoSyncAttemptRef.current = now;
+          console.log('[FamilyTree] Auto-sync starting:', reason);
+          await backgroundSyncFromCloud();
+        })();
+      }, delayMs);
+    },
+    [backgroundSyncFromCloud]
+  );
 
   const loadFromCloudWithRetry = useCallback(async (): Promise<FamilyTreeData | null> => {
     setIsLoadingFromCloud(true);
@@ -357,10 +409,28 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
 
       if (bgSyncRef.current) {
         bgSyncRef.current = false;
-        console.log('[FamilyTree] Using cached data; skipping automatic background sync');
+        scheduleAutoSync('app launch', AUTO_SYNC_ON_LAUNCH_INTERVAL, BG_SYNC_START_DELAY_MS);
       }
     }
-  }, [loadQuery.data, backgroundSyncFromCloud]);
+  }, [loadQuery.data, scheduleAutoSync]);
+
+  useEffect(() => {
+    if (!canLoadData) return;
+
+    const handleAppState = (nextState: AppStateStatus) => {
+      if (nextState !== 'active') return;
+      scheduleAutoSync('app foreground', CLOUD_SYNC_INTERVAL, 2000);
+    };
+
+    const subscription = AppState.addEventListener('change', handleAppState);
+    return () => {
+      subscription.remove();
+      if (bgSyncTimerRef.current) {
+        clearTimeout(bgSyncTimerRef.current);
+        bgSyncTimerRef.current = null;
+      }
+    };
+  }, [canLoadData, scheduleAutoSync]);
 
   useEffect(() => {
     if (loadQuery.error && !treeData) {
