@@ -19,8 +19,13 @@ import * as Haptics from 'expo-haptics';
 import Colors from '@/constants/colors';
 import { useFamilyTree } from '@/contexts/FamilyTreeContext';
 import { GedcomIndividual } from '@/types/genealogy';
-import { getSpouses, getChildren } from '@/utils/gedcom-parser';
-import { useProfile } from '@/contexts/ProfileContext';
+import { getSpouses } from '@/utils/gedcom-parser';
+import { findSimilarIndividuals } from '@/utils/name-utils';
+import { navigateBack, modalScreenOptions } from '@/utils/navigation';
+
+function safeFamiliesAsSpouse(arr: string[] | undefined | null): string[] {
+  return Array.isArray(arr) ? arr : [];
+}
 
 type SexType = 'M' | 'F' | 'U';
 
@@ -30,22 +35,37 @@ export default function AddChildScreen() {
   const {
     treeData,
     getPerson,
+    resolvePerson,
     generateNewId,
     addChildToFamily,
     createFamilyAndAddChild,
-    search,
     isAdmin,
     submitEdit,
+    isReady,
+    isLoadingFromCloud,
   } = useFamilyTree();
-  const { profile } = useProfile();
 
   const [isSaving, setIsSaving] = useState<boolean>(false);
+  const [isResolvingParent, setIsResolvingParent] = useState<boolean>(false);
+  const [resolvedParent, setResolvedParent] = useState<GedcomIndividual | undefined>(undefined);
   const fadeAnim = useRef(new Animated.Value(0)).current;
 
   const parent = useMemo(() => {
     if (!parentId) return undefined;
-    return getPerson(parentId);
-  }, [parentId, getPerson]);
+    return resolvedParent ?? getPerson(parentId);
+  }, [parentId, getPerson, resolvedParent]);
+
+  useEffect(() => {
+    if (!parentId || parent || !isReady) return;
+    let cancelled = false;
+    setIsResolvingParent(true);
+    void resolvePerson(parentId).then((fetched) => {
+      if (!cancelled && fetched) setResolvedParent(fetched);
+    }).finally(() => {
+      if (!cancelled) setIsResolvingParent(false);
+    });
+    return () => { cancelled = true; };
+  }, [parentId, parent, isReady, resolvePerson]);
 
   const spouses = useMemo(() => {
     if (!parentId || !treeData) return [];
@@ -54,14 +74,12 @@ export default function AddChildScreen() {
 
   const existingFamilies = useMemo(() => {
     if (!parent || !treeData) return [];
-    return parent.familiesAsSpouse
+    return safeFamiliesAsSpouse(parent.familiesAsSpouse)
       .map((fid) => treeData.families.get(fid))
       .filter((f): f is NonNullable<typeof f> => f != null);
   }, [parent, treeData]);
 
-  const [selectedFamilyId, setSelectedFamilyId] = useState<string | null>(
-    existingFamilies.length === 1 ? existingFamilies[0].id : null
-  );
+  const [selectedFamilyId, setSelectedFamilyId] = useState<string | null>(null);
   const [selectedSpouseId, setSelectedSpouseId] = useState<string | null>(
     spouses.length === 1 ? spouses[0].id : null
   );
@@ -92,12 +110,14 @@ export default function AddChildScreen() {
       if (h) parts.push(h.givenName || h.name);
       if (w) parts.push(w.givenName || w.name);
       const kids = fam.childrenIds.length;
-      return `${parts.join(' & ')}${kids > 0 ? ` (${kids} children)` : ''}`;
+      const marriage = [fam.marriageDate, fam.marriagePlace].filter(Boolean).join(' — ');
+      const base = `${parts.join(' & ')}${kids > 0 ? ` (${kids} children)` : ''}`;
+      return marriage ? `${base} · ${marriage}` : base;
     },
     [treeData, getPerson]
   );
 
-  const handleSave = useCallback(async () => {
+  const saveChild = useCallback(async () => {
     if (!parent || !parentId) return;
 
     const trimmedGiven = givenName.trim();
@@ -114,7 +134,6 @@ export default function AddChildScreen() {
     try {
       const newId = generateNewId('I');
       const fullName = [trimmedGiven, middleName.trim(), trimmedSurname].filter(Boolean).join(' ');
-
       const givenWithMiddle = [trimmedGiven, middleName.trim()].filter(Boolean).join(' ');
 
       const newChild: GedcomIndividual = {
@@ -178,6 +197,48 @@ export default function AddChildScreen() {
     }
   }, [parent, parentId, givenName, middleName, surname, sex, birthDate, birthPlace, selectedFamilyId, selectedSpouseId, generateNewId, addChildToFamily, createFamilyAndAddChild, router, isAdmin, submitEdit]);
 
+  const handleSave = useCallback(async () => {
+    if (!parent || !parentId || !treeData) return;
+
+    const trimmedGiven = givenName.trim();
+    const trimmedSurname = surname.trim();
+    if (!trimmedGiven) {
+      Alert.alert('Missing Name', 'Please enter at least a first name.');
+      return;
+    }
+
+    const similar = findSimilarIndividuals(trimmedGiven, trimmedSurname, birthDate.trim() || undefined, treeData);
+    if (similar.length > 0) {
+      Alert.alert(
+        'Similar Person Found',
+        `A similar person already exists: ${similar[0].name}. Link them as a child instead of creating a duplicate?`,
+        [
+          { text: 'Create Anyway', style: 'destructive', onPress: () => void saveChild() },
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Link Existing',
+            onPress: () => router.replace(`/link-child/${parentId}`),
+          },
+        ]
+      );
+      return;
+    }
+
+    await saveChild();
+  }, [parent, parentId, treeData, givenName, surname, birthDate, saveChild, router]);
+
+  if ((!isReady || isLoadingFromCloud || isResolvingParent) && !parent) {
+    return (
+      <View style={styles.container}>
+        <Stack.Screen options={{ title: 'Add Child' }} />
+        <View style={styles.centerMessage}>
+          <ActivityIndicator size="large" color={Colors.accent} />
+          <Text style={styles.loadingText}>Loading parent...</Text>
+        </View>
+      </View>
+    );
+  }
+
   if (!parent) {
     return (
       <View style={styles.container}>
@@ -195,12 +256,12 @@ export default function AddChildScreen() {
     <View style={styles.container}>
       <Stack.Screen
         options={{
+          ...modalScreenOptions,
           title: 'Add Child',
           headerStyle: { backgroundColor: Colors.background },
           headerTintColor: Colors.text,
-          headerShadowVisible: false,
           headerLeft: () => (
-            <TouchableOpacity onPress={() => router.back()} style={styles.headerBtn}>
+            <TouchableOpacity onPress={() => navigateBack(router)} style={styles.headerBtn}>
               <X size={22} color={Colors.text} />
             </TouchableOpacity>
           ),
@@ -247,14 +308,14 @@ export default function AddChildScreen() {
               </View>
             </View>
 
-            {existingFamilies.length > 1 && (
+            {existingFamilies.length >= 1 && (
               <View style={styles.section}>
                 <View style={styles.sectionHeader}>
                   <Users size={16} color={Colors.accent} />
                   <Text style={styles.sectionTitle}>Select Family</Text>
                 </View>
                 <Text style={styles.hint}>
-                  This parent belongs to multiple families. Choose which one the child belongs to.
+                  Choose an existing family or create a new one (for remarriage or step-family).
                 </Text>
                 {existingFamilies.map((fam) => (
                   <TouchableOpacity
@@ -302,12 +363,13 @@ export default function AddChildScreen() {
               </View>
             )}
 
-            {existingFamilies.length <= 1 && spouses.length > 1 && !selectedFamilyId && (
+            {!selectedFamilyId && spouses.length > 0 && (
               <View style={styles.section}>
                 <View style={styles.sectionHeader}>
                   <Users size={16} color={Colors.accent} />
                   <Text style={styles.sectionTitle}>Other Parent</Text>
                 </View>
+                <Text style={styles.hint}>Select the co-parent for this new family.</Text>
                 {spouses.map((sp) => (
                   <TouchableOpacity
                     key={sp.id}
@@ -475,6 +537,11 @@ const styles = StyleSheet.create({
   },
   errorText: {
     fontSize: 16,
+    color: Colors.textSecondary,
+  },
+  loadingText: {
+    marginTop: 12,
+    fontSize: 14,
     color: Colors.textSecondary,
   },
   headerBtn: {

@@ -22,12 +22,12 @@ import {
   Trash2,
   Clock,
   UserCheck,
-  Database,
 } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import Colors from '@/constants/colors';
 import { useAuth } from '@/contexts/AuthContext';
+import { navigateBack } from '@/utils/navigation';
 import { supabase } from '@/lib/supabase';
 import {
   adminListUsersWithEmail,
@@ -337,7 +337,7 @@ export default function AdminScreen() {
           <ShieldOff size={48} color={Colors.textLight} />
           <Text style={styles.emptyTitle}>Access Denied</Text>
           <Text style={styles.emptyDesc}>You don't have admin privileges.</Text>
-          <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}>
+          <TouchableOpacity style={styles.backBtn} onPress={() => navigateBack(router)}>
             <Text style={styles.backBtnText}>Go Back</Text>
           </TouchableOpacity>
         </View>
@@ -355,15 +355,6 @@ export default function AdminScreen() {
           headerShadowVisible: false,
         }}
       />
-
-      <TouchableOpacity
-        style={styles.dataConsoleLink}
-        onPress={() => router.push('/admin/data')}
-        activeOpacity={0.8}
-      >
-        <Database size={18} color={Colors.accent} />
-        <Text style={styles.dataConsoleText}>Genealogy Data Console</Text>
-      </TouchableOpacity>
 
       {usersQuery.isLoading ? (
         <View style={styles.loadingContainer}>
@@ -427,19 +418,6 @@ const styles = StyleSheet.create({
   backBtnText: { fontSize: 14, fontWeight: '600' as const, color: Colors.white },
   retryBtn: { marginTop: 8, paddingHorizontal: 24, paddingVertical: 10, borderRadius: 10, backgroundColor: Colors.accent },
   retryBtnText: { fontSize: 14, fontWeight: '600' as const, color: Colors.white },
-  dataConsoleLink: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    marginHorizontal: 16,
-    marginTop: 12,
-    padding: 14,
-    backgroundColor: Colors.card,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: Colors.cardBorder,
-  },
-  dataConsoleText: { fontSize: 15, fontWeight: '600' as const, color: Colors.text },
   statsRow: { flexDirection: 'row', alignItems: 'center', marginHorizontal: 16, marginTop: 16, marginBottom: 8, gap: 8 },
   statsText: { fontSize: 14, fontWeight: '600' as const, color: Colors.text },
   statsDot: { width: 4, height: 4, borderRadius: 2, backgroundColor: Colors.textLight },

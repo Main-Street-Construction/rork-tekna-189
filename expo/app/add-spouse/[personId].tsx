@@ -18,6 +18,8 @@ import * as Haptics from 'expo-haptics';
 import Colors from '@/constants/colors';
 import { useFamilyTree } from '@/contexts/FamilyTreeContext';
 import { GedcomIndividual } from '@/types/genealogy';
+import { findSimilarIndividuals } from '@/utils/name-utils';
+import { navigateBack, modalScreenOptions } from '@/utils/navigation';
 
 type SexType = 'M' | 'F' | 'U';
 
@@ -25,20 +27,38 @@ export default function AddSpouseScreen() {
   const { personId } = useLocalSearchParams<{ personId: string }>();
   const router = useRouter();
   const {
+    treeData,
     getPerson,
+    resolvePerson,
     generateNewId,
     addSpouse,
     isAdmin,
     submitEdit,
+    isReady,
+    isLoadingFromCloud,
   } = useFamilyTree();
 
   const [isSaving, setIsSaving] = useState<boolean>(false);
+  const [isResolvingPerson, setIsResolvingPerson] = useState<boolean>(false);
+  const [resolvedPerson, setResolvedPerson] = useState<GedcomIndividual | undefined>(undefined);
   const fadeAnim = useRef(new Animated.Value(0)).current;
 
   const person = useMemo(() => {
     if (!personId) return undefined;
-    return getPerson(personId);
-  }, [personId, getPerson]);
+    return resolvedPerson ?? getPerson(personId);
+  }, [personId, getPerson, resolvedPerson]);
+
+  useEffect(() => {
+    if (!personId || person || !isReady) return;
+    let cancelled = false;
+    setIsResolvingPerson(true);
+    void resolvePerson(personId).then((fetched) => {
+      if (!cancelled && fetched) setResolvedPerson(fetched);
+    }).finally(() => {
+      if (!cancelled) setIsResolvingPerson(false);
+    });
+    return () => { cancelled = true; };
+  }, [personId, person, isReady, resolvePerson]);
 
   const defaultSex: SexType = person?.sex === 'M' ? 'F' : person?.sex === 'F' ? 'M' : 'U';
 
@@ -59,7 +79,7 @@ export default function AddSpouseScreen() {
     }).start();
   }, [fadeAnim]);
 
-  const handleSave = useCallback(async () => {
+  const saveSpouse = useCallback(async () => {
     if (!person || !personId) return;
 
     const trimmedGiven = givenName.trim();
@@ -134,6 +154,48 @@ export default function AddSpouseScreen() {
     }
   }, [person, personId, givenName, middleName, surname, sex, birthDate, birthPlace, marriageDate, marriagePlace, generateNewId, addSpouse, router, isAdmin, submitEdit]);
 
+  const handleSave = useCallback(async () => {
+    if (!person || !personId || !treeData) return;
+
+    const trimmedGiven = givenName.trim();
+    const trimmedSurname = surname.trim();
+    if (!trimmedGiven) {
+      Alert.alert('Missing Name', 'Please enter at least a first name.');
+      return;
+    }
+
+    const similar = findSimilarIndividuals(trimmedGiven, trimmedSurname, birthDate.trim() || undefined, treeData);
+    if (similar.length > 0) {
+      Alert.alert(
+        'Similar Person Found',
+        `A similar person already exists: ${similar[0].name}. Link them as a spouse instead?`,
+        [
+          { text: 'Create Anyway', style: 'destructive', onPress: () => void saveSpouse() },
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Link Existing',
+            onPress: () => router.replace(`/link-spouses?prefill=${personId}`),
+          },
+        ]
+      );
+      return;
+    }
+
+    await saveSpouse();
+  }, [person, personId, treeData, givenName, surname, birthDate, saveSpouse, router]);
+
+  if ((!isReady || isLoadingFromCloud || isResolvingPerson) && !person) {
+    return (
+      <View style={styles.container}>
+        <Stack.Screen options={{ title: 'Add Spouse' }} />
+        <View style={styles.centerMessage}>
+          <ActivityIndicator size="large" color={Colors.accent} />
+          <Text style={styles.loadingText}>Loading person...</Text>
+        </View>
+      </View>
+    );
+  }
+
   if (!person) {
     return (
       <View style={styles.container}>
@@ -151,12 +213,12 @@ export default function AddSpouseScreen() {
     <View style={styles.container}>
       <Stack.Screen
         options={{
+          ...modalScreenOptions,
           title: 'Add Spouse',
           headerStyle: { backgroundColor: Colors.background },
           headerTintColor: Colors.text,
-          headerShadowVisible: false,
           headerLeft: () => (
-            <TouchableOpacity onPress={() => router.back()} style={styles.headerBtn}>
+            <TouchableOpacity onPress={() => navigateBack(router)} style={styles.headerBtn}>
               <X size={22} color={Colors.text} />
             </TouchableOpacity>
           ),
@@ -349,6 +411,11 @@ const styles = StyleSheet.create({
   },
   errorText: {
     fontSize: 16,
+    color: Colors.textSecondary,
+  },
+  loadingText: {
+    marginTop: 12,
+    fontSize: 14,
     color: Colors.textSecondary,
   },
   headerBtn: {

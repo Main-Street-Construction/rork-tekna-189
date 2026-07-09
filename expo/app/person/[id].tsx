@@ -8,6 +8,7 @@ import {
   Animated,
   Modal,
   Pressable,
+  Alert,
 } from 'react-native';
 import { useLocalSearchParams, useRouter, Stack } from 'expo-router';
 import {
@@ -28,6 +29,8 @@ import {
   Home,
   Maximize2,
   Minimize2,
+  MoreHorizontal,
+  Link2Off,
 } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import Colors from '@/constants/colors';
@@ -43,15 +46,22 @@ import { calculateRelationship } from '@/utils/relationship';
 import PersonCard from '@/components/PersonCard';
 import SectionHeader from '@/components/SectionHeader';
 import { GedcomIndividual, GedcomFamily } from '@/types/genealogy';
+import { navigateBack } from '@/utils/navigation';
 
 export default function PersonDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
-  const { treeData, getPerson } = useFamilyTree();
+  const { treeData, getPerson, hydratePerson, isAdmin, submitEdit, removeChildFromFamily, unlinkSpouses } = useFamilyTree();
   const { profile } = useProfile();
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const [treeExpanded, setTreeExpanded] = useState<boolean>(false);
   const [spouseMenuVisible, setSpouseMenuVisible] = useState<boolean>(false);
+  const [childMenuVisible, setChildMenuVisible] = useState<boolean>(false);
+  const [relationMenu, setRelationMenu] = useState<
+    | { kind: 'marriage'; family: GedcomFamily; spouseName: string }
+    | { kind: 'child'; child: GedcomIndividual; familyId: string }
+    | null
+  >(null);
 
   useEffect(() => {
     Animated.timing(fadeAnim, {
@@ -61,10 +71,37 @@ export default function PersonDetailScreen() {
     }).start();
   }, []);
 
-  const person = useMemo(() => {
-    if (!id) return undefined;
-    return getPerson(id);
-  }, [id, getPerson]);
+  const [displayPerson, setDisplayPerson] = useState<GedcomIndividual | undefined>();
+
+  useEffect(() => {
+    if (!id) {
+      setDisplayPerson(undefined);
+      return;
+    }
+
+    const local = getPerson(id);
+    if (!local) {
+      setDisplayPerson(undefined);
+      return;
+    }
+
+    setDisplayPerson(local);
+
+    if (local.note?.trim()) return;
+
+    let cancelled = false;
+    void hydratePerson(id).then((hydrated) => {
+      if (!cancelled && hydrated) {
+        setDisplayPerson(hydrated);
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [id, getPerson, hydratePerson, treeData]);
+
+  const person = displayPerson;
 
   const parents = useMemo(() => {
     if (!id || !treeData) return [];
@@ -185,6 +222,58 @@ export default function PersonDetailScreen() {
     router.push(`/link-spouses?prefill=${id}`);
   }, [router, id]);
 
+  const handleLinkChild = useCallback(() => {
+    if (!id) return;
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    router.push(`/link-child/${id}`);
+  }, [router, id]);
+
+  const handleUnlinkSpouse = useCallback((familyId: string) => {
+    Alert.alert('Unlink Spouses', 'Remove this marriage link? Both people will be kept.', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Unlink',
+        style: 'destructive',
+        onPress: async () => {
+          if (isAdmin) {
+            const result = await unlinkSpouses(familyId);
+            if (!result.success) Alert.alert('Error', result.error ?? 'Failed to unlink.');
+          } else {
+            const result = await submitEdit('unlink_spouses', familyId, { familyId });
+            if (result.success) {
+              Alert.alert('Submitted', 'Unlink request sent for admin review.');
+            } else {
+              Alert.alert('Error', result.error ?? 'Failed to submit.');
+            }
+          }
+        },
+      },
+    ]);
+  }, [isAdmin, unlinkSpouses, submitEdit]);
+
+  const handleRemoveChild = useCallback((childId: string, familyId: string) => {
+    Alert.alert('Remove Child Link', 'Remove this parent-child relationship?', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Remove',
+        style: 'destructive',
+        onPress: async () => {
+          if (isAdmin) {
+            const result = await removeChildFromFamily(childId, familyId);
+            if (!result.success) Alert.alert('Error', result.error ?? 'Failed to remove.');
+          } else {
+            const result = await submitEdit('remove_child', childId, { childId, familyId });
+            if (result.success) {
+              Alert.alert('Submitted', 'Removal request sent for admin review.');
+            } else {
+              Alert.alert('Error', result.error ?? 'Failed to submit.');
+            }
+          }
+        },
+      },
+    ]);
+  }, [isAdmin, removeChildFromFamily, submitEdit]);
+
   const spouseFamilies = useMemo(() => {
     if (!id || !treeData) return [];
     const families: GedcomFamily[] = [];
@@ -203,7 +292,7 @@ export default function PersonDetailScreen() {
           <Text style={styles.errorText}>Person not found</Text>
           <TouchableOpacity
             style={styles.backButton}
-            onPress={() => router.back()}
+            onPress={() => navigateBack(router)}
           >
             <ArrowLeft size={18} color={Colors.white} />
             <Text style={styles.backButtonText}>Go Back</Text>
@@ -530,19 +619,36 @@ export default function PersonDetailScreen() {
                         compact
                       />
                       {matchingFamily && (
-                        <TouchableOpacity
-                          style={styles.marriageInfoRow}
-                          onPress={() => handleEditMarriage(matchingFamily.id)}
-                          activeOpacity={0.7}
-                        >
-                          <Heart size={12} color={Colors.accent} />
-                          <Text style={styles.marriageInfoText} numberOfLines={1}>
-                            {matchingFamily.marriageDate || matchingFamily.marriagePlace
-                              ? [matchingFamily.marriageDate, matchingFamily.marriagePlace].filter(Boolean).join(' — ')
-                              : 'No marriage details'}
-                          </Text>
-                          <Pencil size={12} color={Colors.textLight} />
-                        </TouchableOpacity>
+                        <View style={styles.marriageRow}>
+                          <TouchableOpacity
+                            style={styles.marriageInfoRow}
+                            onPress={() => handleEditMarriage(matchingFamily.id)}
+                            activeOpacity={0.7}
+                          >
+                            <Heart size={12} color={Colors.accent} />
+                            <Text style={styles.marriageInfoText} numberOfLines={1}>
+                              {matchingFamily.marriageDate || matchingFamily.marriagePlace
+                                ? [matchingFamily.marriageDate, matchingFamily.marriagePlace].filter(Boolean).join(' — ')
+                                : 'No marriage details'}
+                            </Text>
+                            <Pencil size={12} color={Colors.textLight} />
+                          </TouchableOpacity>
+                          <TouchableOpacity
+                            style={styles.marriageMoreBtn}
+                            onPress={() => {
+                              void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                              setRelationMenu({
+                                kind: 'marriage',
+                                family: matchingFamily,
+                                spouseName: s.name,
+                              });
+                            }}
+                            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                            accessibilityLabel="Marriage options"
+                          >
+                            <MoreHorizontal size={16} color={Colors.textLight} />
+                          </TouchableOpacity>
+                        </View>
                       )}
                     </View>
                   );
@@ -555,15 +661,25 @@ export default function PersonDetailScreen() {
             <View style={styles.relationSection}>
               <SectionHeader title="Children" count={children.length} />
               <View style={styles.relationList}>
-                {children.map((c) => (
-                  <PersonCard
-                    key={c.id}
-                    person={c}
-                    onPress={handlePersonPress}
-                    subtitle={c.sex === 'F' ? 'Daughter' : 'Son'}
-                    compact
-                  />
-                ))}
+                {children.map((c) => {
+                  const childFamily = spouseFamilies.find((f) => f.childrenIds.includes(c.id))
+                    ?? (c.familyAsChild && treeData?.families.get(c.familyAsChild) ? treeData.families.get(c.familyAsChild) : undefined);
+                  const childFamilyId = childFamily?.id;
+                  return (
+                    <PersonCard
+                      key={c.id}
+                      person={c}
+                      onPress={handlePersonPress}
+                      onLongPress={
+                        childFamilyId
+                          ? () => setRelationMenu({ kind: 'child', child: c, familyId: childFamilyId })
+                          : undefined
+                      }
+                      subtitle={c.sex === 'F' ? 'Daughter' : 'Son'}
+                      compact
+                    />
+                  );
+                })}
               </View>
             </View>
           )}
@@ -597,7 +713,7 @@ export default function PersonDetailScreen() {
               </View>
             )}
 
-          {person.note && (
+          {person.note?.trim() ? (
             <View style={styles.notesSection}>
               <SectionHeader title="Notes" />
               <View style={styles.notesCard}>
@@ -605,14 +721,14 @@ export default function PersonDetailScreen() {
                 <Text style={styles.notesText}>{person.note}</Text>
               </View>
             </View>
-          )}
+          ) : null}
 
           <View style={styles.actionButtons}>
             <TouchableOpacity style={styles.actionBtn} onPress={handleEdit} activeOpacity={0.7}>
               <Pencil size={18} color={Colors.white} />
               <Text style={styles.actionBtnText}>Edit</Text>
             </TouchableOpacity>
-            <TouchableOpacity style={styles.addChildBtn} onPress={handleAddChild} activeOpacity={0.7}>
+            <TouchableOpacity style={styles.addChildBtn} onPress={() => { void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); setChildMenuVisible(true); }} activeOpacity={0.7}>
               <UserPlus size={18} color={Colors.accent} />
               <Text style={styles.addChildBtnText}>Child</Text>
             </TouchableOpacity>
@@ -661,6 +777,121 @@ export default function PersonDetailScreen() {
                   <Text style={styles.menuCancelText}>Cancel</Text>
                 </TouchableOpacity>
               </View>
+            </Pressable>
+          </Modal>
+
+          <Modal
+            visible={childMenuVisible}
+            transparent
+            animationType="fade"
+            onRequestClose={() => setChildMenuVisible(false)}
+          >
+            <Pressable style={styles.modalOverlay} onPress={() => setChildMenuVisible(false)}>
+              <View style={styles.menuSheet}>
+                <Text style={styles.menuTitle}>Add Child</Text>
+                <TouchableOpacity
+                  style={styles.menuOption}
+                  onPress={() => { setChildMenuVisible(false); handleAddChild(); }}
+                  activeOpacity={0.7}
+                >
+                  <UserPlus size={20} color={Colors.accent} />
+                  <View style={styles.menuOptionTextWrap}>
+                    <Text style={styles.menuOptionTitle}>Create New Person</Text>
+                    <Text style={styles.menuOptionDesc}>Add a new child to the tree</Text>
+                  </View>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.menuOption}
+                  onPress={() => { setChildMenuVisible(false); handleLinkChild(); }}
+                  activeOpacity={0.7}
+                >
+                  <Link size={20} color={Colors.accent} />
+                  <View style={styles.menuOptionTextWrap}>
+                    <Text style={styles.menuOptionTitle}>Link Existing Person</Text>
+                    <Text style={styles.menuOptionDesc}>Connect someone already in the tree</Text>
+                  </View>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.menuCancel}
+                  onPress={() => setChildMenuVisible(false)}
+                  activeOpacity={0.7}
+                >
+                  <Text style={styles.menuCancelText}>Cancel</Text>
+                </TouchableOpacity>
+              </View>
+            </Pressable>
+          </Modal>
+
+          <Modal
+            visible={relationMenu !== null}
+            transparent
+            animationType="fade"
+            onRequestClose={() => setRelationMenu(null)}
+          >
+            <Pressable style={styles.modalOverlay} onPress={() => setRelationMenu(null)}>
+              <Pressable style={styles.menuSheet} onPress={(e) => e.stopPropagation()}>
+                {relationMenu?.kind === 'marriage' && (
+                  <>
+                    <Text style={styles.menuTitle}>Marriage with {relationMenu.spouseName}</Text>
+                    <TouchableOpacity
+                      style={styles.menuOption}
+                      onPress={() => {
+                        setRelationMenu(null);
+                        handleEditMarriage(relationMenu.family.id);
+                      }}
+                      activeOpacity={0.7}
+                    >
+                      <Pencil size={20} color={Colors.accent} />
+                      <View style={styles.menuOptionTextWrap}>
+                        <Text style={styles.menuOptionTitle}>Edit marriage details</Text>
+                        <Text style={styles.menuOptionDesc}>Date, place, and other info</Text>
+                      </View>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={styles.menuOptionDestructive}
+                      onPress={() => {
+                        const familyId = relationMenu.family.id;
+                        setRelationMenu(null);
+                        handleUnlinkSpouse(familyId);
+                      }}
+                      activeOpacity={0.7}
+                    >
+                      <Link2Off size={20} color={Colors.danger} />
+                      <View style={styles.menuOptionTextWrap}>
+                        <Text style={styles.menuOptionTitleDestructive}>Remove marriage link</Text>
+                        <Text style={styles.menuOptionDesc}>Both people are kept in the tree</Text>
+                      </View>
+                    </TouchableOpacity>
+                  </>
+                )}
+                {relationMenu?.kind === 'child' && (
+                  <>
+                    <Text style={styles.menuTitle}>{relationMenu.child.name}</Text>
+                    <TouchableOpacity
+                      style={styles.menuOptionDestructive}
+                      onPress={() => {
+                        const { child, familyId } = relationMenu;
+                        setRelationMenu(null);
+                        handleRemoveChild(child.id, familyId);
+                      }}
+                      activeOpacity={0.7}
+                    >
+                      <Link2Off size={20} color={Colors.danger} />
+                      <View style={styles.menuOptionTextWrap}>
+                        <Text style={styles.menuOptionTitleDestructive}>Remove family link</Text>
+                        <Text style={styles.menuOptionDesc}>This person stays in the tree</Text>
+                      </View>
+                    </TouchableOpacity>
+                  </>
+                )}
+                <TouchableOpacity
+                  style={styles.menuCancel}
+                  onPress={() => setRelationMenu(null)}
+                  activeOpacity={0.7}
+                >
+                  <Text style={styles.menuCancelText}>Cancel</Text>
+                </TouchableOpacity>
+              </Pressable>
             </Pressable>
           </Modal>
         </ScrollView>
@@ -988,6 +1219,7 @@ const styles = StyleSheet.create({
     fontWeight: '600' as const,
   },
   marriageInfoRow: {
+    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
@@ -998,10 +1230,38 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     marginTop: -2,
   },
+  marriageRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingRight: 4,
+  },
+  marriageMoreBtn: {
+    padding: 6,
+    marginBottom: 6,
+    marginTop: -2,
+  },
   marriageInfoText: {
     flex: 1,
     fontSize: 12,
     color: Colors.textSecondary,
+  },
+  menuOptionDestructive: {
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+    gap: 14,
+    paddingVertical: 14,
+    paddingHorizontal: 12,
+    borderRadius: 12,
+    backgroundColor: Colors.card,
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: Colors.cardBorder,
+  },
+  menuOptionTitleDestructive: {
+    fontSize: 15,
+    fontWeight: '600' as const,
+    color: Colors.danger,
   },
   modalOverlay: {
     flex: 1,

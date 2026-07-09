@@ -23,10 +23,12 @@ import {
   getPendingEditCount,
   getCloudCounts,
   fetchIndividualByGedcomId,
+  fetchMyPendingEdits,
   LoadProgress,
 } from '@/lib/supabase-db';
 import { PendingEdit } from '@/types/genealogy';
 import { useAuth } from '@/contexts/AuthContext';
+import { adminMergeIndividuals } from '@/lib/supabase-rpc';
 
 const STORAGE_KEY = 'family_tree_data';
 const RAW_GEDCOM_KEY = 'raw_gedcom';
@@ -37,6 +39,15 @@ const CURRENT_DATA_FORMAT_VERSION = '7';
 const CLOUD_SYNC_INTERVAL = 12 * 60 * 60 * 1000;
 const PARTIAL_SYNC_THRESHOLD = 0.95;
 const MAX_ASYNC_STORAGE_BYTES = 4 * 1024 * 1024;
+
+function safeFamiliesAsSpouse(arr: string[] | undefined | null): string[] {
+  return Array.isArray(arr) ? arr : [];
+}
+
+function addFamilyToSpouseList(list: string[] | undefined | null, familyId: string): string[] {
+  const safe = safeFamiliesAsSpouse(list);
+  return safe.includes(familyId) ? safe : [...safe, familyId];
+}
 
 function shouldRejectCloudReplace(
   incoming: FamilyTreeData,
@@ -430,20 +441,35 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
   const resolveClaimedPerson = useCallback(
     async (gedcomId: string): Promise<GedcomIndividual | null> => {
       const local = treeData?.individuals.get(gedcomId);
-      if (local) return local;
+      if (local?.note?.trim()) return local;
 
       const fetched = await fetchIndividualByGedcomId(gedcomId);
-      if (!fetched || !treeData) return fetched;
+      if (!fetched) return local ?? null;
+      if (!treeData) return fetched;
 
-      const updatedIndividuals = new Map(treeData.individuals);
-      updatedIndividuals.set(gedcomId, fetched);
-      const newTree = { ...treeData, individuals: updatedIndividuals };
-      setTreeData(newTree);
-      const serialized = serializeFamilyTreeData(newTree);
-      await safeSetItem(STORAGE_KEY, serialized);
-      return fetched;
+      const merged: GedcomIndividual = local
+        ? { ...local, note: fetched.note?.trim() ? fetched.note : local.note }
+        : fetched;
+
+      if (!local || (fetched.note?.trim() && !local.note?.trim())) {
+        const updatedIndividuals = new Map(treeData.individuals);
+        updatedIndividuals.set(gedcomId, merged);
+        const newTree = { ...treeData, individuals: updatedIndividuals };
+        setTreeData(newTree);
+        const serialized = serializeFamilyTreeData(newTree);
+        await safeSetItem(STORAGE_KEY, serialized);
+      }
+
+      return merged;
     },
     [treeData]
+  );
+
+  const hydratePerson = useCallback(
+    async (gedcomId: string): Promise<GedcomIndividual | null> => {
+      return resolveClaimedPerson(gedcomId);
+    },
+    [resolveClaimedPerson]
   );
 
   useEffect(() => {
@@ -552,7 +578,17 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
 
   const submitEdit = useCallback(
     async (
-      editType: 'update_person' | 'add_person' | 'add_child' | 'add_spouse' | 'link_spouses' | 'edit_marriage',
+      editType:
+        | 'update_person'
+        | 'add_person'
+        | 'add_child'
+        | 'add_spouse'
+        | 'link_spouses'
+        | 'edit_marriage'
+        | 'link_child'
+        | 'edit_parent'
+        | 'remove_child'
+        | 'unlink_spouses',
       targetId: string,
       data: Record<string, unknown>
     ): Promise<{ success: boolean; error?: string }> => {
@@ -717,20 +753,18 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
       updatedIndividuals.set(updatedChild.id, updatedChild);
 
       if (parent1) {
+        const parent1Families = safeFamiliesAsSpouse(parent1.familiesAsSpouse);
         const updatedParent1: GedcomIndividual = {
           ...parent1,
-          familiesAsSpouse: parent1.familiesAsSpouse.includes(newFamilyId)
-            ? parent1.familiesAsSpouse
-            : [...parent1.familiesAsSpouse, newFamilyId],
+          familiesAsSpouse: addFamilyToSpouseList(parent1Families, newFamilyId),
         };
         updatedIndividuals.set(parent1Id, updatedParent1);
       }
       if (parent2 && parent2Id) {
+        const parent2Families = safeFamiliesAsSpouse(parent2.familiesAsSpouse);
         const updatedParent2: GedcomIndividual = {
           ...parent2,
-          familiesAsSpouse: parent2.familiesAsSpouse.includes(newFamilyId)
-            ? parent2.familiesAsSpouse
-            : [...parent2.familiesAsSpouse, newFamilyId],
+          familiesAsSpouse: addFamilyToSpouseList(parent2Families, newFamilyId),
         };
         updatedIndividuals.set(parent2Id, updatedParent2);
       }
@@ -801,12 +835,12 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
 
       const updatedPerson: GedcomIndividual = {
         ...person,
-        familiesAsSpouse: [...person.familiesAsSpouse, newFamilyId],
+        familiesAsSpouse: addFamilyToSpouseList(person.familiesAsSpouse, newFamilyId),
       };
 
       const updatedSpouse: GedcomIndividual = {
         ...spouseIndividual,
-        familiesAsSpouse: [...spouseIndividual.familiesAsSpouse, newFamilyId],
+        familiesAsSpouse: addFamilyToSpouseList(spouseIndividual.familiesAsSpouse, newFamilyId),
       };
 
       const updatedIndividuals = new Map(treeData.individuals);
@@ -822,9 +856,23 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
       };
       await persistTreeData(newTree);
 
-      await createIndividualInSupabase(updatedSpouse);
-      await upsertFamilyInSupabase(newFamily);
-      await updateIndividualInSupabase(updatedPerson);
+      const spouseResult = await createIndividualInSupabase(updatedSpouse);
+      if (!spouseResult.success) {
+        console.error('[FamilyTree] Cloud create spouse failed:', spouseResult.error);
+        return { success: false, familyId: newFamilyId, error: 'Spouse saved locally but cloud sync failed: ' + spouseResult.error };
+      }
+
+      const famResult = await upsertFamilyInSupabase(newFamily);
+      if (!famResult.success) {
+        console.error('[FamilyTree] Cloud create family failed:', famResult.error);
+        return { success: false, familyId: newFamilyId, error: 'Family link failed in cloud: ' + famResult.error };
+      }
+
+      const personResult = await updateIndividualInSupabase(updatedPerson);
+      if (!personResult.success) {
+        console.error('[FamilyTree] Cloud update person failed:', personResult.error);
+        return { success: false, familyId: newFamilyId, error: 'Spouse added but parent link failed in cloud: ' + personResult.error };
+      }
 
       return { success: true, familyId: newFamilyId };
     },
@@ -902,11 +950,11 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
 
       const updatedPerson1: GedcomIndividual = {
         ...person1,
-        familiesAsSpouse: [...person1.familiesAsSpouse, newFamilyId],
+        familiesAsSpouse: addFamilyToSpouseList(person1.familiesAsSpouse, newFamilyId),
       };
       const updatedPerson2: GedcomIndividual = {
         ...person2,
-        familiesAsSpouse: [...person2.familiesAsSpouse, newFamilyId],
+        familiesAsSpouse: addFamilyToSpouseList(person2.familiesAsSpouse, newFamilyId),
       };
 
       const updatedIndividuals = new Map(treeData.individuals);
@@ -922,9 +970,23 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
       };
       await persistTreeData(newTree);
 
-      await upsertFamilyInSupabase(newFamily);
-      await updateIndividualInSupabase(updatedPerson1);
-      await updateIndividualInSupabase(updatedPerson2);
+      const famResult = await upsertFamilyInSupabase(newFamily);
+      if (!famResult.success) {
+        console.error('[FamilyTree] Cloud create family failed:', famResult.error);
+        return { success: false, familyId: newFamilyId, error: 'Family link failed in cloud: ' + famResult.error };
+      }
+
+      const person1Result = await updateIndividualInSupabase(updatedPerson1);
+      if (!person1Result.success) {
+        console.error('[FamilyTree] Cloud update person1 failed:', person1Result.error);
+        return { success: false, familyId: newFamilyId, error: 'Family created but person 1 link failed: ' + person1Result.error };
+      }
+
+      const person2Result = await updateIndividualInSupabase(updatedPerson2);
+      if (!person2Result.success) {
+        console.error('[FamilyTree] Cloud update person2 failed:', person2Result.error);
+        return { success: false, familyId: newFamilyId, error: 'Family created but person 2 link failed: ' + person2Result.error };
+      }
 
       return { success: true, familyId: newFamilyId };
     },
@@ -950,11 +1012,366 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
     [treeData, persistTreeData]
   );
 
+  const createFamilyWithParents = useCallback(
+    async (
+      parent1Id: string,
+      parent2Id?: string,
+      marriageDate?: string,
+      marriagePlace?: string
+    ): Promise<{ success: boolean; familyId?: string; error?: string }> => {
+      if (!treeData) return { success: false, error: 'No tree data loaded' };
+
+      const parent1 = treeData.individuals.get(parent1Id);
+      const parent2 = parent2Id ? treeData.individuals.get(parent2Id) : undefined;
+      if (!parent1) return { success: false, error: 'Parent not found: ' + parent1Id };
+
+      const newFamilyId = generateNewId('F');
+      let husbandId: string | undefined;
+      let wifeId: string | undefined;
+
+      if (parent1 && parent2) {
+        if (parent1.sex === 'F') {
+          wifeId = parent1Id;
+          husbandId = parent2Id;
+        } else {
+          husbandId = parent1Id;
+          wifeId = parent2Id;
+        }
+      } else if (parent1.sex === 'F') {
+        wifeId = parent1Id;
+      } else {
+        husbandId = parent1Id;
+      }
+
+      const newFamily: GedcomFamily = {
+        id: newFamilyId,
+        husbandId,
+        wifeId,
+        childrenIds: [],
+        marriageDate,
+        marriagePlace,
+      };
+
+      const updatedIndividuals = new Map(treeData.individuals);
+      const updatedParent1: GedcomIndividual = {
+        ...parent1,
+        familiesAsSpouse: addFamilyToSpouseList(parent1.familiesAsSpouse, newFamilyId),
+      };
+      updatedIndividuals.set(parent1Id, updatedParent1);
+
+      if (parent2 && parent2Id) {
+        updatedIndividuals.set(parent2Id, {
+          ...parent2,
+          familiesAsSpouse: addFamilyToSpouseList(parent2.familiesAsSpouse, newFamilyId),
+        });
+      }
+
+      const updatedFamilies = new Map(treeData.families);
+      updatedFamilies.set(newFamilyId, newFamily);
+      await persistTreeData({ individuals: updatedIndividuals, families: updatedFamilies });
+
+      const famResult = await upsertFamilyInSupabase(newFamily);
+      if (!famResult.success) {
+        return { success: false, familyId: newFamilyId, error: famResult.error };
+      }
+
+      const p1Result = await updateIndividualInSupabase(updatedParent1);
+      if (!p1Result.success) {
+        return { success: false, familyId: newFamilyId, error: p1Result.error };
+      }
+
+      if (parent2 && parent2Id) {
+        const p2Result = await updateIndividualInSupabase(updatedIndividuals.get(parent2Id)!);
+        if (!p2Result.success) {
+          return { success: false, familyId: newFamilyId, error: p2Result.error };
+        }
+      }
+
+      return { success: true, familyId: newFamilyId };
+    },
+    [treeData, generateNewId, persistTreeData]
+  );
+
+  const resolvePerson = resolveClaimedPerson;
+
+  const linkChildToFamily = useCallback(
+    async (childId: string, familyId: string): Promise<{ success: boolean; error?: string }> => {
+      if (!treeData) return { success: false, error: 'No tree data loaded' };
+
+      const child = treeData.individuals.get(childId);
+      const family = treeData.families.get(familyId);
+      if (!child) return { success: false, error: 'Child not found: ' + childId };
+      if (!family) return { success: false, error: 'Family not found: ' + familyId };
+      if (family.childrenIds.includes(childId)) {
+        return { success: false, error: 'This person is already a child in this family.' };
+      }
+
+      const updatedIndividuals = new Map(treeData.individuals);
+      const updatedFamilies = new Map(treeData.families);
+
+      if (child.familyAsChild && child.familyAsChild !== familyId) {
+        const oldFamily = treeData.families.get(child.familyAsChild);
+        if (oldFamily) {
+          updatedFamilies.set(child.familyAsChild, {
+            ...oldFamily,
+            childrenIds: oldFamily.childrenIds.filter((cid) => cid !== childId),
+          });
+        }
+      }
+
+      const updatedChild: GedcomIndividual = {
+        ...child,
+        familiesAsSpouse: safeFamiliesAsSpouse(child.familiesAsSpouse),
+        familyAsChild: familyId,
+      };
+      const updatedFamily: GedcomFamily = {
+        ...family,
+        childrenIds: family.childrenIds.includes(childId) ? family.childrenIds : [...family.childrenIds, childId],
+      };
+
+      updatedIndividuals.set(childId, updatedChild);
+      updatedFamilies.set(familyId, updatedFamily);
+      await persistTreeData({ individuals: updatedIndividuals, families: updatedFamilies });
+
+      const childResult = await updateIndividualInSupabase(updatedChild);
+      if (!childResult.success) {
+        return { success: false, error: 'Child link saved locally but cloud sync failed: ' + childResult.error };
+      }
+
+      if (child.familyAsChild && child.familyAsChild !== familyId) {
+        const oldFam = updatedFamilies.get(child.familyAsChild);
+        if (oldFam) {
+          const oldFamResult = await upsertFamilyInSupabase(oldFam);
+          if (!oldFamResult.success) {
+            return { success: false, error: 'Old family update failed: ' + oldFamResult.error };
+          }
+        }
+      }
+
+      const famResult = await upsertFamilyInSupabase(updatedFamily);
+      if (!famResult.success) {
+        return { success: false, error: 'Family link failed in cloud: ' + famResult.error };
+      }
+
+      return { success: true };
+    },
+    [treeData, persistTreeData]
+  );
+
+  const removeChildFromFamily = useCallback(
+    async (childId: string, familyId: string): Promise<{ success: boolean; error?: string }> => {
+      if (!treeData) return { success: false, error: 'No tree data loaded' };
+
+      const child = treeData.individuals.get(childId);
+      const family = treeData.families.get(familyId);
+      if (!child) return { success: false, error: 'Child not found: ' + childId };
+      if (!family) return { success: false, error: 'Family not found: ' + familyId };
+
+      const updatedFamily: GedcomFamily = {
+        ...family,
+        childrenIds: family.childrenIds.filter((id) => id !== childId),
+      };
+      const updatedChild: GedcomIndividual = {
+        ...child,
+        familiesAsSpouse: safeFamiliesAsSpouse(child.familiesAsSpouse),
+        familyAsChild: child.familyAsChild === familyId ? undefined : child.familyAsChild,
+      };
+
+      const updatedIndividuals = new Map(treeData.individuals);
+      updatedIndividuals.set(childId, updatedChild);
+      const updatedFamilies = new Map(treeData.families);
+      updatedFamilies.set(familyId, updatedFamily);
+      await persistTreeData({ individuals: updatedIndividuals, families: updatedFamilies });
+
+      const childResult = await updateIndividualInSupabase(updatedChild);
+      if (!childResult.success) {
+        return { success: false, error: 'Child update failed in cloud: ' + childResult.error };
+      }
+
+      const famResult = await upsertFamilyInSupabase(updatedFamily);
+      if (!famResult.success) {
+        return { success: false, error: 'Family update failed in cloud: ' + famResult.error };
+      }
+
+      return { success: true };
+    },
+    [treeData, persistTreeData]
+  );
+
+  const editParentFamily = useCallback(
+    async (childId: string, newFamilyId: string): Promise<{ success: boolean; error?: string }> => {
+      if (!treeData) return { success: false, error: 'No tree data loaded' };
+
+      const child = treeData.individuals.get(childId);
+      const newFamily = treeData.families.get(newFamilyId);
+      if (!child) return { success: false, error: 'Child not found: ' + childId };
+      if (!newFamily) return { success: false, error: 'Family not found: ' + newFamilyId };
+
+      const oldFamilyId = child.familyAsChild;
+      const updatedIndividuals = new Map(treeData.individuals);
+      const updatedFamilies = new Map(treeData.families);
+
+      if (oldFamilyId && oldFamilyId !== newFamilyId) {
+        const oldFamily = treeData.families.get(oldFamilyId);
+        if (oldFamily) {
+          updatedFamilies.set(oldFamilyId, {
+            ...oldFamily,
+            childrenIds: oldFamily.childrenIds.filter((id) => id !== childId),
+          });
+        }
+      }
+
+      const targetFamily = updatedFamilies.get(newFamilyId) ?? newFamily;
+      const nextChildren = targetFamily.childrenIds.includes(childId)
+        ? targetFamily.childrenIds
+        : [...targetFamily.childrenIds, childId];
+      updatedFamilies.set(newFamilyId, { ...targetFamily, childrenIds: nextChildren });
+
+      updatedIndividuals.set(childId, {
+        ...child,
+        familiesAsSpouse: safeFamiliesAsSpouse(child.familiesAsSpouse),
+        familyAsChild: newFamilyId,
+      });
+
+      await persistTreeData({ individuals: updatedIndividuals, families: updatedFamilies });
+
+      const childResult = await updateIndividualInSupabase(updatedIndividuals.get(childId)!);
+      if (!childResult.success) {
+        return { success: false, error: 'Child update failed in cloud: ' + childResult.error };
+      }
+
+      if (oldFamilyId && oldFamilyId !== newFamilyId) {
+        const oldFam = updatedFamilies.get(oldFamilyId);
+        if (oldFam) {
+          const oldFamResult = await upsertFamilyInSupabase(oldFam);
+          if (!oldFamResult.success) {
+            return { success: false, error: 'Old family update failed in cloud: ' + oldFamResult.error };
+          }
+        }
+      }
+
+      const newFamResult = await upsertFamilyInSupabase(updatedFamilies.get(newFamilyId)!);
+      if (!newFamResult.success) {
+        return { success: false, error: 'New family update failed in cloud: ' + newFamResult.error };
+      }
+
+      return { success: true };
+    },
+    [treeData, persistTreeData]
+  );
+
+  const unlinkSpouses = useCallback(
+    async (familyId: string): Promise<{ success: boolean; error?: string }> => {
+      if (!treeData) return { success: false, error: 'No tree data loaded' };
+
+      const family = treeData.families.get(familyId);
+      if (!family) return { success: false, error: 'Family not found: ' + familyId };
+      if (family.childrenIds.length > 0) {
+        return {
+          success: false,
+          error: 'Cannot unlink spouses while this family has children. Edit parent links instead.',
+        };
+      }
+
+      const updatedIndividuals = new Map(treeData.individuals);
+      const spouseIds = [family.husbandId, family.wifeId].filter((id): id is string => !!id);
+
+      for (const spouseId of spouseIds) {
+        const spouse = updatedIndividuals.get(spouseId) ?? treeData.individuals.get(spouseId);
+        if (!spouse) continue;
+        updatedIndividuals.set(spouseId, {
+          ...spouse,
+          familiesAsSpouse: safeFamiliesAsSpouse(spouse.familiesAsSpouse).filter((fid) => fid !== familyId),
+        });
+      }
+
+      const updatedFamilies = new Map(treeData.families);
+      updatedFamilies.delete(familyId);
+      await persistTreeData({ individuals: updatedIndividuals, families: updatedFamilies });
+
+      for (const spouseId of spouseIds) {
+        const spouse = updatedIndividuals.get(spouseId);
+        if (spouse) {
+          const result = await updateIndividualInSupabase(spouse);
+          if (!result.success) {
+            return { success: false, error: 'Spouse update failed in cloud: ' + result.error };
+          }
+        }
+      }
+
+      return { success: true };
+    },
+    [treeData, persistTreeData]
+  );
+
   const loadPendingEdits = useCallback(async (): Promise<PendingEdit[]> => {
     const result = await fetchPendingEdits();
     setPendingEditCount(result.edits.length);
     return result.edits;
   }, []);
+
+  const mergeIndividualsInTree = useCallback(
+    async (keepId: string, mergeId: string): Promise<{ success: boolean; error?: string }> => {
+      if (!treeData) return { success: false, error: 'No tree data loaded' };
+      if (keepId === mergeId) return { success: false, error: 'Cannot merge a person with themselves' };
+
+      const keep = treeData.individuals.get(keepId);
+      const merge = treeData.individuals.get(mergeId);
+      if (!keep || !merge) return { success: false, error: 'One or both people not found in local tree' };
+
+      const rpcResult = await adminMergeIndividuals(keepId, mergeId);
+      if (!rpcResult.success) return rpcResult;
+
+      const updatedIndividuals = new Map(treeData.individuals);
+      const updatedFamilies = new Map(treeData.families);
+
+      updatedFamilies.forEach((family, familyId) => {
+        const nextFamily = { ...family };
+        if (nextFamily.husbandId === mergeId) nextFamily.husbandId = keepId;
+        if (nextFamily.wifeId === mergeId) nextFamily.wifeId = keepId;
+        nextFamily.childrenIds = Array.from(
+          new Set(nextFamily.childrenIds.map((id) => (id === mergeId ? keepId : id)))
+        );
+        updatedFamilies.set(familyId, nextFamily);
+      });
+
+      updatedIndividuals.forEach((person, personId) => {
+        if (personId === mergeId) return;
+        let nextPerson = { ...person };
+        if (personId === keepId) {
+          nextPerson = {
+            ...keep,
+            familiesAsSpouse: Array.from(
+              new Set([
+                ...safeFamiliesAsSpouse(keep.familiesAsSpouse),
+                ...safeFamiliesAsSpouse(merge.familiesAsSpouse),
+              ])
+            ),
+            note: [keep.note, merge.note].filter(Boolean).join('\n') || keep.note,
+          };
+        }
+        if (nextPerson.familyAsChild) {
+          const fam = updatedFamilies.get(nextPerson.familyAsChild);
+          if (fam && !fam.childrenIds.includes(nextPerson.id)) {
+            nextPerson = { ...nextPerson, familyAsChild: undefined };
+          }
+        }
+        updatedIndividuals.set(personId, nextPerson);
+      });
+
+      updatedIndividuals.delete(mergeId);
+
+      await persistTreeData({ individuals: updatedIndividuals, families: updatedFamilies });
+      return { success: true };
+    },
+    [treeData, persistTreeData]
+  );
+
+  const loadMyEdits = useCallback(async (): Promise<PendingEdit[]> => {
+    if (!user?.id) return [];
+    const result = await fetchMyPendingEdits(user.id);
+    return result.edits;
+  }, [user?.id]);
 
   const reviewPendingEdit = useCallback(
     async (
@@ -983,6 +1400,7 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
   const hasData = treeData !== null && individualCount > 0;
   const isImporting = importMutation.isPending;
   const importError = importMutation.error;
+  const isDataIncomplete = Boolean(lastSyncResult?.includes('warnings') || lastSyncResult?.includes('Partial'));
 
   return useMemo(() => ({
     treeData,
@@ -995,12 +1413,15 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
     search,
     getPerson,
     resolveClaimedPerson,
+    resolvePerson,
+    hydratePerson,
     isImporting,
     importError,
     isAdmin,
     pendingEditCount,
     submitEdit,
     loadPendingEdits,
+    loadMyEdits,
     reviewPendingEdit,
     refreshPendingCount,
     generateNewId,
@@ -1008,22 +1429,30 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
     updatePerson,
     addChildToFamily,
     createFamilyAndAddChild,
+    createFamilyWithParents,
     addSpouse,
     linkExistingSpouses,
+    linkChildToFamily,
+    removeChildFromFamily,
+    editParentFamily,
+    unlinkSpouses,
     updateFamily,
+    mergeIndividualsInTree,
     isLoadingFromCloud,
     isBackgroundSyncing,
     cloudError,
     loadProgress,
     lastSyncResult,
+    isDataIncomplete,
     refreshFromCloud,
   }), [
     treeData, isReady, hasData, individualCount, familyCount,
-    importGedcom, clearData, search, getPerson, resolveClaimedPerson, isImporting, importError,
+    importGedcom, clearData, search, getPerson, resolveClaimedPerson, resolvePerson, hydratePerson, isImporting, importError,
     isAdmin, pendingEditCount, submitEdit,
-    loadPendingEdits, reviewPendingEdit, refreshPendingCount, generateNewId,
-    addPerson, updatePerson, addChildToFamily, createFamilyAndAddChild,
-    addSpouse, linkExistingSpouses, updateFamily, isLoadingFromCloud,
-    isBackgroundSyncing, cloudError, loadProgress, lastSyncResult, refreshFromCloud,
+    loadPendingEdits, loadMyEdits, reviewPendingEdit, refreshPendingCount, generateNewId,
+    addPerson, updatePerson, addChildToFamily, createFamilyAndAddChild, createFamilyWithParents,
+    addSpouse, linkExistingSpouses, linkChildToFamily, removeChildFromFamily, editParentFamily, unlinkSpouses,
+    updateFamily, mergeIndividualsInTree, isLoadingFromCloud,
+    isBackgroundSyncing, cloudError, loadProgress, lastSyncResult, isDataIncomplete, refreshFromCloud,
   ]);
 });

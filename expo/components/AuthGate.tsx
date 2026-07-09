@@ -12,7 +12,7 @@ import { useRouter } from 'expo-router';
 import {
   LogIn, Clock, LogOut, RefreshCw, ShieldCheck,
   Search, GitFork, TreePine, Edit3, Heart,
-  ChevronRight, ChevronLeft,
+  ChevronRight, ChevronLeft, Link, ClipboardList, Database,
 } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import Colors from '@/constants/colors';
@@ -101,9 +101,15 @@ interface TutorialTip {
 
 const TIPS: TutorialTip[] = [
   {
+    icon: <TreePine size={24} color={Colors.accent} />,
+    title: 'Your Family Tree',
+    description: 'Explore ancestors, view family connections, notes, and an expandable tree on each person\'s page.',
+    color: Colors.accent,
+  },
+  {
     icon: <Search size={24} color={Colors.male} />,
     title: 'Search & Explore',
-    description: 'Find anyone in your family tree by name. Tap a person to view their details, family connections, and notes.',
+    description: 'Find anyone by name. If data is still loading, a banner appears and you can search the full database.',
     color: Colors.male,
   },
   {
@@ -114,15 +120,33 @@ const TIPS: TutorialTip[] = [
   },
   {
     icon: <Heart size={24} color={Colors.female} />,
-    title: 'Add Family Members',
-    description: 'Add children, spouses, and create new family connections from any person\'s detail page.',
+    title: 'Add & Link Family',
+    description: 'Create or link children and spouses from a person\'s page. Link existing people into marriages and pick co-parents when needed.',
     color: Colors.female,
+  },
+  {
+    icon: <Link size={24} color={'#8B7AA8'} />,
+    title: 'Manage Connections',
+    description: 'Edit marriage details, tap ⋯ to remove a marriage link, or long-press a child to remove them from a family.',
+    color: '#8B7AA8',
   },
   {
     icon: <Edit3 size={24} color={Colors.accent} />,
     title: 'Suggest Edits',
-    description: 'Propose changes to names, dates, and notes. An admin will review your edits before they go live.',
+    description: 'Propose changes to names, dates, and notes. Admins review edits before they go live.',
     color: Colors.accent,
+  },
+  {
+    icon: <ClipboardList size={24} color={'#6B8E9B'} />,
+    title: 'Track Your Edits',
+    description: 'Check My Edits in Profile to see what you have submitted and whether it is still pending.',
+    color: '#6B8E9B',
+  },
+  {
+    icon: <Database size={24} color={'#7A9E7E'} />,
+    title: 'Admin & Data Tools',
+    description: 'Admins can approve edits, merge duplicates, and import GEDCOM files. Everyone can send feedback from Profile.',
+    color: '#7A9E7E',
   },
 ];
 

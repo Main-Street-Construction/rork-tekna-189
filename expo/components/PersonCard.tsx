@@ -14,6 +14,7 @@ import { GedcomIndividual } from '@/types/genealogy';
 interface PersonCardProps {
   person: GedcomIndividual;
   onPress: (person: GedcomIndividual) => void;
+  onLongPress?: (person: GedcomIndividual) => void;
   subtitle?: string;
   compact?: boolean;
 }
@@ -21,6 +22,7 @@ interface PersonCardProps {
 export default React.memo(function PersonCard({
   person,
   onPress,
+  onLongPress,
   subtitle,
   compact = false,
 }: PersonCardProps) {
@@ -54,10 +56,18 @@ export default React.memo(function PersonCard({
     .filter(Boolean)
     .join(' — ');
 
+  const handleLongPress = () => {
+    if (!onLongPress) return;
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    onLongPress(person);
+  };
+
   if (compact) {
     return (
       <TouchableOpacity
         onPress={handlePress}
+        onLongPress={onLongPress ? handleLongPress : undefined}
+        delayLongPress={400}
         onPressIn={handlePressIn}
         onPressOut={handlePressOut}
         activeOpacity={0.8}

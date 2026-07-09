@@ -59,7 +59,17 @@ export interface RelationshipPath {
   description: string;
 }
 
-export type PendingEditType = 'update_person' | 'add_person' | 'add_child' | 'add_spouse' | 'link_spouses' | 'edit_marriage';
+export type PendingEditType =
+  | 'update_person'
+  | 'add_person'
+  | 'add_child'
+  | 'add_spouse'
+  | 'link_spouses'
+  | 'edit_marriage'
+  | 'link_child'
+  | 'edit_parent'
+  | 'remove_child'
+  | 'unlink_spouses';
 export type PendingEditStatus = 'pending' | 'approved' | 'rejected';
 
 export interface PendingEdit {

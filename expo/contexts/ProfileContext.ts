@@ -6,6 +6,7 @@ import { UserProfile } from '@/types/genealogy';
 import { useAuth } from '@/contexts/AuthContext';
 import { submitIdentityClaim, clearIdentityClaim } from '@/lib/supabase-rpc';
 import { supabase } from '@/lib/supabase';
+import { fetchIndividualByGedcomId } from '@/lib/supabase-db';
 
 const PROFILE_KEY = 'user_profile';
 const CLAIMED_KEY = 'identity_claimed';
@@ -34,6 +35,8 @@ export const [ProfileProvider, useProfile] = createContextHook(() => {
   }, [loadQuery.data]);
 
   const [isClaimed, setIsClaimed] = useState<boolean>(false);
+  const [claimRepairNotice, setClaimRepairNotice] = useState<boolean>(false);
+  const [isValidatingClaim, setIsValidatingClaim] = useState<boolean>(false);
 
   const claimedQuery = useQuery({
     queryKey: ['identityClaimed'],
@@ -55,16 +58,33 @@ export const [ProfileProvider, useProfile] = createContextHook(() => {
     if (!isSignedIn || !profileRow?.claimed_gedcom_id) return;
 
     const gedcomId = profileRow.claimed_gedcom_id;
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from('individuals')
       .select('gedcom_id, first_name, last_name')
       .eq('gedcom_id', gedcomId)
       .limit(1);
 
+    if (error) return;
+
     const row = data?.[0] as { first_name?: string; last_name?: string } | undefined;
-    const personName = row
-      ? [row.first_name, row.last_name].filter(Boolean).join(' ')
-      : profile?.rootPersonName ?? 'Claimed person';
+    if (!row) {
+      await clearIdentityClaim();
+      await AsyncStorage.removeItem(CLAIMED_KEY);
+      setIsClaimed(false);
+      if (profile?.rootPersonId) {
+        const updated: UserProfile = {
+          ...profile,
+          rootPersonId: undefined,
+          rootPersonName: undefined,
+        };
+        await AsyncStorage.setItem(PROFILE_KEY, JSON.stringify(updated));
+        setProfile(updated);
+      }
+      setClaimRepairNotice(true);
+      return;
+    }
+
+    const personName = [row.first_name, row.last_name].filter(Boolean).join(' ');
 
     await AsyncStorage.setItem(CLAIMED_KEY, 'true');
     setIsClaimed(true);
@@ -109,6 +129,86 @@ export const [ProfileProvider, useProfile] = createContextHook(() => {
     })();
   }, [isSignedIn, profileRow?.claimed_gedcom_id, profile?.rootPersonId, isClaimed]);
 
+  const repairBrokenClaim = useCallback(
+    async (showNotice: boolean) => {
+      if (isSignedIn) {
+        await clearIdentityClaim();
+      }
+      await AsyncStorage.removeItem(CLAIMED_KEY);
+      setIsClaimed(false);
+      if (profile?.rootPersonId || profile?.rootPersonName) {
+        const updated: UserProfile = {
+          ...(profile ?? {
+            id: Date.now().toString(),
+            displayName: '',
+            createdAt: Date.now(),
+          }),
+          rootPersonId: undefined,
+          rootPersonName: undefined,
+        };
+        await AsyncStorage.setItem(PROFILE_KEY, JSON.stringify(updated));
+        setProfile(updated);
+      }
+      if (showNotice) {
+        setClaimRepairNotice(true);
+      }
+    },
+    [isSignedIn, profile]
+  );
+
+  const validateClaim = useCallback(async () => {
+    const gedcomId = profileRow?.claimed_gedcom_id ?? profile?.rootPersonId;
+    const hasClaimData =
+      isClaimed || !!profile?.rootPersonId || !!profileRow?.claimed_gedcom_id;
+
+    if (!hasClaimData) return;
+
+    setIsValidatingClaim(true);
+    try {
+      if (!gedcomId) {
+        await repairBrokenClaim(true);
+        return;
+      }
+
+      const { data, error } = await supabase
+        .from('individuals')
+        .select('gedcom_id')
+        .eq('gedcom_id', gedcomId)
+        .limit(1);
+
+      if (error) {
+        const fetched = await fetchIndividualByGedcomId(gedcomId);
+        if (!fetched) return;
+      } else if (!data?.[0]) {
+        await repairBrokenClaim(true);
+        return;
+      }
+
+      if (profileRow?.claimed_gedcom_id) {
+        if (profile?.rootPersonId !== profileRow.claimed_gedcom_id || !isClaimed) {
+          await syncClaimFromServer();
+        }
+      }
+    } finally {
+      setIsValidatingClaim(false);
+    }
+  }, [
+    profileRow?.claimed_gedcom_id,
+    profile?.rootPersonId,
+    isClaimed,
+    repairBrokenClaim,
+    syncClaimFromServer,
+  ]);
+
+  useEffect(() => {
+    if (!isSignedIn || loadQuery.isLoading) return;
+    void validateClaim();
+  }, [isSignedIn, loadQuery.isLoading, validateClaim]);
+
+  const dismissClaimRepairNotice = useCallback(() => {
+    setClaimRepairNotice(false);
+  }, []);
+
   const saveMutation = useMutation({
     mutationFn: async (newProfile: UserProfile) => {
       await AsyncStorage.setItem(PROFILE_KEY, JSON.stringify(newProfile));
@@ -143,6 +243,7 @@ export const [ProfileProvider, useProfile] = createContextHook(() => {
     await clearIdentityClaim();
     await AsyncStorage.removeItem(CLAIMED_KEY);
     setIsClaimed(false);
+    setClaimRepairNotice(false);
     const existing = profile;
     if (existing) {
       const updated: UserProfile = {
@@ -194,12 +295,15 @@ export const [ProfileProvider, useProfile] = createContextHook(() => {
     hasProfile,
     hasClaimed,
     isClaimed,
+    isValidatingClaim,
+    claimRepairNotice,
     saveProfile,
     claimIdentity,
     resetClaim,
+    dismissClaimRepairNotice,
     isSaving: saveMutation.isPending,
   }), [
-    profile, hasProfile, hasClaimed, isClaimed,
-    saveProfile, claimIdentity, resetClaim, saveMutation.isPending,
+    profile, hasProfile, hasClaimed, isClaimed, isValidatingClaim, claimRepairNotice,
+    saveProfile, claimIdentity, resetClaim, dismissClaimRepairNotice, saveMutation.isPending,
   ]);
 });

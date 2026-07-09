@@ -19,6 +19,7 @@ import * as Haptics from 'expo-haptics';
 import Colors from '@/constants/colors';
 import { useFamilyTree } from '@/contexts/FamilyTreeContext';
 import { GedcomIndividual } from '@/types/genealogy';
+import { navigateBack, modalScreenOptions } from '@/utils/navigation';
 
 type SelectionStep = 'person1' | 'person2' | 'details';
 
@@ -202,12 +203,12 @@ export default function LinkSpousesScreen() {
     <View style={styles.container}>
       <Stack.Screen
         options={{
+          ...modalScreenOptions,
           title: 'Link Spouses',
           headerStyle: { backgroundColor: Colors.background },
           headerTintColor: Colors.text,
-          headerShadowVisible: false,
           headerLeft: () => (
-            <TouchableOpacity onPress={() => router.back()} style={styles.headerBtn}>
+            <TouchableOpacity onPress={() => navigateBack(router)} style={styles.headerBtn}>
               <X size={22} color={Colors.text} />
             </TouchableOpacity>
           ),

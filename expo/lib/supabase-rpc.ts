@@ -123,3 +123,41 @@ export async function adminDeleteIndividual(gedcomId: string): Promise<{ success
   const result = data as { success: boolean; error?: string };
   return result.success ? { success: true } : { success: false, error: result.error };
 }
+
+export async function searchIndividualsServer(
+  query: string,
+  limit = 50
+): Promise<{ rows: AdminIndividualRow[]; error?: string }> {
+  const { data, error } = await supabase.rpc('search_individuals', {
+    search_query: query,
+    result_limit: limit,
+  });
+  if (error) return { rows: [], error: error.message };
+  return { rows: (data ?? []) as AdminIndividualRow[] };
+}
+
+export async function adminMergeIndividuals(
+  keepGedcomId: string,
+  mergeGedcomId: string
+): Promise<{ success: boolean; error?: string }> {
+  const { data, error } = await supabase.rpc('admin_merge_individuals', {
+    keep_gedcom_id: keepGedcomId,
+    merge_gedcom_id: mergeGedcomId,
+  });
+  if (error) return { success: false, error: error.message };
+  const result = data as { success: boolean; error?: string };
+  return result.success ? { success: true } : { success: false, error: result.error };
+}
+
+export async function adminBackfillNotes(
+  notesPayload: Record<string, string>
+): Promise<{ success: boolean; updated?: number; error?: string }> {
+  const { data, error } = await supabase.rpc('admin_backfill_notes', {
+    notes_payload: notesPayload,
+  });
+  if (error) return { success: false, error: error.message };
+  const result = data as { success: boolean; updated?: number; error?: string };
+  return result.success
+    ? { success: true, updated: result.updated }
+    : { success: false, error: result.error };
+}

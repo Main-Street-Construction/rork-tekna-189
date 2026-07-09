@@ -9,7 +9,7 @@ import {
   Platform,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Search, GitFork, Clock, User, ArrowRight, TreePine, ChevronRight, UserPlus, Heart, Shield, Edit3, MessageSquare, ShieldCheck } from 'lucide-react-native';
+import { Search, GitFork, TreePine, ChevronRight, UserPlus, Shield, Edit3, ShieldCheck, Link, ClipboardList, Database } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import Colors from '@/constants/colors';
 
@@ -34,7 +34,7 @@ const STEPS: TutorialStep[] = [
     icon: <Search size={36} color={Colors.male} />,
     title: 'Search & Explore',
     description:
-      'Use the Search tab to find anyone in your family tree. Tap a person to view their details, family connections, notes, and expandable tree view. Use the Home button to jump back quickly.',
+      'Use the Search tab to find anyone in your family tree. Tap a person to view their details, family connections, notes, and expandable tree view. Use the Home button to jump back quickly. If the tree is still loading, you will see a banner and can search the full database.',
     accent: Colors.male,
   },
   {
@@ -53,10 +53,17 @@ const STEPS: TutorialStep[] = [
   },
   {
     icon: <UserPlus size={36} color={'#5B8FA8'} />,
-    title: 'Add Children & Spouses',
+    title: 'Add & Link Family',
     description:
-      'From any person\'s detail page, you can add children or spouses. You can also create new marriage relationships between people already in the database.',
+      'From any person\'s detail page, add children or spouses — create new people or link someone already in the tree. Link existing spouses into a marriage, pick a co-parent when needed, and get warned about possible duplicates.',
     accent: '#5B8FA8',
+  },
+  {
+    icon: <Link size={36} color={'#8B7AA8'} />,
+    title: 'Manage Connections',
+    description:
+      'Edit marriage details from the family view, or tap the ⋯ beside a marriage to remove that link. Long-press a child card to remove them from a family — the person stays in the tree.',
+    accent: '#8B7AA8',
   },
   {
     icon: <Edit3 size={36} color={'#C49A6C'} />,
@@ -66,10 +73,17 @@ const STEPS: TutorialStep[] = [
     accent: '#C49A6C',
   },
   {
-    icon: <ShieldCheck size={36} color={'#7A9E7E'} />,
-    title: 'Admin & Approvals',
+    icon: <ClipboardList size={36} color={'#6B8E9B'} />,
+    title: 'Suggest Edits & Track Progress',
     description:
-      'Non-admin edits are submitted for review. Admins can approve or reject changes from the Profile tab. Use the Feedback section to report bugs or suggest features.',
+      'Non-admin changes are submitted for admin review before they go live. Check the My Edits section in Profile to see what you have submitted and its status.',
+    accent: '#6B8E9B',
+  },
+  {
+    icon: <ShieldCheck size={36} color={'#7A9E7E'} />,
+    title: 'Admin & Data Tools',
+    description:
+      'Admins can approve or reject pending edits from Profile. The admin console includes merge-duplicates, GEDCOM import, and data management. Everyone can use Feedback to report bugs or suggest features.',
     accent: '#7A9E7E',
   },
 ];

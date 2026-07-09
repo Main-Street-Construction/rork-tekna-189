@@ -28,12 +28,15 @@ import { getCloudCounts } from '@/lib/supabase-db';
 
 export default function AdminDataScreen() {
   const { isAdmin } = useAuth();
-  const { individualCount, familyCount, refreshFromCloud } = useFamilyTree();
+  const { individualCount, familyCount, refreshFromCloud, mergeIndividualsInTree } = useFamilyTree();
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<AdminIndividualRow[]>([]);
   const [searching, setSearching] = useState(false);
   const [cloudCounts, setCloudCounts] = useState<{ individuals: number; families: number } | null>(null);
   const [selected, setSelected] = useState<AdminIndividualRow | null>(null);
+  const [mergeKeep, setMergeKeep] = useState<AdminIndividualRow | null>(null);
+  const [mergeDuplicate, setMergeDuplicate] = useState<AdminIndividualRow | null>(null);
+  const [merging, setMerging] = useState(false);
   const [editFields, setEditFields] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
 
@@ -117,6 +120,40 @@ export default function AdminDataScreen() {
     ]);
   };
 
+  const handleMerge = () => {
+    if (!mergeKeep || !mergeDuplicate) {
+      Alert.alert('Select Two People', 'Choose a primary record (keep) and a duplicate to merge.');
+      return;
+    }
+    const keepName = [mergeKeep.first_name, mergeKeep.last_name].filter(Boolean).join(' ');
+    const dupName = [mergeDuplicate.first_name, mergeDuplicate.last_name].filter(Boolean).join(' ');
+    Alert.alert(
+      'Merge Duplicates',
+      `Keep "${keepName}" and merge "${dupName}" into it? This cannot be undone.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Merge',
+          style: 'destructive',
+          onPress: async () => {
+            setMerging(true);
+            const result = await mergeIndividualsInTree(mergeKeep.gedcom_id, mergeDuplicate.gedcom_id);
+            setMerging(false);
+            if (!result.success) {
+              Alert.alert('Merge Failed', result.error ?? 'Unknown error');
+              return;
+            }
+            setMergeKeep(null);
+            setMergeDuplicate(null);
+            void refreshFromCloud();
+            void handleSearch();
+            Alert.alert('Merged', 'Duplicate person merged successfully.');
+          },
+        },
+      ]
+    );
+  };
+
   if (!isAdmin) {
     return (
       <View style={styles.container}>
@@ -162,6 +199,32 @@ export default function AdminDataScreen() {
       </View>
 
       <ScrollView contentContainerStyle={styles.scrollContent}>
+        <View style={styles.mergeSection}>
+          <Text style={styles.mergeTitle}>Merge Duplicates</Text>
+          <Text style={styles.hint}>Search below, then tap results to set keep / duplicate.</Text>
+          <View style={styles.mergeRow}>
+            <TouchableOpacity style={styles.mergeSlot} onPress={() => mergeKeep && setMergeKeep(null)}>
+              <Text style={styles.mergeSlotLabel}>Keep</Text>
+              <Text style={styles.mergeSlotValue}>
+                {mergeKeep ? [mergeKeep.first_name, mergeKeep.last_name].filter(Boolean).join(' ') : '—'}
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.mergeSlot} onPress={() => mergeDuplicate && setMergeDuplicate(null)}>
+              <Text style={styles.mergeSlotLabel}>Merge away</Text>
+              <Text style={styles.mergeSlotValue}>
+                {mergeDuplicate ? [mergeDuplicate.first_name, mergeDuplicate.last_name].filter(Boolean).join(' ') : '—'}
+              </Text>
+            </TouchableOpacity>
+          </View>
+          <TouchableOpacity
+            style={[styles.mergeBtn, (!mergeKeep || !mergeDuplicate || merging) && { opacity: 0.5 }]}
+            disabled={!mergeKeep || !mergeDuplicate || merging}
+            onPress={handleMerge}
+          >
+            {merging ? <ActivityIndicator color={Colors.white} /> : <Text style={styles.mergeBtnText}>Merge Records</Text>}
+          </TouchableOpacity>
+        </View>
+
         {results.length === 0 && !searching ? (
           <Text style={styles.hint}>Search the database directly by name or gedcom ID.</Text>
         ) : null}
@@ -173,6 +236,12 @@ export default function AdminDataScreen() {
                 <Text style={styles.resultName}>{name}</Text>
                 <Text style={styles.resultId}>{row.gedcom_id}</Text>
                 {row.birth_date ? <Text style={styles.resultMeta}>b. {row.birth_date}</Text> : null}
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.mergePickBtn} onPress={() => setMergeKeep(row)}>
+                <Text style={styles.mergePickText}>Keep</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.mergePickBtn} onPress={() => setMergeDuplicate(row)}>
+                <Text style={styles.mergePickText}>Dup</Text>
               </TouchableOpacity>
               <TouchableOpacity style={styles.deleteIcon} onPress={() => handleDelete(row)}>
                 <Trash2 size={18} color={Colors.danger} />
@@ -227,7 +296,17 @@ const styles = StyleSheet.create({
   searchBtn: { backgroundColor: Colors.accent, paddingHorizontal: 16, paddingVertical: 8, borderRadius: 8 },
   searchBtnText: { color: Colors.white, fontWeight: '600' as const },
   scrollContent: { paddingHorizontal: 16, paddingBottom: 40 },
-  hint: { fontSize: 14, color: Colors.textSecondary, textAlign: 'center', marginTop: 24 },
+  mergeSection: { marginBottom: 16, padding: 14, backgroundColor: Colors.card, borderRadius: 12, borderWidth: 1, borderColor: Colors.cardBorder },
+  mergeTitle: { fontSize: 16, fontWeight: '700' as const, color: Colors.text, marginBottom: 6 },
+  mergeRow: { flexDirection: 'row', gap: 8, marginTop: 8 },
+  mergeSlot: { flex: 1, padding: 10, borderRadius: 8, borderWidth: 1, borderColor: Colors.cardBorder, backgroundColor: Colors.background },
+  mergeSlotLabel: { fontSize: 11, color: Colors.textSecondary },
+  mergeSlotValue: { fontSize: 13, fontWeight: '600' as const, color: Colors.text, marginTop: 4 },
+  mergeBtn: { marginTop: 12, backgroundColor: Colors.danger, borderRadius: 10, paddingVertical: 12, alignItems: 'center' },
+  mergeBtnText: { color: Colors.white, fontWeight: '600' as const },
+  mergePickBtn: { paddingHorizontal: 8, justifyContent: 'center' },
+  mergePickText: { fontSize: 11, color: Colors.accent, fontWeight: '600' as const },
+  hint: { fontSize: 14, color: Colors.textSecondary, textAlign: 'center', marginTop: 4, marginBottom: 8 },
   resultCard: { flexDirection: 'row', alignItems: 'center', backgroundColor: Colors.card, borderRadius: 12, borderWidth: 1, borderColor: Colors.cardBorder, marginBottom: 8, overflow: 'hidden' },
   resultMain: { flex: 1, padding: 14 },
   resultName: { fontSize: 15, fontWeight: '600' as const, color: Colors.text },

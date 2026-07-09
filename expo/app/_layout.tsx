@@ -1,16 +1,15 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Stack, useRouter } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
-import React, { useEffect, useState, useCallback } from "react";
+import React, { useEffect, useState } from "react";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
-import AsyncStorage from "@react-native-async-storage/async-storage";
 import { AuthProvider } from "@/contexts/AuthContext";
 import { FamilyTreeProvider } from "@/contexts/FamilyTreeContext";
 import { ProfileProvider } from "@/contexts/ProfileContext";
 import { SearchHistoryProvider } from "@/contexts/SearchHistoryContext";
+import { OnboardingProvider, useOnboarding } from "@/contexts/OnboardingContext";
 import OnboardingTutorial from "@/components/OnboardingTutorial";
 import Colors from "@/constants/colors";
-import { trpc, trpcClient } from "@/lib/trpc";
 import {
   addNotificationResponseListener,
   getLastNotificationResponse,
@@ -59,7 +58,8 @@ function RootLayoutNav() {
       <NotificationDeepLinkHandler />
       <Stack
       screenOptions={{
-        headerBackTitle: "Back",
+        headerBackTitle: '',
+        headerBackButtonDisplayMode: 'minimal',
         headerStyle: { backgroundColor: Colors.background },
         headerTintColor: Colors.text,
         headerShadowVisible: false,
@@ -115,6 +115,14 @@ function RootLayoutNav() {
         options={{ title: "Privacy Policy" }}
       />
       <Stack.Screen
+        name="admin/import"
+        options={{ title: "Import to Database" }}
+      />
+      <Stack.Screen
+        name="link-child/[parentId]"
+        options={{ presentation: "modal", title: "Link Child" }}
+      />
+      <Stack.Screen
         name="update-password"
         options={{ presentation: "modal", title: "Update Password" }}
       />
@@ -123,50 +131,47 @@ function RootLayoutNav() {
   );
 }
 
-const ONBOARDING_KEY = 'onboarding_completed';
+function OnboardingOverlay() {
+  const { showOnboarding, completeTutorial } = useOnboarding();
+  if (!showOnboarding) return null;
+  return <OnboardingTutorial onComplete={completeTutorial} />;
+}
 
-export default function RootLayout() {
-  const [showOnboarding, setShowOnboarding] = useState<boolean>(false);
-  const [onboardingChecked, setOnboardingChecked] = useState<boolean>(false);
+function RootLayoutInner() {
+  const [splashReady, setSplashReady] = useState<boolean>(false);
+  const { onboardingChecked } = useOnboarding();
 
   useEffect(() => {
-    AsyncStorage.getItem(ONBOARDING_KEY).then((value) => {
-      if (value !== 'true') {
-        setShowOnboarding(true);
-      }
-      setOnboardingChecked(true);
+    if (onboardingChecked) {
       void SplashScreen.hideAsync();
-    }).catch(() => {
-      setOnboardingChecked(true);
-      void SplashScreen.hideAsync();
-    });
-  }, []);
+      setSplashReady(true);
+    }
+  }, [onboardingChecked]);
 
-  const handleOnboardingComplete = useCallback(() => {
-    setShowOnboarding(false);
-    AsyncStorage.setItem(ONBOARDING_KEY, 'true').catch(() => {});
-  }, []);
-
-  if (!onboardingChecked) return null;
+  if (!onboardingChecked || !splashReady) return null;
 
   return (
-    <trpc.Provider client={trpcClient} queryClient={queryClient}>
-      <QueryClientProvider client={queryClient}>
-        <GestureHandlerRootView style={{ flex: 1 }}>
-          <AuthProvider>
-            <FamilyTreeProvider>
-              <ProfileProvider>
-                <SearchHistoryProvider>
-                  <RootLayoutNav />
-                  {showOnboarding && (
-                    <OnboardingTutorial onComplete={handleOnboardingComplete} />
-                  )}
-                </SearchHistoryProvider>
-              </ProfileProvider>
-            </FamilyTreeProvider>
-          </AuthProvider>
-        </GestureHandlerRootView>
-      </QueryClientProvider>
-    </trpc.Provider>
+    <AuthProvider>
+      <FamilyTreeProvider>
+        <ProfileProvider>
+          <SearchHistoryProvider>
+            <RootLayoutNav />
+            <OnboardingOverlay />
+          </SearchHistoryProvider>
+        </ProfileProvider>
+      </FamilyTreeProvider>
+    </AuthProvider>
+  );
+}
+
+export default function RootLayout() {
+  return (
+    <QueryClientProvider client={queryClient}>
+      <GestureHandlerRootView style={{ flex: 1 }}>
+        <OnboardingProvider>
+          <RootLayoutInner />
+        </OnboardingProvider>
+      </GestureHandlerRootView>
+    </QueryClientProvider>
   );
 }

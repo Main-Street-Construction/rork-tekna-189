@@ -21,6 +21,7 @@ import { useSearchHistory } from '@/contexts/SearchHistoryContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { GedcomIndividual } from '@/types/genealogy';
 import { calculateRelationship } from '@/utils/relationship';
+import { searchIndividualsServer } from '@/lib/supabase-rpc';
 import PersonCard from '@/components/PersonCard';
 import AuthGate from '@/components/AuthGate';
 
@@ -37,7 +38,7 @@ export default function SearchScreen() {
 function SearchScreenContent() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { hasData, search, individualCount, familyCount, isReady, treeData, isBackgroundSyncing, isLoadingFromCloud, loadProgress, cloudError } = useFamilyTree();
+  const { hasData, search, individualCount, familyCount, isReady, treeData, isBackgroundSyncing, isLoadingFromCloud, loadProgress, cloudError, isDataIncomplete, lastSyncResult, refreshFromCloud } = useFamilyTree();
   const { profile, hasClaimed } = useProfile();
   const { addEntry } = useSearchHistory();
   const [query, setQuery] = useState<string>('');
@@ -58,15 +59,38 @@ function SearchScreenContent() {
       }
       if (text.trim().length >= 2 && canSearch) {
         searchTimerRef.current = setTimeout(() => {
-          try {
-            const found = search(text);
-
-            setResults(found);
-            setHasSearched(true);
-          } catch {
-            setResults([]);
-            setHasSearched(true);
-          }
+          void (async () => {
+            try {
+              let found = search(text);
+              if (found.length === 0 || isDataIncomplete) {
+                const server = await searchIndividualsServer(text.trim(), 50);
+                if (server.rows.length > 0 && treeData) {
+                  const mapped: GedcomIndividual[] = server.rows.map((row) => ({
+                    id: row.gedcom_id,
+                    name: [row.first_name, row.last_name].filter(Boolean).join(' '),
+                    givenName: row.first_name ?? '',
+                    surname: row.last_name ?? '',
+                    sex: (row.gender === 'M' || row.gender === 'F' ? row.gender : 'U') as 'M' | 'F' | 'U',
+                    birthDate: row.birth_date ?? undefined,
+                    birthPlace: row.birth_place ?? undefined,
+                    deathDate: row.death_date ?? undefined,
+                    deathPlace: row.death_place ?? undefined,
+                    familiesAsSpouse: treeData.individuals.get(row.gedcom_id)?.familiesAsSpouse ?? [],
+                    familyAsChild: treeData.individuals.get(row.gedcom_id)?.familyAsChild,
+                    note: row.notes ?? undefined,
+                  }));
+                  const merged = new Map<string, GedcomIndividual>();
+                  for (const p of [...found, ...mapped]) merged.set(p.id, p);
+                  found = Array.from(merged.values());
+                }
+              }
+              setResults(found);
+              setHasSearched(true);
+            } catch {
+              setResults([]);
+              setHasSearched(true);
+            }
+          })();
         }, 250);
       } else {
         searchTimerRef.current = null;
@@ -76,7 +100,7 @@ function SearchScreenContent() {
         }
       }
     },
-    [search, canSearch]
+    [search, canSearch, isDataIncomplete, treeData]
   );
 
   useEffect(() => {
@@ -310,6 +334,15 @@ function SearchScreenContent() {
           </View>
         )}
 
+        {isDataIncomplete && hasData && (
+          <TouchableOpacity style={styles.warningRow} onPress={() => void refreshFromCloud()} activeOpacity={0.7}>
+            <AlertCircle size={14} color={Colors.danger} />
+            <Text style={styles.warningText} numberOfLines={2}>
+              {lastSyncResult ?? 'Tree data may be incomplete. Tap to retry sync.'}
+            </Text>
+          </TouchableOpacity>
+        )}
+
         {cloudError && !hasData && (
           <View style={styles.errorRow}>
             <AlertCircle size={14} color={Colors.danger} />
@@ -415,6 +448,16 @@ const styles = StyleSheet.create({
     alignItems: 'center' as const,
     marginTop: 12,
     gap: 8,
+  },
+  warningRow: {
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+    marginTop: 8,
+    gap: 8,
+    paddingHorizontal: 4,
+    paddingVertical: 6,
+    backgroundColor: 'rgba(192, 57, 43, 0.08)',
+    borderRadius: 8,
   },
   chip: {
     flexDirection: 'row' as const,

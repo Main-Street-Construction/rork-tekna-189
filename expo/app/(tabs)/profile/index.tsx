@@ -35,6 +35,8 @@ import {
   LogOut,
   Users,
   FileText,
+  Upload,
+  BookOpen,
 } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import { submitFeedback } from '@/lib/supabase-db';
@@ -42,19 +44,21 @@ import Colors from '@/constants/colors';
 import { useProfile } from '@/contexts/ProfileContext';
 import { useFamilyTree } from '@/contexts/FamilyTreeContext';
 import { useAuth } from '@/contexts/AuthContext';
+import { useOnboarding } from '@/contexts/OnboardingContext';
 import { useRouter } from 'expo-router';
-import { GedcomIndividual } from '@/types/genealogy';
+import { GedcomIndividual, PendingEdit } from '@/types/genealogy';
 
 export default function ProfileScreen() {
   const router = useRouter();
-  const { profile, hasProfile, hasClaimed, isClaimed, saveProfile, claimIdentity, resetClaim, isSaving } = useProfile();
+  const { profile, hasProfile, hasClaimed, isClaimed, saveProfile, claimIdentity, resetClaim, isSaving, claimRepairNotice, dismissClaimRepairNotice, isValidatingClaim } = useProfile();
   const {
     hasData, individualCount, familyCount, clearData, search, resolveClaimedPerson,
     isAdmin,
-    pendingEditCount, refreshPendingCount,
+    pendingEditCount, refreshPendingCount, loadMyEdits,
     isLoadingFromCloud, cloudError, loadProgress, refreshFromCloud,
   } = useFamilyTree();
   const { isSignedIn, user, signOut, signOutPending, isEnabled } = useAuth();
+  const { replayTutorial } = useOnboarding();
 
   const [displayName, setDisplayName] = useState<string>(
     profile?.displayName ?? ''
@@ -67,6 +71,8 @@ export default function ProfileScreen() {
   const [feedbackMessage, setFeedbackMessage] = useState<string>('');
   const [feedbackEmail, setFeedbackEmail] = useState<string>('');
   const [feedbackSent, setFeedbackSent] = useState<boolean>(false);
+  const [myEdits, setMyEdits] = useState<PendingEdit[]>([]);
+  const [loadingMyEdits, setLoadingMyEdits] = useState<boolean>(false);
   const feedbackMutation = useMutation({
     mutationFn: async (params: { message: string; contactEmail?: string }) => {
       const result = await submitFeedback(params.message, profile?.displayName || undefined, params.contactEmail || undefined);
@@ -91,6 +97,12 @@ export default function ProfileScreen() {
       return refreshFromCloud();
     },
   });
+
+  useEffect(() => {
+    if (!isSignedIn) return;
+    setLoadingMyEdits(true);
+    void loadMyEdits().then(setMyEdits).finally(() => setLoadingMyEdits(false));
+  }, [isSignedIn, loadMyEdits]);
 
   useEffect(() => {
     if (isAdmin) {
@@ -151,7 +163,7 @@ export default function ProfileScreen() {
       Keyboard.dismiss();
       Alert.alert(
         'Claim Your Identity',
-        `Are you sure you want to claim "${person.name}" as yourself?\n\nThis cannot be changed later.`,
+        `Are you sure you want to claim "${person.name}" as yourself?`,
         [
           { text: 'Cancel', style: 'cancel' },
           {
@@ -160,6 +172,7 @@ export default function ProfileScreen() {
             onPress: async () => {
               try {
                 await claimIdentity(person.id, person.name);
+                dismissClaimRepairNotice();
                 void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
                 setShowClaimSearch(false);
                 setClaimQuery('');
@@ -173,7 +186,7 @@ export default function ProfileScreen() {
         ]
       );
     },
-    [claimIdentity]
+    [claimIdentity, dismissClaimRepairNotice]
   );
 
   const handleSendFeedback = useCallback(() => {
@@ -184,6 +197,11 @@ export default function ProfileScreen() {
     Keyboard.dismiss();
     feedbackMutation.mutate({ message: feedbackMessage.trim(), contactEmail: feedbackEmail.trim() || undefined });
   }, [feedbackMessage, feedbackEmail, feedbackMutation]);
+
+  const handleReplayTutorial = useCallback(() => {
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    replayTutorial();
+  }, [replayTutorial]);
 
   const handleStartClaim = useCallback(() => {
     if (isClaimed) {
@@ -365,7 +383,26 @@ export default function ProfileScreen() {
         {isSignedIn && isEnabled && hasData && (
           <View style={styles.identitySection}>
             <Text style={styles.sectionTitle}>Your Identity</Text>
-            {hasClaimed ? (
+            {claimRepairNotice && (
+              <View style={styles.claimRepairBanner}>
+                <AlertTriangle size={14} color={Colors.danger} />
+                <Text style={styles.claimRepairText}>
+                  Your previous identity link was reset after a database update. Please claim your identity again.
+                </Text>
+                <TouchableOpacity
+                  onPress={dismissClaimRepairNotice}
+                  hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                >
+                  <X size={14} color={Colors.textLight} />
+                </TouchableOpacity>
+              </View>
+            )}
+            {isValidatingClaim && !hasClaimed ? (
+              <View style={styles.claimValidating}>
+                <ActivityIndicator size="small" color={Colors.accent} />
+                <Text style={styles.claimValidatingText}>Checking your identity link...</Text>
+              </View>
+            ) : hasClaimed ? (
               <View style={styles.claimedCard}>
                 <View style={styles.claimedCardIcon}>
                   <Shield size={20} color={Colors.success} />
@@ -373,7 +410,7 @@ export default function ProfileScreen() {
                 <View style={styles.claimedCardContent}>
                   <Text style={styles.claimedCardName}>{profile?.rootPersonName}</Text>
                   <Text style={styles.claimedCardDesc}>
-                    Your identity is permanently linked.
+                    Your identity is linked to this person in the tree.
                   </Text>
                 </View>
                 <Lock size={16} color={Colors.textLight} />
@@ -383,7 +420,7 @@ export default function ProfileScreen() {
                 <View style={styles.claimWarning}>
                   <AlertTriangle size={14} color={Colors.danger} />
                   <Text style={styles.claimWarningText}>
-                    You can only claim your identity once. Choose carefully.
+                    Search for yourself in the database. If your link was lost after an update, you can claim again here.
                   </Text>
                 </View>
                 <View style={styles.claimSearchBar}>
@@ -468,13 +505,35 @@ export default function ProfileScreen() {
                 <Text style={styles.claimButtonText}>Claim Your Identity</Text>
               </TouchableOpacity>
             )}
-            {!hasClaimed && !showClaimSearch && (
+            {!hasClaimed && !showClaimSearch && !isValidatingClaim && (
               <Text style={styles.claimHint}>
                 Link yourself to a person in the database to use the relationship calculator.
               </Text>
             )}
+            {hasClaimed && (
+              <TouchableOpacity
+                style={styles.claimTroubleBtn}
+                onPress={handleStartClaim}
+                activeOpacity={0.7}
+              >
+                <Text style={styles.claimTroubleText}>Having trouble with your identity link?</Text>
+              </TouchableOpacity>
+            )}
           </View>
         )}
+
+        <View style={styles.helpSection}>
+          <Text style={styles.sectionTitle}>Help</Text>
+          <TouchableOpacity
+            style={styles.helpRow}
+            onPress={handleReplayTutorial}
+            activeOpacity={0.7}
+          >
+            <BookOpen size={16} color={Colors.accent} />
+            <Text style={styles.helpRowText}>Replay App Tutorial</Text>
+            <ChevronRight size={14} color={Colors.textLight} />
+          </TouchableOpacity>
+        </View>
 
         <View style={styles.accountSection}>
           <Text style={styles.sectionTitle}>Account</Text>
@@ -540,6 +599,16 @@ export default function ProfileScreen() {
                   >
                     <Database size={16} color={Colors.accent} />
                     <Text style={styles.pendingEditsBtnText}>Genealogy Data Console</Text>
+                    <ChevronRight size={14} color={Colors.textLight} />
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={styles.pendingEditsBtn}
+                    onPress={() => router.push('/admin/import')}
+                    activeOpacity={0.7}
+                  >
+                    <Upload size={16} color={Colors.accent} />
+                    <Text style={styles.pendingEditsBtnText}>Import GEDCOM to Database</Text>
                     <ChevronRight size={14} color={Colors.textLight} />
                   </TouchableOpacity>
                 </>
@@ -625,6 +694,29 @@ export default function ProfileScreen() {
                 <ChevronRight size={14} color={Colors.textLight} />
               </TouchableOpacity>
             </View>
+          </View>
+        )}
+
+        {isSignedIn && (
+          <View style={styles.feedbackSection}>
+            <Text style={styles.sectionTitle}>My Edits</Text>
+            {loadingMyEdits ? (
+              <ActivityIndicator color={Colors.accent} />
+            ) : myEdits.length === 0 ? (
+              <Text style={styles.feedbackDesc}>No submitted edits yet.</Text>
+            ) : (
+              myEdits.slice(0, 5).map((edit) => (
+                <View key={edit.id} style={styles.myEditRow}>
+                  <Text style={styles.myEditType}>{edit.edit_type.replace(/_/g, ' ')}</Text>
+                  <Text style={[styles.myEditStatus, edit.status === 'rejected' && styles.myEditRejected]}>
+                    {edit.status}
+                  </Text>
+                  {edit.reviewer_note ? (
+                    <Text style={styles.myEditNote}>{edit.reviewer_note}</Text>
+                  ) : null}
+                </View>
+              ))
+            )}
           </View>
         )}
 
@@ -1053,6 +1145,65 @@ const styles = StyleSheet.create({
     paddingHorizontal: 32,
     lineHeight: 18,
   },
+  claimRepairBanner: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+    backgroundColor: 'rgba(196, 92, 74, 0.1)',
+    borderRadius: 10,
+    padding: 12,
+    marginBottom: 12,
+    marginHorizontal: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(196, 92, 74, 0.2)',
+  },
+  claimRepairText: {
+    flex: 1,
+    fontSize: 13,
+    color: Colors.text,
+    lineHeight: 18,
+  },
+  claimValidating: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingVertical: 12,
+  },
+  claimValidatingText: {
+    fontSize: 13,
+    color: Colors.textSecondary,
+  },
+  claimTroubleBtn: {
+    marginTop: 10,
+    alignSelf: 'center',
+  },
+  claimTroubleText: {
+    fontSize: 12,
+    color: Colors.accent,
+    fontWeight: '600' as const,
+  },
+  helpSection: {
+    marginTop: 24,
+    marginBottom: 8,
+  },
+  helpRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    backgroundColor: Colors.card,
+    borderRadius: 12,
+    paddingVertical: 14,
+    paddingHorizontal: 14,
+    borderWidth: 1,
+    borderColor: Colors.cardBorder,
+    marginHorizontal: 16,
+  },
+  helpRowText: {
+    flex: 1,
+    fontSize: 15,
+    fontWeight: '600' as const,
+    color: Colors.text,
+  },
   accountSection: {
     paddingTop: 24,
   },
@@ -1275,6 +1426,36 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     marginBottom: 10,
     lineHeight: 18,
+  },
+  myEditRow: {
+    marginHorizontal: 16,
+    marginBottom: 8,
+    padding: 12,
+    backgroundColor: Colors.card,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: Colors.cardBorder,
+  },
+  myEditType: {
+    fontSize: 14,
+    fontWeight: '600' as const,
+    color: Colors.text,
+    textTransform: 'capitalize' as const,
+  },
+  myEditStatus: {
+    fontSize: 12,
+    color: Colors.textSecondary,
+    marginTop: 4,
+    textTransform: 'capitalize' as const,
+  },
+  myEditRejected: {
+    color: Colors.danger,
+  },
+  myEditNote: {
+    fontSize: 12,
+    color: Colors.textSecondary,
+    marginTop: 6,
+    fontStyle: 'italic' as const,
   },
   feedbackCard: {
     backgroundColor: Colors.card,

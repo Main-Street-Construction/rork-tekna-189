@@ -18,15 +18,15 @@ import * as Haptics from 'expo-haptics';
 import Colors from '@/constants/colors';
 import { useFamilyTree } from '@/contexts/FamilyTreeContext';
 import { GedcomIndividual } from '@/types/genealogy';
-import { useProfile } from '@/contexts/ProfileContext';
+import { findSimilarIndividuals, normalizeNamePart } from '@/utils/name-utils';
+import { navigateBack, modalScreenOptions } from '@/utils/navigation';
 
 type SexType = 'M' | 'F' | 'U';
 
 export default function EditPersonScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
-  const { getPerson, updatePerson, isAdmin, submitEdit } = useFamilyTree();
-  const { profile } = useProfile();
+  const { getPerson, updatePerson, isAdmin, submitEdit, treeData } = useFamilyTree();
   const [isSaving, setIsSaving] = useState<boolean>(false);
   const fadeAnim = useRef(new Animated.Value(0)).current;
 
@@ -65,6 +65,23 @@ export default function EditPersonScreen() {
     if (!trimmedGiven && !trimmedSurname) {
       Alert.alert('Missing Name', 'Please enter at least a first or last name.');
       return;
+    }
+
+    if (treeData) {
+      const similar = findSimilarIndividuals(trimmedGiven, trimmedSurname, birthDate.trim() || undefined, treeData, id);
+      if (similar.length > 0) {
+        const proceed = await new Promise<boolean>((resolve) => {
+          Alert.alert(
+            'Similar Person Found',
+            `Another person may already exist: ${similar[0].name}. Save anyway?`,
+            [
+              { text: 'Cancel', style: 'cancel', onPress: () => resolve(false) },
+              { text: 'Save Anyway', style: 'destructive', onPress: () => resolve(true) },
+            ]
+          );
+        });
+        if (!proceed) return;
+      }
     }
 
     setIsSaving(true);
@@ -118,7 +135,7 @@ export default function EditPersonScreen() {
     } finally {
       setIsSaving(false);
     }
-  }, [person, id, givenName, middleName, surname, sex, birthDate, birthPlace, deathDate, deathPlace, occupation, note, updatePerson, router, isAdmin, submitEdit]);
+  }, [person, id, givenName, middleName, surname, sex, birthDate, birthPlace, deathDate, deathPlace, occupation, note, updatePerson, router, isAdmin, submitEdit, treeData]);
 
   if (!person) {
     return (
@@ -137,12 +154,12 @@ export default function EditPersonScreen() {
     <View style={styles.container}>
       <Stack.Screen
         options={{
+          ...modalScreenOptions,
           title: 'Edit Person',
           headerStyle: { backgroundColor: Colors.background },
           headerTintColor: Colors.text,
-          headerShadowVisible: false,
           headerLeft: () => (
-            <TouchableOpacity onPress={() => router.back()} style={styles.headerBtn}>
+            <TouchableOpacity onPress={() => navigateBack(router)} style={styles.headerBtn}>
               <X size={22} color={Colors.text} />
             </TouchableOpacity>
           ),

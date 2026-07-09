@@ -30,6 +30,10 @@ const EDIT_TYPE_LABELS: Record<string, string> = {
   add_spouse: 'Add Spouse',
   link_spouses: 'Link Spouses',
   edit_marriage: 'Edit Marriage',
+  link_child: 'Link Child',
+  edit_parent: 'Edit Parent',
+  remove_child: 'Remove Child',
+  unlink_spouses: 'Unlink Spouses',
 };
 
 type FilterType = 'all' | 'edits' | 'adds' | 'links';
@@ -37,7 +41,7 @@ type FilterType = 'all' | 'edits' | 'adds' | 'links';
 function getFilterCategory(editType: string): FilterType {
   if (editType === 'update_person' || editType === 'edit_marriage') return 'edits';
   if (editType === 'add_person' || editType === 'add_child' || editType === 'add_spouse') return 'adds';
-  if (editType === 'link_spouses') return 'links';
+  if (editType === 'link_spouses' || editType === 'link_child' || editType === 'edit_parent' || editType === 'remove_child' || editType === 'unlink_spouses') return 'links';
   return 'all';
 }
 
@@ -80,14 +84,47 @@ function validateEdit(edit: PendingEdit, treeData: FamilyTreeData | null): Valid
     }
   }
 
-  if (edit.edit_type === 'edit_marriage') {
-    const familyId = data.familyId as string | undefined;
-    if (familyId && treeData && !treeData.families.has(familyId)) {
-      issues.push({ blocking: true, message: `Family ${familyId} not found` });
-    }
-  }
+      if (edit.edit_type === 'edit_marriage') {
+        const familyId = data.familyId as string;
+        if (familyId && treeData && !treeData.families.has(familyId)) {
+          issues.push({ blocking: true, message: `Family ${familyId} not found` });
+        }
+      }
 
-  return issues;
+      if (edit.edit_type === 'link_child') {
+        const childId = data.childId as string | undefined;
+        const familyId = data.familyId as string | undefined;
+        const parentId = data.parentId as string | undefined;
+        if (childId && treeData && !treeData.individuals.has(childId)) {
+          issues.push({ blocking: true, message: `Child ${childId} not found` });
+        }
+        if (parentId && treeData && !treeData.individuals.has(parentId)) {
+          issues.push({ blocking: true, message: `Parent ${parentId} not found` });
+        }
+        if (familyId && treeData && !treeData.families.has(familyId)) {
+          issues.push({ blocking: true, message: `Family ${familyId} not found` });
+        }
+      }
+
+      if (edit.edit_type === 'edit_parent' || edit.edit_type === 'remove_child') {
+        const childId = data.childId as string | undefined;
+        const familyId = data.familyId as string | undefined;
+        if (childId && treeData && !treeData.individuals.has(childId)) {
+          issues.push({ blocking: true, message: `Child ${childId} not found` });
+        }
+        if (familyId && treeData && !treeData.families.has(familyId)) {
+          issues.push({ blocking: true, message: `Family ${familyId} not found` });
+        }
+      }
+
+      if (edit.edit_type === 'unlink_spouses') {
+        const familyId = data.familyId as string | undefined;
+        if (familyId && treeData && !treeData.families.has(familyId)) {
+          issues.push({ blocking: true, message: `Family ${familyId} not found` });
+        }
+      }
+
+      return issues;
 }
 
 export default function PendingEditsScreen() {
@@ -100,8 +137,13 @@ export default function PendingEditsScreen() {
     addPerson,
     addChildToFamily,
     createFamilyAndAddChild,
+    createFamilyWithParents,
     addSpouse,
     linkExistingSpouses,
+    linkChildToFamily,
+    removeChildFromFamily,
+    editParentFamily,
+    unlinkSpouses,
     updateFamily,
     treeData,
     generateNewId,
@@ -189,15 +231,56 @@ export default function PendingEditsScreen() {
         };
         return await updateFamily(updatedFamily);
       }
+      if (edit.edit_type === 'link_child') {
+        const childId = data.childId as string;
+        const familyId = data.familyId as string | undefined;
+        const parentId = data.parentId as string | undefined;
+        const spouseId = data.spouseId as string | undefined;
+        if (!childId || !parentId) return { success: false, error: 'Missing child or parent' };
+        if (familyId) return await linkChildToFamily(childId, familyId);
+        const child = treeData?.individuals.get(childId);
+        if (!child) return { success: false, error: 'Child not in local tree' };
+        const created = await createFamilyWithParents(parentId, spouseId);
+        if (!created.success || !created.familyId) {
+          return { success: false, error: created.error ?? 'Failed to create family' };
+        }
+        return await linkChildToFamily(childId, created.familyId);
+      }
+      if (edit.edit_type === 'edit_parent') {
+        const childId = data.childId as string;
+        const familyId = data.familyId as string;
+        if (!childId || !familyId) return { success: false, error: 'Missing child or family' };
+        return await editParentFamily(childId, familyId);
+      }
+      if (edit.edit_type === 'remove_child') {
+        const childId = data.childId as string;
+        const familyId = data.familyId as string;
+        if (!childId || !familyId) return { success: false, error: 'Missing child or family' };
+        return await removeChildFromFamily(childId, familyId);
+      }
+      if (edit.edit_type === 'unlink_spouses') {
+        const familyId = data.familyId as string;
+        if (!familyId) return { success: false, error: 'Missing family' };
+        return await unlinkSpouses(familyId);
+      }
       return { success: false, error: 'Unknown edit type' };
     } catch (e) {
       return { success: false, error: String(e) };
     }
-  }, [updatePerson, addPerson, addChildToFamily, createFamilyAndAddChild, addSpouse, linkExistingSpouses, updateFamily, treeData, generateNewId]);
+  }, [updatePerson, addPerson, addChildToFamily, createFamilyAndAddChild, createFamilyWithParents, addSpouse, linkExistingSpouses, linkChildToFamily, removeChildFromFamily, editParentFamily, unlinkSpouses, updateFamily, treeData, generateNewId]);
 
-  const handleApprove = useCallback(async (edit: PendingEdit) => {
-    const issues = validateEdit(edit, treeData);
-    const blocking = issues.filter((i) => i.blocking);
+  const handleApprove = useCallback(async (edit: PendingEdit, didRefresh = false) => {
+    let issues = validateEdit(edit, treeData);
+    let blocking = issues.filter((i) => i.blocking);
+    if (blocking.length > 0 && !didRefresh && blocking.some((i) => i.message.includes('not found'))) {
+      const refreshResult = await refreshFromCloud();
+      if (refreshResult.success) {
+        await handleApprove(edit, true);
+        return;
+      }
+    }
+    issues = validateEdit(edit, treeData);
+    blocking = issues.filter((i) => i.blocking);
     if (blocking.length > 0) {
       Alert.alert('Cannot Approve', blocking.map((i) => i.message).join('\n'));
       return;
@@ -237,7 +320,7 @@ export default function PendingEditsScreen() {
         },
       },
     ]);
-  }, [applyEdit, reviewPendingEdit, treeData]);
+  }, [applyEdit, reviewPendingEdit, treeData, refreshFromCloud]);
 
   const submitReject = useCallback(async (edit: PendingEdit, note?: string) => {
     setProcessingId(edit.id);

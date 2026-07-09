@@ -18,6 +18,7 @@ import * as Haptics from 'expo-haptics';
 import Colors from '@/constants/colors';
 import { useFamilyTree } from '@/contexts/FamilyTreeContext';
 import { GedcomFamily } from '@/types/genealogy';
+import { navigateBack, modalScreenOptions } from '@/utils/navigation';
 
 export default function EditMarriageScreen() {
   const { familyId } = useLocalSearchParams<{ familyId: string }>();
@@ -132,12 +133,12 @@ export default function EditMarriageScreen() {
     <View style={styles.container}>
       <Stack.Screen
         options={{
+          ...modalScreenOptions,
           title: 'Edit Marriage',
           headerStyle: { backgroundColor: Colors.background },
           headerTintColor: Colors.text,
-          headerShadowVisible: false,
           headerLeft: () => (
-            <TouchableOpacity onPress={() => router.back()} style={styles.headerBtn}>
+            <TouchableOpacity onPress={() => navigateBack(router)} style={styles.headerBtn}>
               <X size={22} color={Colors.text} />
             </TouchableOpacity>
           ),

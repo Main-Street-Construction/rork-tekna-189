@@ -98,20 +98,176 @@ function buildConcatenatedValue(subLines: ParsedLine[], startIndex: number, base
   return { value, nextIndex: i };
 }
 
-function parseEventSubLines(subLines: ParsedLine[]): { date?: string; place?: string } {
+function parseEventSubLines(
+  subLines: ParsedLine[],
+  noteRecords: Map<string, string>
+): { date?: string; place?: string; note?: string } {
   let date: string | undefined;
   let place: string | undefined;
+  let note: string | undefined;
 
-  for (const sl of subLines) {
+  for (let idx = 0; idx < subLines.length; idx++) {
+    const sl = subLines[idx];
     if (sl.tag === 'DATE' && !date) {
       date = sl.value;
     }
     if (sl.tag === 'PLAC' && !place) {
       place = sl.value;
     }
+    if (sl.tag === 'NOTE') {
+      const { value: noteVal, nextIndex } = buildConcatenatedValue(subLines, idx, sl.level);
+      const resolved = resolveNoteText(noteVal, noteRecords);
+      if (resolved) {
+        note = note ? `${note}\n${resolved}` : resolved;
+      }
+      idx = nextIndex - 1;
+    }
   }
 
-  return { date, place };
+  return { date, place, note };
+}
+
+function resolveNoteText(raw: string, noteRecords: Map<string, string>): string {
+  const trimmed = raw.trim();
+  if (!trimmed) return '';
+
+  const xrefMatch = trimmed.match(/^@([^@]+)@$/);
+  if (xrefMatch) {
+    return noteRecords.get(xrefMatch[1]) ?? '';
+  }
+
+  return trimmed;
+}
+
+function appendPersonNote(indi: GedcomIndividual, noteText: string) {
+  const text = noteText.trim();
+  if (!text) return;
+  indi.note = indi.note ? `${indi.note}\n${text}` : text;
+}
+
+function collectNoteRecords(parsedLines: ParsedLine[]): Map<string, string> {
+  const noteRecords = new Map<string, string>();
+  let i = 0;
+
+  while (i < parsedLines.length) {
+    const line = parsedLines[i];
+    if (line.level === 0 && line.tag === 'NOTE' && line.xref) {
+      const { subLines, nextIndex } = collectSubLines(parsedLines, i + 1, 0);
+      const noteLines: ParsedLine[] = [
+        { level: 1, xref: '', tag: 'NOTE', value: line.value },
+        ...subLines,
+      ];
+      const { value } = buildConcatenatedValue(noteLines, 0, 1);
+      const resolved = value.trim();
+      if (resolved) {
+        noteRecords.set(line.xref, resolved);
+      }
+      i = nextIndex;
+      continue;
+    }
+    i++;
+  }
+
+  return noteRecords;
+}
+
+function appendNoteText(existing: string | undefined, addition: string): string {
+  const text = addition.trim();
+  if (!text) return existing ?? '';
+  return existing ? `${existing}\n${text}` : text;
+}
+
+function readNoteContinuation(rawLines: string[], startIndex: number, minLevel: number): { text: string; nextIndex: number } {
+  let text = '';
+  let i = startIndex;
+  while (i < rawLines.length) {
+    const parsed = parseLine(rawLines[i]);
+    if (!parsed || parsed.level <= minLevel) break;
+    if (parsed.tag === 'CONT') {
+      text += (text ? '\n' : '') + parsed.value;
+    } else if (parsed.tag === 'CONC') {
+      text += parsed.value;
+    }
+    i++;
+  }
+  return { text, nextIndex: i };
+}
+
+/** Fast single-pass extraction for large GEDCOM files — only person IDs and notes. */
+export function extractGedcomNotes(content: string): Map<string, string> {
+  const cleaned = stripBom(content);
+  const rawLines = cleaned.split(/\r?\n|\r/);
+  const noteRecords = new Map<string, string>();
+  const personNotes = new Map<string, string>();
+
+  let i = 0;
+  while (i < rawLines.length) {
+    const parsed = parseLine(rawLines[i]);
+    if (!parsed) {
+      i++;
+      continue;
+    }
+
+    if (parsed.level === 0 && parsed.tag === 'NOTE' && parsed.xref) {
+      let noteText = parsed.value;
+      const continuation = readNoteContinuation(rawLines, i + 1, 0);
+      noteText = appendNoteText(noteText, continuation.text);
+      i = continuation.nextIndex;
+      if (noteText.trim()) {
+        noteRecords.set(parsed.xref, noteText.trim());
+      }
+      continue;
+    }
+
+    if (parsed.level === 0 && parsed.tag === 'INDI' && parsed.xref) {
+      const personId = parsed.xref;
+      i++;
+      while (i < rawLines.length) {
+        const sub = parseLine(rawLines[i]);
+        if (!sub || sub.level === 0) break;
+
+        if (sub.tag === 'NOTE') {
+          let noteText = sub.value;
+          const continuation = readNoteContinuation(rawLines, i + 1, sub.level);
+          noteText = appendNoteText(noteText, continuation.text);
+          i = continuation.nextIndex;
+          const resolved = resolveNoteText(noteText, noteRecords);
+          if (resolved) {
+            personNotes.set(personId, appendNoteText(personNotes.get(personId), resolved));
+          }
+          continue;
+        }
+
+        if (sub.tag === 'BIRT' || sub.tag === 'DEAT') {
+          i++;
+          while (i < rawLines.length) {
+            const eventLine = parseLine(rawLines[i]);
+            if (!eventLine || eventLine.level <= 1) break;
+            if (eventLine.tag === 'NOTE') {
+              let noteText = eventLine.value;
+              const continuation = readNoteContinuation(rawLines, i + 1, eventLine.level);
+              noteText = appendNoteText(noteText, continuation.text);
+              i = continuation.nextIndex;
+              const resolved = resolveNoteText(noteText, noteRecords);
+              if (resolved) {
+                personNotes.set(personId, appendNoteText(personNotes.get(personId), resolved));
+              }
+              continue;
+            }
+            i++;
+          }
+          continue;
+        }
+
+        i++;
+      }
+      continue;
+    }
+
+    i++;
+  }
+
+  return personNotes;
 }
 
 export function parseGedcom(content: string): FamilyTreeData {
@@ -128,12 +284,23 @@ export function parseGedcom(content: string): FamilyTreeData {
 
   console.log(`[GEDCOM Parser] Parsed ${parsedLines.length} valid lines from ${rawLines.length} raw lines`);
 
+  const noteRecords = collectNoteRecords(parsedLines);
+  if (noteRecords.size > 0) {
+    console.log(`[GEDCOM Parser] Found ${noteRecords.size} shared note records`);
+  }
+
   const individuals = new Map<string, GedcomIndividual>();
   const families = new Map<string, GedcomFamily>();
 
   let i = 0;
   while (i < parsedLines.length) {
     const line = parsedLines[i];
+
+    if (line.level === 0 && line.tag === 'NOTE') {
+      const { nextIndex } = collectSubLines(parsedLines, i + 1, 0);
+      i = nextIndex;
+      continue;
+    }
 
     if (line.level === 0 && line.tag === 'INDI' && line.xref) {
       const { subLines, nextIndex } = collectSubLines(parsedLines, i + 1, 0);
@@ -187,18 +354,20 @@ export function parseGedcom(content: string): FamilyTreeData {
         if (sub.tag === 'BIRT' && sub.level === 1) {
           const { subLines: eventSub, nextIndex: eventNext } = collectSubLines(subLines, j + 1, 1);
           j = eventNext;
-          const evt = parseEventSubLines(eventSub);
+          const evt = parseEventSubLines(eventSub, noteRecords);
           if (evt.date) indi.birthDate = evt.date;
           if (evt.place) indi.birthPlace = evt.place;
+          if (evt.note) appendPersonNote(indi, evt.note);
           continue;
         }
 
         if (sub.tag === 'DEAT' && sub.level === 1) {
           const { subLines: eventSub, nextIndex: eventNext } = collectSubLines(subLines, j + 1, 1);
           j = eventNext;
-          const evt = parseEventSubLines(eventSub);
+          const evt = parseEventSubLines(eventSub, noteRecords);
           if (evt.date) indi.deathDate = evt.date;
           if (evt.place) indi.deathPlace = evt.place;
+          if (evt.note) appendPersonNote(indi, evt.note);
           continue;
         }
 
@@ -229,7 +398,7 @@ export function parseGedcom(content: string): FamilyTreeData {
 
         if (sub.tag === 'NOTE' && sub.level === 1) {
           const { value: noteVal, nextIndex: noteNext } = buildConcatenatedValue(subLines, j, 1);
-          indi.note = noteVal;
+          appendPersonNote(indi, resolveNoteText(noteVal, noteRecords));
           j = noteNext;
           continue;
         }
@@ -321,7 +490,7 @@ export function parseGedcom(content: string): FamilyTreeData {
         if (sub.tag === 'MARR' && sub.level === 1) {
           const { subLines: marrSub, nextIndex: marrNext } = collectSubLines(subLines, j + 1, 1);
           j = marrNext;
-          const evt = parseEventSubLines(marrSub);
+          const evt = parseEventSubLines(marrSub, noteRecords);
           if (evt.date) fam.marriageDate = evt.date;
           if (evt.place) fam.marriagePlace = evt.place;
           continue;
@@ -346,7 +515,7 @@ export function parseGedcom(content: string): FamilyTreeData {
         }
 
         if (sub.tag === 'NOTE' && sub.level === 1) {
-          const { nextIndex: noteNext } = collectSubLines(subLines, j + 1, 1);
+          const { nextIndex: noteNext } = buildConcatenatedValue(subLines, j, 1);
           j = noteNext;
           continue;
         }
@@ -522,7 +691,7 @@ export function getParents(
     });
 
     if (!person.familyAsChild || person.familyAsChild !== best.family.id) {
-      person.familyAsChild = best.family.id;
+      console.warn('[getParents] Person', personId, 'familyAsChild mismatch; using family', best.family.id);
     }
     return best.parents;
   }
