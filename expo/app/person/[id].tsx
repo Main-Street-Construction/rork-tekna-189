@@ -51,7 +51,7 @@ import { navigateBack } from '@/utils/navigation';
 export default function PersonDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
-  const { treeData, getPerson, hydratePerson, isAdmin, submitEdit, removeChildFromFamily, unlinkSpouses } = useFamilyTree();
+  const { treeData, getPerson, isAdmin, submitEdit, removeChildFromFamily, unlinkSpouses } = useFamilyTree();
   const { profile } = useProfile();
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const [treeExpanded, setTreeExpanded] = useState<boolean>(false);
@@ -71,37 +71,10 @@ export default function PersonDetailScreen() {
     }).start();
   }, []);
 
-  const [displayPerson, setDisplayPerson] = useState<GedcomIndividual | undefined>();
-
-  useEffect(() => {
-    if (!id) {
-      setDisplayPerson(undefined);
-      return;
-    }
-
-    const local = getPerson(id);
-    if (!local) {
-      setDisplayPerson(undefined);
-      return;
-    }
-
-    setDisplayPerson(local);
-
-    if (local.note?.trim()) return;
-
-    let cancelled = false;
-    void hydratePerson(id).then((hydrated) => {
-      if (!cancelled && hydrated) {
-        setDisplayPerson(hydrated);
-      }
-    });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [id, getPerson, hydratePerson, treeData]);
-
-  const person = displayPerson;
+  const person = useMemo(() => {
+    if (!id) return undefined;
+    return getPerson(id);
+  }, [id, getPerson]);
 
   const parents = useMemo(() => {
     if (!id || !treeData) return [];

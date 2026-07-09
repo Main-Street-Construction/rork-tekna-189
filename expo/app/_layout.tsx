@@ -115,10 +115,6 @@ function RootLayoutNav() {
         options={{ title: "Privacy Policy" }}
       />
       <Stack.Screen
-        name="admin/import"
-        options={{ title: "Import to Database" }}
-      />
-      <Stack.Screen
         name="link-child/[parentId]"
         options={{ presentation: "modal", title: "Link Child" }}
       />

@@ -357,9 +357,7 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
 
       if (bgSyncRef.current) {
         bgSyncRef.current = false;
-        setTimeout(() => {
-          void backgroundSyncFromCloud();
-        }, 500);
+        console.log('[FamilyTree] Using cached data; skipping automatic background sync');
       }
     }
   }, [loadQuery.data, backgroundSyncFromCloud]);
@@ -441,35 +439,17 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
   const resolveClaimedPerson = useCallback(
     async (gedcomId: string): Promise<GedcomIndividual | null> => {
       const local = treeData?.individuals.get(gedcomId);
-      if (local?.note?.trim()) return local;
+      if (local) return local;
 
       const fetched = await fetchIndividualByGedcomId(gedcomId);
-      if (!fetched) return local ?? null;
-      if (!treeData) return fetched;
+      if (!fetched || !treeData) return fetched;
 
-      const merged: GedcomIndividual = local
-        ? { ...local, note: fetched.note?.trim() ? fetched.note : local.note }
-        : fetched;
-
-      if (!local || (fetched.note?.trim() && !local.note?.trim())) {
-        const updatedIndividuals = new Map(treeData.individuals);
-        updatedIndividuals.set(gedcomId, merged);
-        const newTree = { ...treeData, individuals: updatedIndividuals };
-        setTreeData(newTree);
-        const serialized = serializeFamilyTreeData(newTree);
-        await safeSetItem(STORAGE_KEY, serialized);
-      }
-
-      return merged;
+      const updatedIndividuals = new Map(treeData.individuals);
+      updatedIndividuals.set(gedcomId, fetched);
+      setTreeData({ ...treeData, individuals: updatedIndividuals });
+      return fetched;
     },
     [treeData]
-  );
-
-  const hydratePerson = useCallback(
-    async (gedcomId: string): Promise<GedcomIndividual | null> => {
-      return resolveClaimedPerson(gedcomId);
-    },
-    [resolveClaimedPerson]
   );
 
   useEffect(() => {
@@ -1414,7 +1394,6 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
     getPerson,
     resolveClaimedPerson,
     resolvePerson,
-    hydratePerson,
     isImporting,
     importError,
     isAdmin,
@@ -1447,7 +1426,7 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
     refreshFromCloud,
   }), [
     treeData, isReady, hasData, individualCount, familyCount,
-    importGedcom, clearData, search, getPerson, resolveClaimedPerson, resolvePerson, hydratePerson, isImporting, importError,
+    importGedcom, clearData, search, getPerson, resolveClaimedPerson, resolvePerson, isImporting, importError,
     isAdmin, pendingEditCount, submitEdit,
     loadPendingEdits, loadMyEdits, reviewPendingEdit, refreshPendingCount, generateNewId,
     addPerson, updatePerson, addChildToFamily, createFamilyAndAddChild, createFamilyWithParents,

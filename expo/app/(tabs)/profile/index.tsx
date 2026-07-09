@@ -35,7 +35,6 @@ import {
   LogOut,
   Users,
   FileText,
-  Upload,
   BookOpen,
 } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
@@ -599,16 +598,6 @@ export default function ProfileScreen() {
                   >
                     <Database size={16} color={Colors.accent} />
                     <Text style={styles.pendingEditsBtnText}>Genealogy Data Console</Text>
-                    <ChevronRight size={14} color={Colors.textLight} />
-                  </TouchableOpacity>
-
-                  <TouchableOpacity
-                    style={styles.pendingEditsBtn}
-                    onPress={() => router.push('/admin/import')}
-                    activeOpacity={0.7}
-                  >
-                    <Upload size={16} color={Colors.accent} />
-                    <Text style={styles.pendingEditsBtnText}>Import GEDCOM to Database</Text>
                     <ChevronRight size={14} color={Colors.textLight} />
                   </TouchableOpacity>
                 </>

@@ -12,7 +12,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
-import { Search, TreePine, Upload, X, Users, AlertCircle } from 'lucide-react-native';
+import { Search, TreePine, X, Users, AlertCircle } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import Colors from '@/constants/colors';
 import { useFamilyTree } from '@/contexts/FamilyTreeContext';
@@ -21,7 +21,6 @@ import { useSearchHistory } from '@/contexts/SearchHistoryContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { GedcomIndividual } from '@/types/genealogy';
 import { calculateRelationship } from '@/utils/relationship';
-import { searchIndividualsServer } from '@/lib/supabase-rpc';
 import PersonCard from '@/components/PersonCard';
 import AuthGate from '@/components/AuthGate';
 
@@ -59,39 +58,15 @@ function SearchScreenContent() {
       }
       if (text.trim().length >= 2 && canSearch) {
         searchTimerRef.current = setTimeout(() => {
-          void (async () => {
-            try {
-              let found = search(text);
-              if (found.length === 0 || isDataIncomplete) {
-                const server = await searchIndividualsServer(text.trim(), 50);
-                if (server.rows.length > 0 && treeData) {
-                  const mapped: GedcomIndividual[] = server.rows.map((row) => ({
-                    id: row.gedcom_id,
-                    name: [row.first_name, row.last_name].filter(Boolean).join(' '),
-                    givenName: row.first_name ?? '',
-                    surname: row.last_name ?? '',
-                    sex: (row.gender === 'M' || row.gender === 'F' ? row.gender : 'U') as 'M' | 'F' | 'U',
-                    birthDate: row.birth_date ?? undefined,
-                    birthPlace: row.birth_place ?? undefined,
-                    deathDate: row.death_date ?? undefined,
-                    deathPlace: row.death_place ?? undefined,
-                    familiesAsSpouse: treeData.individuals.get(row.gedcom_id)?.familiesAsSpouse ?? [],
-                    familyAsChild: treeData.individuals.get(row.gedcom_id)?.familyAsChild,
-                    note: row.notes ?? undefined,
-                  }));
-                  const merged = new Map<string, GedcomIndividual>();
-                  for (const p of [...found, ...mapped]) merged.set(p.id, p);
-                  found = Array.from(merged.values());
-                }
-              }
-              setResults(found);
-              setHasSearched(true);
-            } catch {
-              setResults([]);
-              setHasSearched(true);
-            }
-          })();
-        }, 250);
+          try {
+            const found = search(text);
+            setResults(found);
+            setHasSearched(true);
+          } catch {
+            setResults([]);
+            setHasSearched(true);
+          }
+        }, 300);
       } else {
         searchTimerRef.current = null;
         setResults([]);
@@ -100,7 +75,7 @@ function SearchScreenContent() {
         }
       }
     },
-    [search, canSearch, isDataIncomplete, treeData]
+    [search, canSearch]
   );
 
   useEffect(() => {
@@ -133,10 +108,6 @@ function SearchScreenContent() {
     },
     [query, results.length, addEntry, router]
   );
-
-  const handleImport = useCallback(() => {
-    router.push('/import-data');
-  }, [router]);
 
   const [relationshipMap, setRelationshipMap] = useState<Map<string, string>>(new Map());
   const relationshipTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -212,11 +183,7 @@ function SearchScreenContent() {
             <TreePine size={36} color={Colors.accent} />
           </View>
           <Text style={styles.bigTitle}>No Family Tree Loaded</Text>
-          <Text style={styles.desc}>Import a GEDCOM file to start searching your ancestors.</Text>
-          <TouchableOpacity style={styles.actionBtn} onPress={handleImport} activeOpacity={0.7}>
-            <Upload size={16} color="#fff" />
-            <Text style={styles.actionBtnText}>Import GEDCOM File</Text>
-          </TouchableOpacity>
+          <Text style={styles.desc}>Pull to refresh from the database in your Profile tab.</Text>
         </View>
       );
     }
@@ -241,6 +208,10 @@ function SearchScreenContent() {
           keyboardShouldPersistTaps="handled"
           keyboardDismissMode="on-drag"
           showsVerticalScrollIndicator={false}
+          initialNumToRender={12}
+          maxToRenderPerBatch={12}
+          windowSize={7}
+          removeClippedSubviews
           ListHeaderComponent={
             <Text style={styles.resultCount}>
               {results.length} result{results.length !== 1 ? 's' : ''}
@@ -271,7 +242,7 @@ function SearchScreenContent() {
           <TextInput
             ref={inputRef}
             style={styles.searchInput}
-            placeholder={canSearch ? "Search by name..." : isLoading ? "Loading data..." : "Import data to search..."}
+            placeholder={canSearch ? "Search by name..." : isLoading ? "Loading data..." : "Waiting for data..."}
             placeholderTextColor={Colors.textLight}
             value={query}
             onChangeText={handleSearch}
@@ -316,12 +287,7 @@ function SearchScreenContent() {
                 <ActivityIndicator size="small" color={Colors.accent} />
                 <Text style={styles.syncText}>Syncing...</Text>
               </View>
-            ) : (
-              <TouchableOpacity style={styles.miniBtn} onPress={handleImport} activeOpacity={0.7}>
-                <Upload size={13} color={Colors.accent} />
-                <Text style={styles.miniBtnText}>Load Other</Text>
-              </TouchableOpacity>
-            )}
+            ) : null}
           </View>
         )}
 
@@ -346,7 +312,7 @@ function SearchScreenContent() {
         {cloudError && !hasData && (
           <View style={styles.errorRow}>
             <AlertCircle size={14} color={Colors.danger} />
-            <Text style={styles.errorText} numberOfLines={2}>Load error. Pull down or tap Import to retry.</Text>
+            <Text style={styles.errorText} numberOfLines={2}>Load error. Refresh from Profile to retry.</Text>
           </View>
         )}
 
@@ -354,11 +320,6 @@ function SearchScreenContent() {
           <View style={styles.infoRow}>
             <AlertCircle size={14} color={Colors.danger} />
             <Text style={styles.warningText}>No family data loaded</Text>
-            <View style={styles.spacer} />
-            <TouchableOpacity style={styles.miniBtn} onPress={handleImport} activeOpacity={0.7}>
-              <Upload size={13} color={Colors.accent} />
-              <Text style={styles.miniBtnText}>Import</Text>
-            </TouchableOpacity>
           </View>
         )}
       </View>

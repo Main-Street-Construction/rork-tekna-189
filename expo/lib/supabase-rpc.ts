@@ -148,16 +148,3 @@ export async function adminMergeIndividuals(
   const result = data as { success: boolean; error?: string };
   return result.success ? { success: true } : { success: false, error: result.error };
 }
-
-export async function adminBackfillNotes(
-  notesPayload: Record<string, string>
-): Promise<{ success: boolean; updated?: number; error?: string }> {
-  const { data, error } = await supabase.rpc('admin_backfill_notes', {
-    notes_payload: notesPayload,
-  });
-  if (error) return { success: false, error: error.message };
-  const result = data as { success: boolean; updated?: number; error?: string };
-  return result.success
-    ? { success: true, updated: result.updated }
-    : { success: false, error: result.error };
-}

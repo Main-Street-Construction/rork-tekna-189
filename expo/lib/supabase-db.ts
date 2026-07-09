@@ -1,5 +1,4 @@
 import { supabase } from './supabase';
-import { adminBackfillNotes } from './supabase-rpc';
 import { GedcomIndividual, GedcomFamily, FamilyTreeData, PendingEdit, PendingEditType } from '@/types/genealogy';
 
 const FETCH_TIMEOUT_MS = 90000;
@@ -180,8 +179,6 @@ async function _resolveFamilyGedcomIdToUuid(gedcomId: string): Promise<string | 
 const INDIVIDUALS_COLUMNS = 'id,gedcom_id,first_name,last_name,gender,birth_date,birth_place,death_date,death_place,notes' as const;
 const FAMILIES_COLUMNS = 'id,gedcom_id,husband_id,wife_id,marriage_date,marriage_place' as const;
 const FAMILY_MEMBERS_COLUMNS = 'id,family_id,individual_id,role' as const;
-const IMPORT_BATCH_SIZE = 250;
-const NOTES_BACKFILL_BATCH_SIZE = 500;
 
 async function getTableCount(table: string): Promise<number | null> {
   try {
@@ -930,72 +927,6 @@ export async function fetchFeedback(): Promise<{ items: Array<{ id: string; mess
   } catch (e) {
 
     return { items: [], error: String(e) };
-  }
-}
-
-export async function importGedcomToSupabase(
-  treeData: FamilyTreeData,
-  onProgress?: (message: string) => void
-): Promise<{ success: boolean; imported: number; skipped: number; error?: string }> {
-  let imported = 0;
-  let skipped = 0;
-
-  try {
-    const individuals = Array.from(treeData.individuals.values());
-    for (let i = 0; i < individuals.length; i += IMPORT_BATCH_SIZE) {
-      const batch = individuals.slice(i, i + IMPORT_BATCH_SIZE);
-      const rows = batch.map((ind) => individualToSupabaseRow(ind));
-      onProgress?.(`Uploading people ${Math.min(i + batch.length, individuals.length)}/${individuals.length}`);
-
-      const { error } = await supabase
-        .from('individuals')
-        .upsert(rows, { onConflict: 'gedcom_id' });
-
-      if (error) {
-        return { success: false, imported, skipped, error: error.message };
-      }
-      imported += batch.length;
-    }
-
-    const families = Array.from(treeData.families.values());
-    for (let i = 0; i < families.length; i++) {
-      const fam = families[i];
-      onProgress?.(`Uploading families ${i + 1}/${families.length}`);
-      const result = await upsertFamilyInSupabase(fam);
-      if (!result.success) {
-        return { success: false, imported, skipped, error: result.error };
-      }
-    }
-
-    return { success: true, imported, skipped };
-  } catch (e) {
-    return { success: false, imported, skipped, error: String(e) };
-  }
-}
-
-export async function backfillNotesToSupabase(
-  notesByPersonId: Map<string, string>,
-  onProgress?: (message: string) => void
-): Promise<{ success: boolean; updated: number; error?: string }> {
-  const entries = Array.from(notesByPersonId.entries()).filter(([, note]) => note.trim().length > 0);
-  let updated = 0;
-
-  try {
-    for (let i = 0; i < entries.length; i += NOTES_BACKFILL_BATCH_SIZE) {
-      const batch = entries.slice(i, i + NOTES_BACKFILL_BATCH_SIZE);
-      const payload = Object.fromEntries(batch);
-      onProgress?.(`Updating notes ${Math.min(i + batch.length, entries.length)}/${entries.length}`);
-
-      const result = await adminBackfillNotes(payload);
-      if (!result.success) {
-        return { success: false, updated, error: result.error ?? 'Notes backfill failed' };
-      }
-      updated += result.updated ?? batch.length;
-    }
-
-    return { success: true, updated };
-  } catch (e) {
-    return { success: false, updated, error: String(e) };
   }
 }
 
