@@ -163,6 +163,19 @@ async function safeGetItemWithFileCache(key: string): Promise<string | null> {
   return readFileCache(key);
 }
 
+function maxNumericId(keys: Iterable<string>, prefix: string): number {
+  let maxNum = 0;
+  const pattern = new RegExp('^' + prefix + '(\\d+)$');
+  for (const key of keys) {
+    const match = key.match(pattern);
+    if (match) {
+      const num = parseInt(match[1], 10);
+      if (num > maxNum) maxNum = num;
+    }
+  }
+  return maxNum;
+}
+
 export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
   const { isAdmin, user, isSignedIn, isEnabled, profileRow } = useAuth();
   const [treeData, setTreeData] = useState<FamilyTreeData | null>(null);
@@ -176,7 +189,20 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
   const bgSyncRef = useRef<boolean>(false);
   const bgSyncInFlightRef = useRef<boolean>(false);
   const cloudRetryCountRef = useRef<number>(0);
+  const treeDataRef = useRef<FamilyTreeData | null>(null);
+  const nextIdRef = useRef<{ I: number; F: number }>({ I: 0, F: 0 });
   const MAX_AUTO_RETRIES = 3;
+
+  const applyTreeData = useCallback((newTree: FamilyTreeData | null) => {
+    treeDataRef.current = newTree;
+    if (newTree) {
+      nextIdRef.current.I = Math.max(nextIdRef.current.I, maxNumericId(newTree.individuals.keys(), 'I'));
+      nextIdRef.current.F = Math.max(nextIdRef.current.F, maxNumericId(newTree.families.keys(), 'F'));
+    } else {
+      nextIdRef.current = { I: 0, F: 0 };
+    }
+    setTreeData(newTree);
+  }, []);
 
   const canLoadData = isSignedIn && isEnabled;
 
@@ -218,7 +244,7 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
         }
         console.log('[FamilyTree] Background sync complete:', cloudResult.data.individuals.size, 'individuals');
         await persistCloudData(cloudResult.data);
-        setTreeData(cloudResult.data);
+        applyTreeData(cloudResult.data);
         cloudRetryCountRef.current = 0;
         if (cloudResult.error) {
           setLastSyncResult(`Synced with warnings: ${cloudResult.error}`);
@@ -237,7 +263,7 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
       setIsBackgroundSyncing(false);
       setLoadProgress(null);
     }
-  }, [handleProgress, persistCloudData, profileRow?.claimed_gedcom_id, treeData]);
+  }, [handleProgress, persistCloudData, profileRow?.claimed_gedcom_id, treeData, applyTreeData]);
 
   const loadFromCloudWithRetry = useCallback(async (): Promise<FamilyTreeData | null> => {
     setIsLoadingFromCloud(true);
@@ -339,7 +365,7 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
 
   useEffect(() => {
     if (loadQuery.data !== undefined) {
-      setTreeData(loadQuery.data);
+      applyTreeData(loadQuery.data);
       setIsReady(true);
       setIsLoadingFromCloud(false);
       setLoadProgress(null);
@@ -351,7 +377,7 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
         }, 500);
       }
     }
-  }, [loadQuery.data, backgroundSyncFromCloud]);
+  }, [loadQuery.data, backgroundSyncFromCloud, applyTreeData]);
 
   useEffect(() => {
     if (loadQuery.error && !treeData) {
@@ -365,11 +391,11 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
 
   useEffect(() => {
     if (!canLoadData) {
-      setTreeData(null);
+      applyTreeData(null);
       setIsReady(false);
       setLastSyncResult(null);
     }
-  }, [canLoadData]);
+  }, [canLoadData, applyTreeData]);
 
   const importMutation = useMutation({
     mutationFn: async (gedcomContent: string) => {
@@ -382,7 +408,7 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
       return parsed;
     },
     onSuccess: (data) => {
-      setTreeData(data);
+      applyTreeData(data);
       setIsReady(true);
     },
   });
@@ -396,7 +422,7 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
       await safeRemoveItem(DATA_FORMAT_VERSION_KEY);
     },
     onSuccess: () => {
-      setTreeData(null);
+      applyTreeData(null);
     },
   });
 
@@ -429,21 +455,22 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
 
   const resolveClaimedPerson = useCallback(
     async (gedcomId: string): Promise<GedcomIndividual | null> => {
-      const local = treeData?.individuals.get(gedcomId);
+      const current = treeDataRef.current;
+      const local = current?.individuals.get(gedcomId);
       if (local) return local;
 
       const fetched = await fetchIndividualByGedcomId(gedcomId);
-      if (!fetched || !treeData) return fetched;
+      if (!fetched || !current) return fetched;
 
-      const updatedIndividuals = new Map(treeData.individuals);
+      const updatedIndividuals = new Map(current.individuals);
       updatedIndividuals.set(gedcomId, fetched);
-      const newTree = { ...treeData, individuals: updatedIndividuals };
-      setTreeData(newTree);
+      const newTree = { ...current, individuals: updatedIndividuals };
+      applyTreeData(newTree);
       const serialized = serializeFamilyTreeData(newTree);
       await safeSetItem(STORAGE_KEY, serialized);
       return fetched;
     },
-    [treeData]
+    [applyTreeData]
   );
 
   useEffect(() => {
@@ -468,7 +495,7 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
         await safeSetItem(LAST_CLOUD_SYNC_KEY, String(Date.now()));
         await safeSetItem(DATA_FORMAT_VERSION_KEY, CURRENT_DATA_FORMAT_VERSION);
       }
-      setTreeData(result.data);
+      applyTreeData(result.data);
       setIsReady(true);
       console.log('[FamilyTree] Full reload complete:', result.data.individuals.size, 'individuals');
       return { success: true };
@@ -478,7 +505,7 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
       return { success: false, error: result.error };
     }
     return { success: false, error: 'No data found in database' };
-  }, [handleProgress]);
+  }, [handleProgress, applyTreeData]);
 
   const refreshFromCloud = useCallback(async (): Promise<{ success: boolean; error?: string }> => {
     setIsLoadingFromCloud(true);
@@ -523,31 +550,26 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
 
   const generateNewId = useCallback(
     (prefix: string): string => {
-      if (!treeData) return prefix + '1';
-      const existing = prefix === 'I'
-        ? Array.from(treeData.individuals.keys())
-        : Array.from(treeData.families.keys());
-      let maxNum = 0;
-      for (const key of existing) {
-        const pattern = new RegExp('^' + prefix + '(\\d+)$');
-        const match = key.match(pattern);
-        if (match) {
-          const num = parseInt(match[1], 10);
-          if (num > maxNum) maxNum = num;
-        }
-      }
-      return prefix + String(maxNum + 1);
+      const data = treeDataRef.current;
+      const existing = data
+        ? (prefix === 'I' ? data.individuals.keys() : data.families.keys())
+        : [];
+      const treeMax = maxNumericId(existing, prefix);
+      const counterKey = prefix === 'F' ? 'F' : 'I';
+      const next = Math.max(treeMax, nextIdRef.current[counterKey]) + 1;
+      nextIdRef.current[counterKey] = next;
+      return prefix + String(next);
     },
-    [treeData]
+    []
   );
 
   const persistTreeData = useCallback(
     async (newTree: FamilyTreeData) => {
-      setTreeData(newTree);
+      applyTreeData(newTree);
       const serialized = serializeFamilyTreeData(newTree);
       await safeSetItem(STORAGE_KEY, serialized);
     },
-    []
+    [applyTreeData]
   );
 
   const submitEdit = useCallback(
@@ -564,34 +586,37 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
 
   const addPerson = useCallback(
     async (individual: GedcomIndividual): Promise<{ success: boolean; error?: string }> => {
-      if (!treeData) return { success: false, error: 'No tree data loaded' };
+      const current = treeDataRef.current;
+      if (!current) return { success: false, error: 'No tree data loaded' };
 
       console.log('[FamilyTree] Adding new person:', individual.id, individual.name);
 
-      const updatedIndividuals = new Map(treeData.individuals);
+      const updatedIndividuals = new Map(current.individuals);
       updatedIndividuals.set(individual.id, individual);
-      const newTree = { ...treeData, individuals: updatedIndividuals };
+      const newTree = { ...current, individuals: updatedIndividuals };
       await persistTreeData(newTree);
 
       const result = await createIndividualInSupabase(individual);
       if (!result.success) {
         console.error('[FamilyTree] Cloud create failed, local saved:', result.error);
+        return { success: false, error: result.error ?? 'Cloud create failed' };
       }
 
       return { success: true };
     },
-    [treeData, persistTreeData]
+    [persistTreeData]
   );
 
   const updatePerson = useCallback(
     async (individual: GedcomIndividual): Promise<{ success: boolean; error?: string }> => {
-      if (!treeData) return { success: false, error: 'No tree data loaded' };
+      const current = treeDataRef.current;
+      if (!current) return { success: false, error: 'No tree data loaded' };
 
       console.log('[FamilyTree] Updating person:', individual.id, individual.name);
 
-      const updatedIndividuals = new Map(treeData.individuals);
+      const updatedIndividuals = new Map(current.individuals);
       updatedIndividuals.set(individual.id, individual);
-      const newTree = { ...treeData, individuals: updatedIndividuals };
+      const newTree = { ...current, individuals: updatedIndividuals };
       await persistTreeData(newTree);
 
       const result = await updateIndividualInSupabase(individual);
@@ -601,7 +626,7 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
 
       return { success: true };
     },
-    [treeData, persistTreeData]
+    [persistTreeData]
   );
 
   const addChildToFamily = useCallback(
@@ -609,9 +634,10 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
       childIndividual: GedcomIndividual,
       familyId: string
     ): Promise<{ success: boolean; error?: string }> => {
-      if (!treeData) return { success: false, error: 'No tree data loaded' };
+      const current = treeDataRef.current;
+      if (!current) return { success: false, error: 'No tree data loaded' };
 
-      const family = treeData.families.get(familyId);
+      const family = current.families.get(familyId);
       if (!family) return { success: false, error: 'Family not found: ' + familyId };
 
       console.log('[FamilyTree] Adding child', childIndividual.id, 'to family', familyId);
@@ -629,10 +655,10 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
         childrenIds: [...family.childrenIds, childIndividual.id],
       };
 
-      const updatedIndividuals = new Map(treeData.individuals);
+      const updatedIndividuals = new Map(current.individuals);
       updatedIndividuals.set(updatedChild.id, updatedChild);
 
-      const updatedFamilies = new Map(treeData.families);
+      const updatedFamilies = new Map(current.families);
       updatedFamilies.set(familyId, updatedFamily);
 
       const newTree: FamilyTreeData = {
@@ -657,7 +683,7 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
         '- parents:', family.husbandId, '/', family.wifeId);
       return { success: true };
     },
-    [treeData, persistTreeData]
+    [persistTreeData]
   );
 
   const createFamilyAndAddChild = useCallback(
@@ -666,13 +692,14 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
       parent1Id: string,
       parent2Id?: string
     ): Promise<{ success: boolean; familyId?: string; error?: string }> => {
-      if (!treeData) return { success: false, error: 'No tree data loaded' };
+      const current = treeDataRef.current;
+      if (!current) return { success: false, error: 'No tree data loaded' };
 
       const newFamilyId = generateNewId('F');
       console.log('[FamilyTree] Creating new family', newFamilyId, 'for child', childIndividual.id);
 
-      const parent1 = treeData.individuals.get(parent1Id);
-      const parent2 = parent2Id ? treeData.individuals.get(parent2Id) : undefined;
+      const parent1 = current.individuals.get(parent1Id);
+      const parent2 = parent2Id ? current.individuals.get(parent2Id) : undefined;
 
       if (!parent1) {
         console.error('[FamilyTree] Parent1 not found:', parent1Id);
@@ -713,7 +740,7 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
         familyAsChild: newFamilyId,
       };
 
-      const updatedIndividuals = new Map(treeData.individuals);
+      const updatedIndividuals = new Map(current.individuals);
       updatedIndividuals.set(updatedChild.id, updatedChild);
 
       if (parent1) {
@@ -735,7 +762,7 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
         updatedIndividuals.set(parent2Id, updatedParent2);
       }
 
-      const updatedFamilies = new Map(treeData.families);
+      const updatedFamilies = new Map(current.families);
       updatedFamilies.set(newFamilyId, newFamily);
 
       const newTree: FamilyTreeData = {
@@ -761,7 +788,7 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
 
       return { success: true, familyId: newFamilyId };
     },
-    [treeData, generateNewId, persistTreeData]
+    [generateNewId, persistTreeData]
   );
 
   const addSpouse = useCallback(
@@ -771,9 +798,10 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
       marriageDate?: string,
       marriagePlace?: string
     ): Promise<{ success: boolean; familyId?: string; error?: string }> => {
-      if (!treeData) return { success: false, error: 'No tree data loaded' };
+      const current = treeDataRef.current;
+      if (!current) return { success: false, error: 'No tree data loaded' };
 
-      const person = treeData.individuals.get(personId);
+      const person = current.individuals.get(personId);
       if (!person) return { success: false, error: 'Person not found' };
 
       const newFamilyId = generateNewId('F');
@@ -809,11 +837,11 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
         familiesAsSpouse: [...spouseIndividual.familiesAsSpouse, newFamilyId],
       };
 
-      const updatedIndividuals = new Map(treeData.individuals);
+      const updatedIndividuals = new Map(current.individuals);
       updatedIndividuals.set(personId, updatedPerson);
       updatedIndividuals.set(spouseIndividual.id, updatedSpouse);
 
-      const updatedFamilies = new Map(treeData.families);
+      const updatedFamilies = new Map(current.families);
       updatedFamilies.set(newFamilyId, newFamily);
 
       const newTree: FamilyTreeData = {
@@ -822,13 +850,27 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
       };
       await persistTreeData(newTree);
 
-      await createIndividualInSupabase(updatedSpouse);
-      await upsertFamilyInSupabase(newFamily);
-      await updateIndividualInSupabase(updatedPerson);
+      const spouseResult = await createIndividualInSupabase(updatedSpouse);
+      if (!spouseResult.success) {
+        console.error('[FamilyTree] Cloud create spouse failed:', spouseResult.error);
+        return { success: false, familyId: newFamilyId, error: spouseResult.error ?? 'Cloud create spouse failed' };
+      }
+
+      const famResult = await upsertFamilyInSupabase(newFamily);
+      if (!famResult.success) {
+        console.error('[FamilyTree] Cloud create spouse family failed:', famResult.error);
+        return { success: false, familyId: newFamilyId, error: famResult.error ?? 'Cloud create family failed' };
+      }
+
+      const personResult = await updateIndividualInSupabase(updatedPerson);
+      if (!personResult.success) {
+        console.error('[FamilyTree] Cloud update person after spouse add failed:', personResult.error);
+        return { success: false, familyId: newFamilyId, error: personResult.error ?? 'Cloud update person failed' };
+      }
 
       return { success: true, familyId: newFamilyId };
     },
-    [treeData, generateNewId, persistTreeData]
+    [generateNewId, persistTreeData]
   );
 
   const linkExistingSpouses = useCallback(
@@ -838,19 +880,23 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
       marriageDate?: string,
       marriagePlace?: string
     ): Promise<{ success: boolean; familyId?: string; error?: string }> => {
-      if (!treeData) return { success: false, error: 'No tree data loaded' };
+      let current = treeDataRef.current;
+      if (!current) return { success: false, error: 'No tree data loaded' };
 
-      let person1 = treeData.individuals.get(person1Id);
-      let person2 = treeData.individuals.get(person2Id);
+      let person1 = current.individuals.get(person1Id);
+      let person2 = current.individuals.get(person2Id);
 
       if (!person1) {
         console.log('[FamilyTree] Person 1 not in local cache, fetching from Supabase:', person1Id);
         const fetched = await fetchIndividualByGedcomId(person1Id);
         if (fetched) {
           person1 = fetched;
-          const updatedIndividuals = new Map(treeData.individuals);
+          current = treeDataRef.current ?? current;
+          const updatedIndividuals = new Map(current.individuals);
           updatedIndividuals.set(person1Id, fetched);
-          setTreeData({ ...treeData, individuals: updatedIndividuals });
+          const patched = { ...current, individuals: updatedIndividuals };
+          applyTreeData(patched);
+          current = patched;
         }
       }
       if (!person2) {
@@ -858,16 +904,19 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
         const fetched = await fetchIndividualByGedcomId(person2Id);
         if (fetched) {
           person2 = fetched;
-          const updatedIndividuals = new Map(treeData.individuals);
+          current = treeDataRef.current ?? current;
+          const updatedIndividuals = new Map(current.individuals);
           updatedIndividuals.set(person2Id, fetched);
-          setTreeData({ ...treeData, individuals: updatedIndividuals });
+          const patched = { ...current, individuals: updatedIndividuals };
+          applyTreeData(patched);
+          current = patched;
         }
       }
 
       if (!person1) return { success: false, error: `Person 1 (${person1Id}) not found in local data or database` };
       if (!person2) return { success: false, error: `Person 2 (${person2Id}) not found in local data or database` };
 
-      const existingFamily = Array.from(treeData.families.values()).find((f) => {
+      const existingFamily = Array.from(current.families.values()).find((f) => {
         return (
           (f.husbandId === person1Id && f.wifeId === person2Id) ||
           (f.husbandId === person2Id && f.wifeId === person1Id)
@@ -909,11 +958,11 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
         familiesAsSpouse: [...person2.familiesAsSpouse, newFamilyId],
       };
 
-      const updatedIndividuals = new Map(treeData.individuals);
+      const updatedIndividuals = new Map(current.individuals);
       updatedIndividuals.set(person1Id, updatedPerson1);
       updatedIndividuals.set(person2Id, updatedPerson2);
 
-      const updatedFamilies = new Map(treeData.families);
+      const updatedFamilies = new Map(current.families);
       updatedFamilies.set(newFamilyId, newFamily);
 
       const newTree: FamilyTreeData = {
@@ -928,16 +977,17 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
 
       return { success: true, familyId: newFamilyId };
     },
-    [treeData, generateNewId, persistTreeData]
+    [generateNewId, persistTreeData, applyTreeData]
   );
 
   const updateFamily = useCallback(
     async (family: GedcomFamily): Promise<{ success: boolean; error?: string }> => {
-      if (!treeData) return { success: false, error: 'No tree data loaded' };
+      const current = treeDataRef.current;
+      if (!current) return { success: false, error: 'No tree data loaded' };
 
-      const updatedFamilies = new Map(treeData.families);
+      const updatedFamilies = new Map(current.families);
       updatedFamilies.set(family.id, family);
-      const newTree: FamilyTreeData = { ...treeData, families: updatedFamilies };
+      const newTree: FamilyTreeData = { ...current, families: updatedFamilies };
       await persistTreeData(newTree);
 
       const result = await upsertFamilyInSupabase(family);
@@ -947,7 +997,7 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
 
       return { success: true };
     },
-    [treeData, persistTreeData]
+    [persistTreeData]
   );
 
   const loadPendingEdits = useCallback(async (): Promise<PendingEdit[]> => {
