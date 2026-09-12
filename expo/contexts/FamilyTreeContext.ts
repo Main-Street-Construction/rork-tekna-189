@@ -546,7 +546,10 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
 
       const updatedIndividuals = new Map(latest.individuals);
       updatedIndividuals.set(gedcomId, fetched);
-      applyTreeData({ ...latest, individuals: updatedIndividuals });
+      const newTree = { ...latest, individuals: updatedIndividuals };
+      applyTreeData(newTree);
+      const serialized = serializeFamilyTreeData(newTree);
+      await safeSetItem(STORAGE_KEY, serialized);
       return fetched;
     },
     [applyTreeData]
@@ -677,14 +680,14 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
 
   const addPerson = useCallback(
     async (individual: GedcomIndividual): Promise<{ success: boolean; error?: string }> => {
-      const treeData = treeDataRef.current;
-      if (!treeData) return { success: false, error: 'No tree data loaded' };
+      const current = treeDataRef.current;
+      if (!current) return { success: false, error: 'No tree data loaded' };
 
       console.log('[FamilyTree] Adding new person:', individual.id, individual.name);
 
-      const updatedIndividuals = new Map(treeData.individuals);
+      const updatedIndividuals = new Map(current.individuals);
       updatedIndividuals.set(individual.id, individual);
-      const newTree = { ...treeData, individuals: updatedIndividuals };
+      const newTree = { ...current, individuals: updatedIndividuals };
       await persistTreeData(newTree);
 
       const result = await createIndividualInSupabase(individual);
@@ -700,14 +703,14 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
 
   const updatePerson = useCallback(
     async (individual: GedcomIndividual): Promise<{ success: boolean; error?: string }> => {
-      const treeData = treeDataRef.current;
-      if (!treeData) return { success: false, error: 'No tree data loaded' };
+      const current = treeDataRef.current;
+      if (!current) return { success: false, error: 'No tree data loaded' };
 
       console.log('[FamilyTree] Updating person:', individual.id, individual.name);
 
-      const updatedIndividuals = new Map(treeData.individuals);
+      const updatedIndividuals = new Map(current.individuals);
       updatedIndividuals.set(individual.id, individual);
-      const newTree = { ...treeData, individuals: updatedIndividuals };
+      const newTree = { ...current, individuals: updatedIndividuals };
       await persistTreeData(newTree);
 
       const result = await updateIndividualInSupabase(individual);
@@ -725,10 +728,10 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
       childIndividual: GedcomIndividual,
       familyId: string
     ): Promise<{ success: boolean; error?: string }> => {
-      const treeData = treeDataRef.current;
-      if (!treeData) return { success: false, error: 'No tree data loaded' };
+      const current = treeDataRef.current;
+      if (!current) return { success: false, error: 'No tree data loaded' };
 
-      const family = treeData.families.get(familyId);
+      const family = current.families.get(familyId);
       if (!family) return { success: false, error: 'Family not found: ' + familyId };
 
       console.log('[FamilyTree] Adding child', childIndividual.id, 'to family', familyId);
@@ -746,10 +749,10 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
         childrenIds: [...family.childrenIds, childIndividual.id],
       };
 
-      const updatedIndividuals = new Map(treeData.individuals);
+      const updatedIndividuals = new Map(current.individuals);
       updatedIndividuals.set(updatedChild.id, updatedChild);
 
-      const updatedFamilies = new Map(treeData.families);
+      const updatedFamilies = new Map(current.families);
       updatedFamilies.set(familyId, updatedFamily);
 
       const newTree: FamilyTreeData = {
@@ -783,14 +786,14 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
       parent1Id: string,
       parent2Id?: string
     ): Promise<{ success: boolean; familyId?: string; error?: string }> => {
-      const treeData = treeDataRef.current;
-      if (!treeData) return { success: false, error: 'No tree data loaded' };
+      const current = treeDataRef.current;
+      if (!current) return { success: false, error: 'No tree data loaded' };
 
       const newFamilyId = generateNewId('F');
       console.log('[FamilyTree] Creating new family', newFamilyId, 'for child', childIndividual.id);
 
-      const parent1 = treeData.individuals.get(parent1Id);
-      const parent2 = parent2Id ? treeData.individuals.get(parent2Id) : undefined;
+      const parent1 = current.individuals.get(parent1Id);
+      const parent2 = parent2Id ? current.individuals.get(parent2Id) : undefined;
 
       if (!parent1) {
         console.error('[FamilyTree] Parent1 not found:', parent1Id);
@@ -831,7 +834,7 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
         familyAsChild: newFamilyId,
       };
 
-      const updatedIndividuals = new Map(treeData.individuals);
+      const updatedIndividuals = new Map(current.individuals);
       updatedIndividuals.set(updatedChild.id, updatedChild);
 
       if (parent1) {
@@ -851,7 +854,7 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
         updatedIndividuals.set(parent2Id, updatedParent2);
       }
 
-      const updatedFamilies = new Map(treeData.families);
+      const updatedFamilies = new Map(current.families);
       updatedFamilies.set(newFamilyId, newFamily);
 
       const newTree: FamilyTreeData = {
@@ -887,10 +890,10 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
       marriageDate?: string,
       marriagePlace?: string
     ): Promise<{ success: boolean; familyId?: string; error?: string }> => {
-      const treeData = treeDataRef.current;
-      if (!treeData) return { success: false, error: 'No tree data loaded' };
+      const current = treeDataRef.current;
+      if (!current) return { success: false, error: 'No tree data loaded' };
 
-      const person = treeData.individuals.get(personId);
+      const person = current.individuals.get(personId);
       if (!person) return { success: false, error: 'Person not found' };
 
       const newFamilyId = generateNewId('F');
@@ -926,11 +929,11 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
         familiesAsSpouse: addFamilyToSpouseList(spouseIndividual.familiesAsSpouse, newFamilyId),
       };
 
-      const updatedIndividuals = new Map(treeData.individuals);
+      const updatedIndividuals = new Map(current.individuals);
       updatedIndividuals.set(personId, updatedPerson);
       updatedIndividuals.set(spouseIndividual.id, updatedSpouse);
 
-      const updatedFamilies = new Map(treeData.families);
+      const updatedFamilies = new Map(current.families);
       updatedFamilies.set(newFamilyId, newFamily);
 
       const newTree: FamilyTreeData = {
@@ -969,21 +972,23 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
       marriageDate?: string,
       marriagePlace?: string
     ): Promise<{ success: boolean; familyId?: string; error?: string }> => {
-      const treeData = treeDataRef.current;
-      if (!treeData) return { success: false, error: 'No tree data loaded' };
+      let current = treeDataRef.current;
+      if (!current) return { success: false, error: 'No tree data loaded' };
 
-      let person1 = treeData.individuals.get(person1Id);
-      let person2 = treeData.individuals.get(person2Id);
+      let person1 = current.individuals.get(person1Id);
+      let person2 = current.individuals.get(person2Id);
 
       if (!person1) {
         console.log('[FamilyTree] Person 1 not in local cache, fetching from Supabase:', person1Id);
         const fetched = await fetchIndividualByGedcomId(person1Id);
         if (fetched) {
           person1 = fetched;
-          const latest = treeDataRef.current ?? treeData;
-          const updatedIndividuals = new Map(latest.individuals);
+          current = treeDataRef.current ?? current;
+          const updatedIndividuals = new Map(current.individuals);
           updatedIndividuals.set(person1Id, fetched);
-          applyTreeData({ ...latest, individuals: updatedIndividuals });
+          const patched = { ...current, individuals: updatedIndividuals };
+          applyTreeData(patched);
+          current = patched;
         }
       }
       if (!person2) {
@@ -991,18 +996,19 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
         const fetched = await fetchIndividualByGedcomId(person2Id);
         if (fetched) {
           person2 = fetched;
-          const latest = treeDataRef.current ?? treeData;
-          const updatedIndividuals = new Map(latest.individuals);
+          current = treeDataRef.current ?? current;
+          const updatedIndividuals = new Map(current.individuals);
           updatedIndividuals.set(person2Id, fetched);
-          applyTreeData({ ...latest, individuals: updatedIndividuals });
+          const patched = { ...current, individuals: updatedIndividuals };
+          applyTreeData(patched);
+          current = patched;
         }
       }
 
       if (!person1) return { success: false, error: `Person 1 (${person1Id}) not found in local data or database` };
       if (!person2) return { success: false, error: `Person 2 (${person2Id}) not found in local data or database` };
 
-      const latestTree = treeDataRef.current ?? treeData;
-      const existingFamily = Array.from(latestTree.families.values()).find((f) => {
+      const existingFamily = Array.from(current.families.values()).find((f) => {
         return (
           (f.husbandId === person1Id && f.wifeId === person2Id) ||
           (f.husbandId === person2Id && f.wifeId === person1Id)
@@ -1044,11 +1050,11 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
         familiesAsSpouse: addFamilyToSpouseList(person2.familiesAsSpouse, newFamilyId),
       };
 
-      const updatedIndividuals = new Map(latestTree.individuals);
+      const updatedIndividuals = new Map(current.individuals);
       updatedIndividuals.set(person1Id, updatedPerson1);
       updatedIndividuals.set(person2Id, updatedPerson2);
 
-      const updatedFamilies = new Map(latestTree.families);
+      const updatedFamilies = new Map(current.families);
       updatedFamilies.set(newFamilyId, newFamily);
 
       const newTree: FamilyTreeData = {
@@ -1082,12 +1088,12 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
 
   const updateFamily = useCallback(
     async (family: GedcomFamily): Promise<{ success: boolean; error?: string }> => {
-      const treeData = treeDataRef.current;
-      if (!treeData) return { success: false, error: 'No tree data loaded' };
+      const current = treeDataRef.current;
+      if (!current) return { success: false, error: 'No tree data loaded' };
 
-      const updatedFamilies = new Map(treeData.families);
+      const updatedFamilies = new Map(current.families);
       updatedFamilies.set(family.id, family);
-      const newTree: FamilyTreeData = { ...treeData, families: updatedFamilies };
+      const newTree: FamilyTreeData = { ...current, families: updatedFamilies };
       await persistTreeData(newTree);
 
       const result = await upsertFamilyInSupabase(family);
