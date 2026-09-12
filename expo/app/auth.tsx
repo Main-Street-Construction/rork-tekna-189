@@ -16,6 +16,7 @@ import * as Haptics from 'expo-haptics';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import Colors from '@/constants/colors';
 import { useAuth } from '@/contexts/AuthContext';
+import { useAndroidKeyboardScroll } from '@/lib/keyboard-scroll';
 
 const PENDING_FULL_NAME_KEY = 'pending_signup_full_name';
 
@@ -38,6 +39,7 @@ export default function AuthScreen() {
   const [errorMessage, setErrorMessage] = useState<string>('');
   const [successMessage, setSuccessMessage] = useState<string>('');
   const [pendingEmail, setPendingEmail] = useState<string>('');
+  const { scrollRef, keyboardPadding, onScrollOffset, fieldProps } = useAndroidKeyboardScroll();
 
   const isPending = signInPending || signUpPending || resetPasswordPending;
 
@@ -269,15 +271,19 @@ export default function AuthScreen() {
       />
       <KeyboardAvoidingView
         style={styles.flex}
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         keyboardVerticalOffset={Platform.OS === 'ios' ? 64 : 0}
       >
         <ScrollView
-          contentContainerStyle={styles.scrollContent}
+          ref={scrollRef}
+          contentContainerStyle={[styles.scrollContent, { paddingBottom: 80 + keyboardPadding }]}
           keyboardShouldPersistTaps="handled"
           keyboardDismissMode="on-drag"
           showsVerticalScrollIndicator={false}
           contentInsetAdjustmentBehavior="automatic"
+          automaticallyAdjustKeyboardInsets={Platform.OS === 'ios'}
+          onScroll={(e) => onScrollOffset(e.nativeEvent.contentOffset.y)}
+          scrollEventThrottle={16}
         >
           <View style={styles.header}>
             <View style={styles.iconCircle}>
@@ -315,7 +321,7 @@ export default function AuthScreen() {
 
           <View style={styles.form}>
             <View style={styles.inputGroup}>
-              <View style={styles.inputRow}>
+              <View style={styles.inputRow} {...fieldProps('email')}>
                 <Mail size={18} color={Colors.textSecondary} />
                 <TextInput
                   style={styles.input}
@@ -323,6 +329,7 @@ export default function AuthScreen() {
                   placeholderTextColor={Colors.textLight}
                   value={email}
                   onChangeText={setEmail}
+                  onFocus={fieldProps('email').onFocus}
                   keyboardType="email-address"
                   autoCapitalize="none"
                   autoCorrect={false}
@@ -333,7 +340,7 @@ export default function AuthScreen() {
               {mode === 'signup' && (
                 <>
                   <View style={styles.inputDivider} />
-                  <View style={styles.inputRow}>
+                  <View style={styles.inputRow} {...fieldProps('firstName')}>
                     <User size={18} color={Colors.textSecondary} />
                     <TextInput
                       style={styles.input}
@@ -341,6 +348,7 @@ export default function AuthScreen() {
                       placeholderTextColor={Colors.textLight}
                       value={firstName}
                       onChangeText={setFirstName}
+                      onFocus={fieldProps('firstName').onFocus}
                       autoCapitalize="words"
                       autoCorrect={false}
                       textContentType="givenName"
@@ -348,7 +356,7 @@ export default function AuthScreen() {
                     />
                   </View>
                   <View style={styles.inputDivider} />
-                  <View style={styles.inputRow}>
+                  <View style={styles.inputRow} {...fieldProps('lastName')}>
                     <User size={18} color={Colors.textSecondary} />
                     <TextInput
                       style={styles.input}
@@ -356,6 +364,7 @@ export default function AuthScreen() {
                       placeholderTextColor={Colors.textLight}
                       value={lastName}
                       onChangeText={setLastName}
+                      onFocus={fieldProps('lastName').onFocus}
                       autoCapitalize="words"
                       autoCorrect={false}
                       textContentType="familyName"
@@ -368,7 +377,7 @@ export default function AuthScreen() {
               {mode !== 'reset' && (
                 <>
                   <View style={styles.inputDivider} />
-                  <View style={styles.inputRow}>
+                  <View style={styles.inputRow} {...fieldProps('password')}>
                     <Lock size={18} color={Colors.textSecondary} />
                     <TextInput
                       style={styles.input}
@@ -376,6 +385,7 @@ export default function AuthScreen() {
                       placeholderTextColor={Colors.textLight}
                       value={password}
                       onChangeText={setPassword}
+                      onFocus={fieldProps('password').onFocus}
                       secureTextEntry={!showPassword}
                       autoCapitalize="none"
                       testID="auth-password-input"
@@ -397,7 +407,7 @@ export default function AuthScreen() {
               {mode === 'signup' && (
                 <>
                   <View style={styles.inputDivider} />
-                  <View style={styles.inputRow}>
+                  <View style={styles.inputRow} {...fieldProps('confirmPassword')}>
                     <Lock size={18} color={Colors.textSecondary} />
                     <TextInput
                       style={styles.input}
@@ -405,6 +415,7 @@ export default function AuthScreen() {
                       placeholderTextColor={Colors.textLight}
                       value={confirmPassword}
                       onChangeText={setConfirmPassword}
+                      onFocus={fieldProps('confirmPassword').onFocus}
                       secureTextEntry={!showPassword}
                       autoCapitalize="none"
                       testID="auth-confirm-password-input"

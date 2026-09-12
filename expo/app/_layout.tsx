@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Stack, useRouter } from "expo-router";
+import { Platform } from "react-native";
 import * as SplashScreen from "expo-splash-screen";
 import React, { useEffect, useState } from "react";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
@@ -100,7 +101,11 @@ function RootLayoutNav() {
       />
       <Stack.Screen
         name="auth"
-        options={{ presentation: "modal", title: "Account" }}
+        options={{
+          // Android modals don't resize for the keyboard and cover the fields.
+          presentation: Platform.OS === "android" ? "card" : "modal",
+          title: "Account",
+        }}
       />
       <Stack.Screen
         name="admin/index"
@@ -120,7 +125,10 @@ function RootLayoutNav() {
       />
       <Stack.Screen
         name="update-password"
-        options={{ presentation: "modal", title: "Update Password" }}
+        options={{
+          presentation: Platform.OS === "android" ? "card" : "modal",
+          title: "Update Password",
+        }}
       />
     </Stack>
     </>

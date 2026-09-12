@@ -27,8 +27,9 @@
         "backgroundColor": "#ffffff"
       },
       "package": "app.rork.family_tree_research_app",
-      "versionCode": 3,
-      "softwareKeyboardLayoutMode": "resize"
+      "versionCode": 4,
+      "permissions": ["android.permission.POST_NOTIFICATIONS"],
+      "softwareKeyboardLayoutMode": "pan"
     },
     "web": {
       "favicon": "./assets/images/favicon.png"

@@ -17,6 +17,7 @@ import * as Haptics from 'expo-haptics';
 import { useMutation } from '@tanstack/react-query';
 import Colors from '@/constants/colors';
 import { supabase } from '@/lib/supabase';
+import { useAndroidKeyboardScroll } from '@/lib/keyboard-scroll';
 
 export default function UpdatePasswordScreen() {
   const router = useRouter();
@@ -27,6 +28,7 @@ export default function UpdatePasswordScreen() {
   const [showConfirmPassword, setShowConfirmPassword] = useState<boolean>(false);
   const [errorMessage, setErrorMessage] = useState<string>('');
   const [success, setSuccess] = useState<boolean>(false);
+  const { scrollRef, keyboardPadding, onScrollOffset, fieldProps } = useAndroidKeyboardScroll();
 
   const successScale = useRef(new Animated.Value(0)).current;
   const successOpacity = useRef(new Animated.Value(0)).current;
@@ -165,9 +167,13 @@ export default function UpdatePasswordScreen() {
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       >
         <ScrollView
-          contentContainerStyle={styles.scrollContent}
+          ref={scrollRef}
+          contentContainerStyle={[styles.scrollContent, { paddingBottom: 40 + keyboardPadding }]}
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
+          automaticallyAdjustKeyboardInsets={Platform.OS === 'ios'}
+          onScroll={(e) => onScrollOffset(e.nativeEvent.contentOffset.y)}
+          scrollEventThrottle={16}
         >
           <View style={styles.header}>
             <View style={styles.iconCircle}>
@@ -188,7 +194,7 @@ export default function UpdatePasswordScreen() {
 
           <View style={styles.form}>
             <View style={styles.inputGroup}>
-              <View style={styles.inputRow}>
+              <View style={styles.inputRow} {...fieldProps('newPassword')}>
                 <Lock size={18} color={Colors.textSecondary} />
                 <TextInput
                   style={styles.input}
@@ -196,6 +202,7 @@ export default function UpdatePasswordScreen() {
                   placeholderTextColor={Colors.textLight}
                   value={newPassword}
                   onChangeText={setNewPassword}
+                  onFocus={fieldProps('newPassword').onFocus}
                   secureTextEntry={!showPassword}
                   autoCapitalize="none"
                   autoCorrect={false}
@@ -215,7 +222,7 @@ export default function UpdatePasswordScreen() {
 
               <View style={styles.inputDivider} />
 
-              <View style={styles.inputRow}>
+              <View style={styles.inputRow} {...fieldProps('confirmPassword')}>
                 <Lock size={18} color={Colors.textSecondary} />
                 <TextInput
                   style={styles.input}
@@ -223,6 +230,7 @@ export default function UpdatePasswordScreen() {
                   placeholderTextColor={Colors.textLight}
                   value={confirmPassword}
                   onChangeText={setConfirmPassword}
+                  onFocus={fieldProps('confirmPassword').onFocus}
                   secureTextEntry={!showConfirmPassword}
                   autoCapitalize="none"
                   autoCorrect={false}

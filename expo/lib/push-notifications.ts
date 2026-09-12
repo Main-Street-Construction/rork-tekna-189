@@ -24,7 +24,7 @@ export async function registerAdminPushNotifications(): Promise<void> {
 
   if (Platform.OS === 'android') {
     await Notifications.setNotificationChannelAsync('default', {
-      name: 'default',
+      name: 'Access requests',
       importance: Notifications.AndroidImportance.MAX,
       vibrationPattern: [0, 250, 250, 250],
     });
@@ -47,18 +47,24 @@ export async function registerAdminPushNotifications(): Promise<void> {
     Constants.expoConfig?.extra?.eas?.projectId ??
     Constants.easConfig?.projectId;
 
-  const tokenData = await Notifications.getExpoPushTokenAsync(
-    projectId ? { projectId } : undefined
-  );
+  if (!projectId) {
+    console.warn('[Push] Missing EAS projectId — cannot register a push token');
+    return;
+  }
+
+  const tokenData = await Notifications.getExpoPushTokenAsync({ projectId });
   const token = tokenData.data;
 
   if (token === lastRegisteredToken) return;
 
   const result = await registerPushToken(token, Platform.OS);
-  if (result.success) {
-    lastRegisteredToken = token;
-    console.log('[Push] Registered admin token');
+  if (!result.success) {
+    console.warn('[Push] Failed to save token:', result.error);
+    return;
   }
+
+  lastRegisteredToken = token;
+  console.log('[Push] Registered admin token');
 }
 
 export async function unregisterAdminPushNotifications(): Promise<void> {

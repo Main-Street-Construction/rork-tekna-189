@@ -9,6 +9,7 @@ import { supabase } from '@/lib/supabase';
 import {
   setProfileFullName,
   notifyAdminsAccessRequest,
+  flushPendingAccessNotifications,
 } from '@/lib/supabase-rpc';
 import {
   registerAdminPushNotifications,
@@ -179,10 +180,16 @@ export const [AuthProvider, useAuth] = createContextHook(() => {
   }, [profileQuery.data]);
 
   useEffect(() => {
-    if (profileRow?.is_admin && session) {
-      void registerAdminPushNotifications();
-    }
-  }, [profileRow?.is_admin, session]);
+    if (!profileRow?.is_admin || !session?.user?.id) return;
+    void (async () => {
+      try {
+        await registerAdminPushNotifications();
+      } catch (e) {
+        console.warn('[Push] register failed:', e);
+      }
+      await flushPendingAccessNotifications();
+    })();
+  }, [profileRow?.is_admin, session?.user?.id]);
 
   const signInMutation = useMutation({
     mutationFn: async ({ email, password }: { email: string; password: string }) => {
@@ -229,17 +236,13 @@ export const [AuthProvider, useAuth] = createContextHook(() => {
       if (data.session && data.user) {
         await ensureProfileExists(data.user.id, data.user.email ?? email);
         if (trimmedName) {
-          const nameResult = await setProfileFullName(trimmedName);
-          if (nameResult.success) {
-            void notifyAdminsAccessRequest(nameResult.userId ?? data.user.id);
-          } else {
-            void notifyAdminsAccessRequest(data.user.id);
-          }
+          await setProfileFullName(trimmedName);
         }
-      } else if (data.user && trimmedName) {
-        // Email confirmation required — name is in user_metadata + DB trigger;
-        // still notify admins immediately so the request is not lost.
-        void notifyAdminsAccessRequest(data.user.id);
+        await notifyAdminsAccessRequest(data.user.id);
+      } else if (data.user) {
+        // Email confirmation means there is no session yet, so the name lives
+        // in user metadata until the notify function copies it onto the profile.
+        await notifyAdminsAccessRequest(data.user.id);
       }
       return { ...data, needsEmailConfirmation };
     },

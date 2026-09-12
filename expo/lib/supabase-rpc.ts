@@ -23,6 +23,21 @@ export async function notifyAdminsAccessRequest(userId: string): Promise<void> {
   }
 }
 
+export async function flushPendingAccessNotifications(): Promise<void> {
+  try {
+    const { data, error } = await supabase.functions.invoke('notify-admins-access-request', {
+      body: { flush_pending: true },
+    });
+    if (error) {
+      console.warn('[RPC] flush pending access notifications failed:', error.message);
+      return;
+    }
+    console.log('[RPC] flush pending access notifications:', data);
+  } catch (e) {
+    console.warn('[RPC] flush pending access notifications error:', e);
+  }
+}
+
 export async function adminDeleteUser(targetUserId: string): Promise<{ success: boolean; error?: string }> {
   try {
     const { data, error } = await supabase.functions.invoke('admin-delete-user', {
@@ -108,6 +123,18 @@ export interface AdminUserRow {
 }
 
 export async function adminListUsersWithEmail(): Promise<{ users: AdminUserRow[]; error?: string }> {
+  try {
+    const { data, error } = await supabase.functions.invoke('admin-list-users', { body: {} });
+    const users = data && typeof data === 'object' && 'users' in data
+      ? (data as { users?: AdminUserRow[] }).users
+      : undefined;
+    if (!error && Array.isArray(users)) {
+      return { users };
+    }
+  } catch (e) {
+    console.warn('[RPC] admin-list-users failed, falling back to RPC:', e);
+  }
+
   const { data, error } = await supabase.rpc('admin_list_users_with_email');
   if (error) return { users: [], error: error.message };
   return { users: (data ?? []) as AdminUserRow[] };
