@@ -16,6 +16,28 @@ Notifications.setNotificationHandler({
 
 let lastRegisteredToken: string | null = null;
 
+function canShowAlerts(settings: Notifications.NotificationPermissionsStatus): boolean {
+  if (Platform.OS === 'ios') {
+    // Root status can be "granted" for provisional delivery, which does not show banners.
+    return settings.ios?.status === Notifications.IosAuthorizationStatus.AUTHORIZED;
+  }
+  return settings.status === 'granted';
+}
+
+async function ensureAlertPermission(): Promise<boolean> {
+  const existing = await Notifications.getPermissionsAsync();
+  if (canShowAlerts(existing)) return true;
+
+  const requested = await Notifications.requestPermissionsAsync({
+    ios: {
+      allowAlert: true,
+      allowBadge: true,
+      allowSound: true,
+    },
+  });
+  return canShowAlerts(requested);
+}
+
 export async function registerAdminPushNotifications(): Promise<void> {
   if (!Device.isDevice) {
     console.log('[Push] Skipping — not a physical device');
@@ -30,15 +52,8 @@ export async function registerAdminPushNotifications(): Promise<void> {
     });
   }
 
-  const { status: existing } = await Notifications.getPermissionsAsync();
-  let finalStatus = existing;
-
-  if (existing !== 'granted') {
-    const { status } = await Notifications.requestPermissionsAsync();
-    finalStatus = status;
-  }
-
-  if (finalStatus !== 'granted') {
+  const allowed = await ensureAlertPermission();
+  if (!allowed) {
     console.log('[Push] Permission not granted');
     return;
   }
