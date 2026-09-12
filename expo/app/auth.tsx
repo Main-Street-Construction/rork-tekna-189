@@ -16,7 +16,6 @@ import * as Haptics from 'expo-haptics';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import Colors from '@/constants/colors';
 import { useAuth } from '@/contexts/AuthContext';
-import { setProfileFullName, notifyAdminsAccessRequest } from '@/lib/supabase-rpc';
 
 const PENDING_FULL_NAME_KEY = 'pending_signup_full_name';
 
@@ -31,7 +30,8 @@ export default function AuthScreen() {
 
   const [mode, setMode] = useState<AuthMode>('signup');
   const [email, setEmail] = useState<string>('');
-  const [fullName, setFullName] = useState<string>('');
+  const [firstName, setFirstName] = useState<string>('');
+  const [lastName, setLastName] = useState<string>('');
   const [password, setPassword] = useState<string>('');
   const [confirmPassword, setConfirmPassword] = useState<string>('');
   const [showPassword, setShowPassword] = useState<boolean>(false);
@@ -73,9 +73,17 @@ export default function AuthScreen() {
       return;
     }
 
+    const trimmedFirst = firstName.trim();
+    const trimmedLast = lastName.trim();
+    const trimmedName = [trimmedFirst, trimmedLast].filter(Boolean).join(' ');
+
     if (mode === 'signup') {
-      if (!fullName.trim()) {
-        setErrorMessage('Please enter your full name.');
+      if (!trimmedFirst) {
+        setErrorMessage('Please enter your first name.');
+        return;
+      }
+      if (!trimmedLast) {
+        setErrorMessage('Please enter your last name.');
         return;
       }
       if (password !== confirmPassword) {
@@ -90,23 +98,14 @@ export default function AuthScreen() {
         void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
         router.back();
       } else {
-        const result = await signUp(email.trim(), password);
+        const result = await signUp(email.trim(), password, trimmedName);
         void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-        const trimmedName = fullName.trim();
 
-        if (result.session && result.user) {
-          const nameResult = await setProfileFullName(trimmedName);
-          if (nameResult.success && nameResult.userId) {
-            void notifyAdminsAccessRequest(nameResult.userId);
-          }
-        } else if (result.needsEmailConfirmation) {
+        if (result.needsEmailConfirmation) {
           await AsyncStorage.setItem(
             PENDING_FULL_NAME_KEY,
             JSON.stringify({ email: email.trim().toLowerCase(), fullName: trimmedName })
           );
-        }
-
-        if (result.needsEmailConfirmation) {
           setPendingEmail(email.trim());
           setMode('confirm_email');
         } else {
@@ -128,7 +127,7 @@ export default function AuthScreen() {
         setErrorMessage(msg);
       }
     }
-  }, [email, fullName, password, confirmPassword, mode, signIn, signUp, resetPassword, router]);
+  }, [email, firstName, lastName, password, confirmPassword, mode, signIn, signUp, resetPassword, router]);
 
   const handleResendConfirmation = useCallback(async () => {
     setErrorMessage('');
@@ -270,12 +269,15 @@ export default function AuthScreen() {
       />
       <KeyboardAvoidingView
         style={styles.flex}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 64 : 0}
       >
         <ScrollView
           contentContainerStyle={styles.scrollContent}
           keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="on-drag"
           showsVerticalScrollIndicator={false}
+          contentInsetAdjustmentBehavior="automatic"
         >
           <View style={styles.header}>
             <View style={styles.iconCircle}>
@@ -328,6 +330,41 @@ export default function AuthScreen() {
                 />
               </View>
 
+              {mode === 'signup' && (
+                <>
+                  <View style={styles.inputDivider} />
+                  <View style={styles.inputRow}>
+                    <User size={18} color={Colors.textSecondary} />
+                    <TextInput
+                      style={styles.input}
+                      placeholder="First Name"
+                      placeholderTextColor={Colors.textLight}
+                      value={firstName}
+                      onChangeText={setFirstName}
+                      autoCapitalize="words"
+                      autoCorrect={false}
+                      textContentType="givenName"
+                      testID="auth-firstname-input"
+                    />
+                  </View>
+                  <View style={styles.inputDivider} />
+                  <View style={styles.inputRow}>
+                    <User size={18} color={Colors.textSecondary} />
+                    <TextInput
+                      style={styles.input}
+                      placeholder="Last Name"
+                      placeholderTextColor={Colors.textLight}
+                      value={lastName}
+                      onChangeText={setLastName}
+                      autoCapitalize="words"
+                      autoCorrect={false}
+                      textContentType="familyName"
+                      testID="auth-lastname-input"
+                    />
+                  </View>
+                </>
+              )}
+
               {mode !== 'reset' && (
                 <>
                   <View style={styles.inputDivider} />
@@ -359,20 +396,6 @@ export default function AuthScreen() {
 
               {mode === 'signup' && (
                 <>
-                  <View style={styles.inputDivider} />
-                  <View style={styles.inputRow}>
-                    <User size={18} color={Colors.textSecondary} />
-                    <TextInput
-                      style={styles.input}
-                      placeholder="Full Name"
-                      placeholderTextColor={Colors.textLight}
-                      value={fullName}
-                      onChangeText={setFullName}
-                      autoCapitalize="words"
-                      autoCorrect={false}
-                      testID="auth-fullname-input"
-                    />
-                  </View>
                   <View style={styles.inputDivider} />
                   <View style={styles.inputRow}>
                     <Lock size={18} color={Colors.textSecondary} />
@@ -464,8 +487,9 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   scrollContent: {
+    flexGrow: 1,
     paddingHorizontal: 24,
-    paddingBottom: 40,
+    paddingBottom: 80,
   },
   header: {
     alignItems: 'center',

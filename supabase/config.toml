@@ -1,0 +1,13 @@
+# Minimal supabase config so CLI can deploy edge functions from repo root.
+# Link with: supabase link --project-ref <your-ref>
+
+project_id = "qbblvhvyzirakazfvnrs"
+
+[api]
+enabled = true
+
+[functions.notify-admins-access-request]
+verify_jwt = false
+
+[functions.admin-delete-user]
+verify_jwt = true

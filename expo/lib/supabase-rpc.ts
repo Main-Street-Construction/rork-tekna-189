@@ -10,14 +10,49 @@ export async function setProfileFullName(fullName: string): Promise<{ success: b
 
 export async function notifyAdminsAccessRequest(userId: string): Promise<void> {
   try {
-    const { error } = await supabase.functions.invoke('notify-admins-access-request', {
+    const { data, error } = await supabase.functions.invoke('notify-admins-access-request', {
       body: { user_id: userId },
     });
     if (error) {
       console.warn('[RPC] notify-admins-access-request failed:', error.message);
+      return;
     }
+    console.log('[RPC] notify-admins-access-request:', data);
   } catch (e) {
     console.warn('[RPC] notify-admins-access-request error:', e);
+  }
+}
+
+export async function adminDeleteUser(targetUserId: string): Promise<{ success: boolean; error?: string }> {
+  try {
+    const { data, error } = await supabase.functions.invoke('admin-delete-user', {
+      body: { user_id: targetUserId },
+    });
+
+    if (!error && data && typeof data === 'object' && (data as { success?: boolean }).success) {
+      return { success: true };
+    }
+
+    const edgeMessage =
+      error?.message ||
+      (data && typeof data === 'object' && 'error' in data
+        ? String((data as { error: unknown }).error)
+        : null);
+
+    // Fallback to RPC if edge function is unavailable
+    const { data: rpcData, error: rpcError } = await supabase.rpc('admin_delete_user', {
+      target_user_id: targetUserId,
+    });
+    if (rpcError) {
+      return { success: false, error: edgeMessage ?? rpcError.message };
+    }
+    const result = rpcData as { success: boolean; error?: string };
+    if (!result.success) {
+      return { success: false, error: result.error ?? edgeMessage ?? 'Delete failed' };
+    }
+    return { success: true };
+  } catch (e) {
+    return { success: false, error: e instanceof Error ? e.message : String(e) };
   }
 }
 

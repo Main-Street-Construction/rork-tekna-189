@@ -2,7 +2,7 @@
   "expo": {
     "name": "Tekna",
     "slug": "family-tree-research-app",
-    "version": "1.6.2",
+    "version": "1.6.3",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "rork-app",
@@ -27,7 +27,8 @@
         "backgroundColor": "#ffffff"
       },
       "package": "app.rork.family_tree_research_app",
-      "versionCode": 2
+      "versionCode": 3,
+      "softwareKeyboardLayoutMode": "resize"
     },
     "web": {
       "favicon": "./assets/images/favicon.png"

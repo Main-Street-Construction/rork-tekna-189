@@ -38,9 +38,9 @@ async function applyPendingFullName(userId: string, email: string): Promise<void
     if (parsed.email.toLowerCase() !== email.toLowerCase()) return;
 
     const result = await setProfileFullName(parsed.fullName);
-    if (result.success && result.userId) {
+    if (result.success) {
       await AsyncStorage.removeItem(PENDING_FULL_NAME_KEY);
-      void notifyAdminsAccessRequest(result.userId);
+      void notifyAdminsAccessRequest(result.userId ?? userId);
     }
   } catch (e) {
     console.warn('[Auth] applyPendingFullName failed:', e);
@@ -196,8 +196,27 @@ export const [AuthProvider, useAuth] = createContextHook(() => {
   });
 
   const signUpMutation = useMutation({
-    mutationFn: async ({ email, password }: { email: string; password: string }) => {
-      const { data, error } = await supabase.auth.signUp({ email, password });
+    mutationFn: async ({
+      email,
+      password,
+      fullName,
+    }: {
+      email: string;
+      password: string;
+      fullName?: string;
+    }) => {
+      const trimmedName = fullName?.trim() ?? '';
+      const { data, error } = await supabase.auth.signUp({
+        email,
+        password,
+        options: trimmedName
+          ? {
+              data: {
+                full_name: trimmedName,
+              },
+            }
+          : undefined,
+      });
       if (error) {
         if (error.message.includes('Database error saving new user')) {
           throw new Error(
@@ -209,6 +228,18 @@ export const [AuthProvider, useAuth] = createContextHook(() => {
       const needsEmailConfirmation = !data.session && !!data.user;
       if (data.session && data.user) {
         await ensureProfileExists(data.user.id, data.user.email ?? email);
+        if (trimmedName) {
+          const nameResult = await setProfileFullName(trimmedName);
+          if (nameResult.success) {
+            void notifyAdminsAccessRequest(nameResult.userId ?? data.user.id);
+          } else {
+            void notifyAdminsAccessRequest(data.user.id);
+          }
+        }
+      } else if (data.user && trimmedName) {
+        // Email confirmation required — name is in user_metadata + DB trigger;
+        // still notify admins immediately so the request is not lost.
+        void notifyAdminsAccessRequest(data.user.id);
       }
       return { ...data, needsEmailConfirmation };
     },
@@ -232,7 +263,8 @@ export const [AuthProvider, useAuth] = createContextHook(() => {
   );
 
   const signUp = useCallback(
-    (email: string, password: string) => signUpMutation.mutateAsync({ email, password }),
+    (email: string, password: string, fullName?: string) =>
+      signUpMutation.mutateAsync({ email, password, fullName }),
     [signUpMutation]
   );
 

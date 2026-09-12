@@ -30,6 +30,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { navigateBack } from '@/utils/navigation';
 import { supabase } from '@/lib/supabase';
 import {
+  adminDeleteUser,
   adminListUsersWithEmail,
   adminResetUserClaim,
   type AdminUserRow,
@@ -94,11 +95,7 @@ export default function AdminScreen() {
 
   const deleteUserMutation = useMutation({
     mutationFn: async (targetUserId: string) => {
-      const { data, error } = await supabase.rpc('admin_delete_user', {
-        target_user_id: targetUserId,
-      });
-      if (error) throw new Error(error.message);
-      const result = data as { success: boolean; error?: string };
+      const result = await adminDeleteUser(targetUserId);
       if (!result.success) throw new Error(result.error ?? 'Delete failed');
       return result;
     },
