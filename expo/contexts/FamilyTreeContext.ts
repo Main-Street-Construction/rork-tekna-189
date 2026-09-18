@@ -28,7 +28,8 @@ import {
 } from '@/lib/supabase-db';
 import { PendingEdit } from '@/types/genealogy';
 import { useAuth } from '@/contexts/AuthContext';
-import { adminMergeIndividuals } from '@/lib/supabase-rpc';
+import { adminMergeIndividuals, adminMergeFamilies, adminDeleteFamily } from '@/lib/supabase-rpc';
+import { consolidateDuplicateFamilies, findDuplicateFamilyGroups } from '@/utils/family-admin';
 
 const STORAGE_KEY = 'family_tree_data';
 const RAW_GEDCOM_KEY = 'raw_gedcom';
@@ -1461,11 +1462,123 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
 
       updatedIndividuals.delete(mergeId);
 
+      const consolidated = consolidateDuplicateFamilies({
+        individuals: updatedIndividuals,
+        families: updatedFamilies,
+      });
+
+      await persistTreeData({
+        individuals: consolidated.individuals,
+        families: consolidated.families,
+      });
+      return { success: true };
+    },
+    [persistTreeData]
+  );
+
+  const mergeFamiliesInTree = useCallback(
+    async (keepId: string, mergeId: string): Promise<{ success: boolean; error?: string }> => {
+      const treeData = treeDataRef.current;
+      if (!treeData) return { success: false, error: 'No tree data loaded' };
+      if (keepId === mergeId) return { success: false, error: 'Cannot merge a family with itself' };
+
+      const keep = treeData.families.get(keepId);
+      const merge = treeData.families.get(mergeId);
+      if (!keep || !merge) return { success: false, error: 'One or both families not found' };
+
+      const rpcResult = await adminMergeFamilies(keepId, mergeId);
+      if (!rpcResult.success) return rpcResult;
+
+      const updatedFamilies = new Map(treeData.families);
+      const updatedIndividuals = new Map(treeData.individuals);
+      const children = Array.from(new Set([...keep.childrenIds, ...merge.childrenIds]));
+      updatedFamilies.set(keepId, { ...keep, childrenIds: children });
+      updatedFamilies.delete(mergeId);
+
+      updatedIndividuals.forEach((person, personId) => {
+        let next = person;
+        const spouseList = safeFamiliesAsSpouse(person.familiesAsSpouse);
+        if (spouseList.includes(mergeId)) {
+          next = {
+            ...next,
+            familiesAsSpouse: Array.from(
+              new Set(spouseList.map((id) => (id === mergeId ? keepId : id)))
+            ),
+          };
+        }
+        if (person.familyAsChild === mergeId) {
+          next = { ...next, familyAsChild: keepId };
+        }
+        if (next !== person) updatedIndividuals.set(personId, next);
+      });
+
       await persistTreeData({ individuals: updatedIndividuals, families: updatedFamilies });
       return { success: true };
     },
     [persistTreeData]
   );
+
+  const deleteFamilyFromTree = useCallback(
+    async (familyId: string): Promise<{ success: boolean; error?: string }> => {
+      const treeData = treeDataRef.current;
+      if (!treeData) return { success: false, error: 'No tree data loaded' };
+      const family = treeData.families.get(familyId);
+      if (!family) return { success: false, error: 'Family not found' };
+      if (family.childrenIds.length > 0) {
+        return { success: false, error: 'Remove or re-link children before deleting this family.' };
+      }
+
+      const rpcResult = await adminDeleteFamily(familyId);
+      if (!rpcResult.success) return rpcResult;
+
+      const updatedFamilies = new Map(treeData.families);
+      const updatedIndividuals = new Map(treeData.individuals);
+      updatedFamilies.delete(familyId);
+      updatedIndividuals.forEach((person, personId) => {
+        const spouseList = safeFamiliesAsSpouse(person.familiesAsSpouse);
+        if (!spouseList.includes(familyId) && person.familyAsChild !== familyId) return;
+        updatedIndividuals.set(personId, {
+          ...person,
+          familiesAsSpouse: spouseList.filter((id) => id !== familyId),
+          familyAsChild: person.familyAsChild === familyId ? undefined : person.familyAsChild,
+        });
+      });
+
+      await persistTreeData({ individuals: updatedIndividuals, families: updatedFamilies });
+      return { success: true };
+    },
+    [persistTreeData]
+  );
+
+  const consolidateParallelFamilies = useCallback(async (): Promise<{
+    success: boolean;
+    merged: number;
+    error?: string;
+  }> => {
+    const treeData = treeDataRef.current;
+    if (!treeData) return { success: false, merged: 0, error: 'No tree data loaded' };
+
+    const before = findDuplicateFamilyGroups(treeData);
+    if (before.length === 0) return { success: true, merged: 0 };
+
+    let merged = 0;
+    for (const group of before) {
+      const sorted = [...group].sort((a, b) => {
+        const childDiff = b.childrenIds.length - a.childrenIds.length;
+        if (childDiff !== 0) return childDiff;
+        return a.id.localeCompare(b.id);
+      });
+      const keep = sorted[0];
+      for (let i = 1; i < sorted.length; i++) {
+        const result = await mergeFamiliesInTree(keep.id, sorted[i].id);
+        if (!result.success) {
+          return { success: false, merged, error: result.error };
+        }
+        merged += 1;
+      }
+    }
+    return { success: true, merged };
+  }, [mergeFamiliesInTree]);
 
   const loadMyEdits = useCallback(async (): Promise<PendingEdit[]> => {
     if (!user?.id) return [];
@@ -1537,6 +1650,9 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
     unlinkSpouses,
     updateFamily,
     mergeIndividualsInTree,
+    mergeFamiliesInTree,
+    deleteFamilyFromTree,
+    consolidateParallelFamilies,
     isLoadingFromCloud,
     isBackgroundSyncing,
     cloudError,
@@ -1551,7 +1667,8 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
     loadPendingEdits, loadMyEdits, reviewPendingEdit, refreshPendingCount, generateNewId,
     addPerson, updatePerson, addChildToFamily, createFamilyAndAddChild, createFamilyWithParents,
     addSpouse, linkExistingSpouses, linkChildToFamily, removeChildFromFamily, editParentFamily, unlinkSpouses,
-    updateFamily, mergeIndividualsInTree, isLoadingFromCloud,
+    updateFamily, mergeIndividualsInTree, mergeFamiliesInTree, deleteFamilyFromTree, consolidateParallelFamilies,
+    isLoadingFromCloud,
     isBackgroundSyncing, cloudError, loadProgress, lastSyncResult, isDataIncomplete, refreshFromCloud,
   ]);
 });

@@ -201,10 +201,56 @@ export async function searchIndividualsServer(
 export async function adminMergeIndividuals(
   keepGedcomId: string,
   mergeGedcomId: string
-): Promise<{ success: boolean; error?: string }> {
+): Promise<{ success: boolean; error?: string; familiesCollapsed?: number }> {
   const { data, error } = await supabase.rpc('admin_merge_individuals', {
     keep_gedcom_id: keepGedcomId,
     merge_gedcom_id: mergeGedcomId,
+  });
+  if (error) return { success: false, error: error.message };
+  const result = data as { success: boolean; error?: string; families_collapsed?: number };
+  if (!result.success) return { success: false, error: result.error };
+  return { success: true, familiesCollapsed: result.families_collapsed ?? 0 };
+}
+
+export async function adminMergeFamilies(
+  keepGedcomId: string,
+  mergeGedcomId: string
+): Promise<{ success: boolean; error?: string }> {
+  const { data, error } = await supabase.rpc('admin_merge_families', {
+    keep_gedcom_id: keepGedcomId,
+    merge_gedcom_id: mergeGedcomId,
+  });
+  if (error) return { success: false, error: error.message };
+  const result = data as { success: boolean; error?: string };
+  return result.success ? { success: true } : { success: false, error: result.error };
+}
+
+export async function adminDeleteFamily(gedcomId: string): Promise<{ success: boolean; error?: string }> {
+  const { data, error } = await supabase.rpc('admin_delete_family', {
+    target_gedcom_id: gedcomId,
+  });
+  if (error) return { success: false, error: error.message };
+  const result = data as { success: boolean; error?: string };
+  return result.success ? { success: true } : { success: false, error: result.error };
+}
+
+export async function adminUpdateFamily(params: {
+  gedcomId: string;
+  husbandGedcomId?: string | null;
+  wifeGedcomId?: string | null;
+  marriageDate?: string | null;
+  marriagePlace?: string | null;
+  clearHusband?: boolean;
+  clearWife?: boolean;
+}): Promise<{ success: boolean; error?: string }> {
+  const { data, error } = await supabase.rpc('admin_update_family', {
+    target_gedcom_id: params.gedcomId,
+    set_husband_gedcom_id: params.husbandGedcomId ?? null,
+    set_wife_gedcom_id: params.wifeGedcomId ?? null,
+    set_marriage_date: params.marriageDate ?? null,
+    set_marriage_place: params.marriagePlace ?? null,
+    clear_husband: params.clearHusband ?? false,
+    clear_wife: params.clearWife ?? false,
   });
   if (error) return { success: false, error: error.message };
   const result = data as { success: boolean; error?: string };

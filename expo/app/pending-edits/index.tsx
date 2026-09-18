@@ -428,9 +428,17 @@ export default function PendingEditsScreen() {
   };
 
   const submitterLabel = (edit: PendingEdit) => {
-    if (edit.submitter_name?.trim()) return edit.submitter_name.trim();
-    if (edit.submitter_email) return edit.submitter_email;
-    return edit.submitted_by.length > 24 ? edit.submitted_by.slice(0, 24) + '...' : edit.submitted_by;
+    const name = edit.submitter_name?.trim();
+    const email = edit.submitter_email?.trim();
+    if (name && email && name.toLowerCase() !== email.toLowerCase()) {
+      return `${name} (${email})`;
+    }
+    if (name) return name;
+    if (email) return email;
+    if (edit.submitted_by && edit.submitted_by !== 'anonymous') {
+      return edit.submitted_by.length > 24 ? edit.submitted_by.slice(0, 24) + '…' : edit.submitted_by;
+    }
+    return 'Unknown submitter';
   };
 
   const formatTime = (time: string) => {
@@ -507,7 +515,7 @@ export default function PendingEditsScreen() {
                       <View style={styles.editHeaderInfo}>
                         <Text style={styles.editTypeLabel}>{EDIT_TYPE_LABELS[edit.edit_type] ?? edit.edit_type}</Text>
                         <Text style={styles.editSummary} numberOfLines={1}>{renderEditSummary(edit)}</Text>
-                        <Text style={styles.submitterText}>By {submitterLabel(edit)} · {formatTime(edit.submitted_at)}</Text>
+                        <Text style={styles.submitterText}>Submitted by {submitterLabel(edit)} · {formatTime(edit.submitted_at)}</Text>
                       </View>
                       {isExpanded ? <ChevronUp size={16} color={Colors.textLight} /> : <ChevronDown size={16} color={Colors.textLight} />}
                     </TouchableOpacity>
@@ -524,6 +532,11 @@ export default function PendingEditsScreen() {
 
                     {isExpanded && (
                       <View style={styles.editDetails}>
+                        <View style={styles.submitterBanner}>
+                          <Text style={styles.submitterBannerLabel}>Submitted by</Text>
+                          <Text style={styles.submitterBannerValue}>{submitterLabel(edit)}</Text>
+                          <Text style={styles.submitterBannerMeta}>{new Date(edit.submitted_at).toLocaleString()}</Text>
+                        </View>
                         {renderEditDetails(edit)}
                         {personId ? (
                           <TouchableOpacity style={styles.personLink} onPress={() => router.push(`/person/${personId}`)}>
@@ -604,6 +617,16 @@ const styles = StyleSheet.create({
   editTypeLabel: { fontSize: 11, fontWeight: '600' as const, color: Colors.textSecondary, textTransform: 'uppercase' as const },
   editSummary: { fontSize: 15, fontWeight: '600' as const, color: Colors.text, marginTop: 2 },
   submitterText: { fontSize: 11, color: Colors.textLight, marginTop: 4 },
+  submitterBanner: {
+    backgroundColor: 'rgba(200, 149, 108, 0.1)',
+    borderRadius: 10,
+    padding: 12,
+    marginBottom: 12,
+    gap: 2,
+  },
+  submitterBannerLabel: { fontSize: 11, fontWeight: '600' as const, color: Colors.textSecondary, textTransform: 'uppercase' as const },
+  submitterBannerValue: { fontSize: 15, fontWeight: '600' as const, color: Colors.text },
+  submitterBannerMeta: { fontSize: 12, color: Colors.textSecondary, marginTop: 2 },
   warningBanner: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 14, paddingVertical: 8, backgroundColor: 'rgba(196, 92, 74, 0.08)' },
   warningText: { flex: 1, fontSize: 11, color: Colors.danger },
   refreshLink: { fontSize: 11, fontWeight: '600' as const, color: Colors.accent },

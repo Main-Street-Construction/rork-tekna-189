@@ -707,6 +707,7 @@ export function getSpouses(
   if (!person) return [];
 
   const spouses: GedcomIndividual[] = [];
+  const seen = new Set<string>();
   const spouseFamIds = Array.isArray(person.familiesAsSpouse) ? person.familiesAsSpouse : [];
   for (const famId of spouseFamIds) {
     const family = data.families.get(famId);
@@ -714,11 +715,17 @@ export function getSpouses(
 
     if (family.husbandId && family.husbandId !== personId) {
       const spouse = data.individuals.get(family.husbandId);
-      if (spouse) spouses.push(spouse);
+      if (spouse && !seen.has(spouse.id)) {
+        seen.add(spouse.id);
+        spouses.push(spouse);
+      }
     }
     if (family.wifeId && family.wifeId !== personId) {
       const spouse = data.individuals.get(family.wifeId);
-      if (spouse) spouses.push(spouse);
+      if (spouse && !seen.has(spouse.id)) {
+        seen.add(spouse.id);
+        spouses.push(spouse);
+      }
     }
   }
   return spouses;
@@ -732,14 +739,19 @@ export function getChildren(
   if (!person) return [];
 
   const children: GedcomIndividual[] = [];
+  const seen = new Set<string>();
   const childFamIds = Array.isArray(person.familiesAsSpouse) ? person.familiesAsSpouse : [];
   for (const famId of childFamIds) {
     const family = data.families.get(famId);
     if (!family) continue;
     const kidIds = Array.isArray(family.childrenIds) ? family.childrenIds : [];
     for (const childId of kidIds) {
+      if (seen.has(childId)) continue;
       const child = data.individuals.get(childId);
-      if (child) children.push(child);
+      if (child) {
+        seen.add(childId);
+        children.push(child);
+      }
     }
   }
   return children;

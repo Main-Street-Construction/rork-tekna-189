@@ -730,13 +730,12 @@ export async function upsertFamilyInSupabase(
       familyUuid = inserted?.[0]?.id;
     }
 
-    if (familyUuid && family.childrenIds.length > 0) {
+    if (familyUuid && family.childrenIds) {
+      const desiredChildUuids: string[] = [];
       for (const childGedcomId of family.childrenIds) {
         const childUuid = await resolveGedcomIdToUuid(childGedcomId);
-        if (!childUuid) {
-
-          continue;
-        }
+        if (!childUuid) continue;
+        desiredChildUuids.push(childUuid);
 
         const { data: existingMember } = await supabase
           .from('family_members')
@@ -759,6 +758,26 @@ export async function upsertFamilyInSupabase(
             console.error('[Supabase] FAILED to create family_member link: child', childGedcomId, 'in family', family.id, '-', fmError.message);
           } else {
             console.log('[Supabase] Linked child', childGedcomId, 'to family', family.id);
+          }
+        }
+      }
+
+      // Remove stale child links that are no longer on the family
+      const { data: currentMembers } = await supabase
+        .from('family_members')
+        .select('id, individual_id')
+        .eq('family_id', familyUuid)
+        .eq('role', 'child');
+
+      const desired = new Set(desiredChildUuids);
+      for (const member of currentMembers ?? []) {
+        if (!desired.has(member.individual_id as string)) {
+          const { error: delErr } = await supabase
+            .from('family_members')
+            .delete()
+            .eq('id', member.id);
+          if (delErr) {
+            console.error('[Supabase] Failed to remove stale child link:', delErr.message);
           }
         }
       }
