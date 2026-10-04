@@ -1,4 +1,4 @@
-import { Platform } from 'react-native';
+import { AppState, Platform } from 'react-native';
 import * as Notifications from 'expo-notifications';
 import * as Device from 'expo-device';
 import Constants from 'expo-constants';
@@ -15,18 +15,24 @@ Notifications.setNotificationHandler({
 });
 
 let lastRegisteredToken: string | null = null;
+let registrationInFlight: Promise<void> | null = null;
+let appStateSub: { remove: () => void } | null = null;
 
-function canShowAlerts(settings: Notifications.NotificationPermissionsStatus): boolean {
+function canRegisterToken(settings: Notifications.NotificationPermissionsStatus): boolean {
+  if (settings.status === 'granted') return true;
   if (Platform.OS === 'ios') {
-    // Root status can be "granted" for provisional delivery, which does not show banners.
-    return settings.ios?.status === Notifications.IosAuthorizationStatus.AUTHORIZED;
+    const iosStatus = settings.ios?.status;
+    return (
+      iosStatus === Notifications.IosAuthorizationStatus.AUTHORIZED ||
+      iosStatus === Notifications.IosAuthorizationStatus.PROVISIONAL
+    );
   }
-  return settings.status === 'granted';
+  return false;
 }
 
-async function ensureAlertPermission(): Promise<boolean> {
+async function ensurePushPermission(): Promise<boolean> {
   const existing = await Notifications.getPermissionsAsync();
-  if (canShowAlerts(existing)) return true;
+  if (canRegisterToken(existing)) return true;
 
   const requested = await Notifications.requestPermissionsAsync({
     ios: {
@@ -35,10 +41,18 @@ async function ensureAlertPermission(): Promise<boolean> {
       allowSound: true,
     },
   });
-  return canShowAlerts(requested);
+  return canRegisterToken(requested);
 }
 
-export async function registerAdminPushNotifications(): Promise<void> {
+function resolveProjectId(): string | undefined {
+  return (
+    Constants.expoConfig?.extra?.eas?.projectId ??
+    Constants.easConfig?.projectId ??
+    (Constants as { easConfig?: { projectId?: string } }).easConfig?.projectId
+  );
+}
+
+async function registerOnce(): Promise<void> {
   if (!Device.isDevice) {
     console.log('[Push] Skipping — not a physical device');
     return;
@@ -52,16 +66,13 @@ export async function registerAdminPushNotifications(): Promise<void> {
     });
   }
 
-  const allowed = await ensureAlertPermission();
+  const allowed = await ensurePushPermission();
   if (!allowed) {
     console.log('[Push] Permission not granted');
     return;
   }
 
-  const projectId =
-    Constants.expoConfig?.extra?.eas?.projectId ??
-    Constants.easConfig?.projectId;
-
+  const projectId = resolveProjectId();
   if (!projectId) {
     console.warn('[Push] Missing EAS projectId — cannot register a push token');
     return;
@@ -70,7 +81,10 @@ export async function registerAdminPushNotifications(): Promise<void> {
   const tokenData = await Notifications.getExpoPushTokenAsync({ projectId });
   const token = tokenData.data;
 
-  if (token === lastRegisteredToken) return;
+  if (token === lastRegisteredToken) {
+    console.log('[Push] Token already registered');
+    return;
+  }
 
   const result = await registerPushToken(token, Platform.OS);
   if (!result.success) {
@@ -80,6 +94,45 @@ export async function registerAdminPushNotifications(): Promise<void> {
 
   lastRegisteredToken = token;
   console.log('[Push] Registered admin token');
+}
+
+export async function registerAdminPushNotifications(): Promise<void> {
+  if (registrationInFlight) return registrationInFlight;
+
+  registrationInFlight = (async () => {
+    let lastError: unknown;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        await registerOnce();
+        return;
+      } catch (e) {
+        lastError = e;
+        console.warn(`[Push] register attempt ${attempt + 1} failed:`, e);
+        await new Promise((r) => setTimeout(r, 750 * (attempt + 1)));
+      }
+    }
+    if (lastError) console.warn('[Push] register failed after retries:', lastError);
+  })().finally(() => {
+    registrationInFlight = null;
+  });
+
+  return registrationInFlight;
+}
+
+/** Re-register when the app returns to foreground (covers denied→granted flips). */
+export function startAdminPushAutoReregister(): () => void {
+  if (appStateSub) return () => appStateSub?.remove();
+
+  appStateSub = AppState.addEventListener('change', (state) => {
+    if (state === 'active') {
+      void registerAdminPushNotifications();
+    }
+  });
+
+  return () => {
+    appStateSub?.remove();
+    appStateSub = null;
+  };
 }
 
 export async function unregisterAdminPushNotifications(): Promise<void> {

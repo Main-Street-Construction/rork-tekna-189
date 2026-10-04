@@ -5,10 +5,10 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
-interface DeleteRequest {
-  user_id: string;
-}
-
+/**
+ * App Store requirement: users who can create an account must be able to
+ * initiate full account deletion from inside the app.
+ */
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders });
@@ -50,43 +50,21 @@ Deno.serve(async (req) => {
       });
     }
 
+    const userId = caller.id;
+    const email = caller.email ?? null;
     const admin = createClient(supabaseUrl, serviceRoleKey);
 
-    const { data: callerProfile, error: profileErr } = await admin
-      .from('profiles')
-      .select('is_admin')
-      .eq('id', caller.id)
-      .maybeSingle();
+    // Personal / account-linked rows (genealogy tree content is shared family data and is kept)
+    await admin.from('push_tokens').delete().eq('user_id', userId);
+    await admin.from('pending_edits').delete().eq('submitted_by', userId);
 
-    if (profileErr || !callerProfile?.is_admin) {
-      return new Response(JSON.stringify({ error: 'Forbidden' }), {
-        status: 403,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
+    if (email) {
+      await admin.from('feedback').delete().eq('contact_email', email);
     }
 
-    const body = (await req.json()) as DeleteRequest;
-    const targetUserId = body?.user_id;
+    await admin.from('profiles').delete().eq('id', userId);
 
-    if (!targetUserId) {
-      return new Response(JSON.stringify({ error: 'user_id required' }), {
-        status: 400,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
-    }
-
-    if (targetUserId === caller.id) {
-      return new Response(JSON.stringify({ error: 'Cannot delete your own account' }), {
-        status: 400,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
-    }
-
-    await admin.from('push_tokens').delete().eq('user_id', targetUserId);
-    await admin.from('pending_edits').delete().eq('submitted_by', targetUserId);
-    await admin.from('profiles').delete().eq('id', targetUserId);
-
-    const { error: deleteErr } = await admin.auth.admin.deleteUser(targetUserId);
+    const { error: deleteErr } = await admin.auth.admin.deleteUser(userId);
     if (deleteErr) {
       return new Response(JSON.stringify({ error: deleteErr.message }), {
         status: 500,

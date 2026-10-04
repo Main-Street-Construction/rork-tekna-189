@@ -3,18 +3,25 @@ import { Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import createContextHook from '@nkzw/create-context-hook';
-import * as Linking from 'expo-linking';
 import { router as expoRouter } from 'expo-router';
 import { supabase } from '@/lib/supabase';
 import {
   setProfileFullName,
   notifyAdminsAccessRequest,
   flushPendingAccessNotifications,
+  deleteMyAccount,
 } from '@/lib/supabase-rpc';
 import {
   registerAdminPushNotifications,
   unregisterAdminPushNotifications,
+  startAdminPushAutoReregister,
 } from '@/lib/push-notifications';
+import {
+  getPasswordResetRedirectUrl,
+  handleAuthDeepLink,
+  isPasswordRecoveryUrl,
+} from '@/lib/auth-deeplink';
+import * as Linking from 'expo-linking';
 import type { Session, User } from '@supabase/supabase-js';
 
 const PENDING_FULL_NAME_KEY = 'pending_signup_full_name';
@@ -147,7 +154,7 @@ export const [AuthProvider, useAuth] = createContextHook(() => {
       if (event === 'PASSWORD_RECOVERY') {
         setTimeout(() => {
           try {
-            expoRouter.push('/update-password');
+            expoRouter.replace('/update-password');
           } catch (e) {
             console.warn('[Auth] Failed to navigate to update-password:', e);
           }
@@ -155,8 +162,33 @@ export const [AuthProvider, useAuth] = createContextHook(() => {
       }
     });
 
+    const consumeAuthUrl = async (url: string | null) => {
+      if (!url) return;
+      const result = await handleAuthDeepLink(url);
+      if (result.error) {
+        console.warn('[Auth] Deep link session error:', result.error);
+      }
+      if (result.handled && (result.recovery || isPasswordRecoveryUrl(url))) {
+        setTimeout(() => {
+          try {
+            expoRouter.replace('/update-password');
+          } catch (e) {
+            console.warn('[Auth] Failed to navigate to update-password:', e);
+          }
+        }, 50);
+      }
+    };
+
+    void Linking.getInitialURL().then((url) => {
+      void consumeAuthUrl(url);
+    });
+    const linkSub = Linking.addEventListener('url', ({ url }) => {
+      void consumeAuthUrl(url);
+    });
+
     return () => {
       subscription.unsubscribe();
+      linkSub.remove();
     };
   }, [queryClient]);
 
@@ -181,6 +213,7 @@ export const [AuthProvider, useAuth] = createContextHook(() => {
 
   useEffect(() => {
     if (!profileRow?.is_admin || !session?.user?.id) return;
+    const stopAuto = startAdminPushAutoReregister();
     void (async () => {
       try {
         await registerAdminPushNotifications();
@@ -189,6 +222,7 @@ export const [AuthProvider, useAuth] = createContextHook(() => {
       }
       await flushPendingAccessNotifications();
     })();
+    return stopAuto;
   }, [profileRow?.is_admin, session?.user?.id]);
 
   const signInMutation = useMutation({
@@ -260,6 +294,35 @@ export const [AuthProvider, useAuth] = createContextHook(() => {
     },
   });
 
+  const deleteAccountMutation = useMutation({
+    mutationFn: async () => {
+      await unregisterAdminPushNotifications();
+      const result = await deleteMyAccount();
+      if (!result.success) {
+        throw new Error(result.error ?? 'Failed to delete account');
+      }
+      try {
+        await AsyncStorage.multiRemove([
+          PENDING_FULL_NAME_KEY,
+          'user_profile',
+          'identity_claimed',
+        ]);
+      } catch {
+        // Local cleanup is best-effort after server delete succeeds
+      }
+      try {
+        await supabase.auth.signOut();
+      } catch {
+        // Session may already be invalid after auth user delete
+      }
+    },
+    onSuccess: () => {
+      setSession(null);
+      setProfileRow(null);
+      queryClient.clear();
+    },
+  });
+
   const signIn = useCallback(
     (email: string, password: string) => signInMutation.mutateAsync({ email, password }),
     [signInMutation]
@@ -276,6 +339,11 @@ export const [AuthProvider, useAuth] = createContextHook(() => {
     [signOutMutation]
   );
 
+  const deleteAccount = useCallback(
+    () => deleteAccountMutation.mutateAsync(),
+    [deleteAccountMutation]
+  );
+
   const resendConfirmationMutation = useMutation({
     mutationFn: async ({ email }: { email: string }) => {
       const { error } = await supabase.auth.resend({ type: 'signup', email });
@@ -287,7 +355,7 @@ export const [AuthProvider, useAuth] = createContextHook(() => {
     mutationFn: async ({ email }: { email: string }) => {
       const appUrl = Platform.OS === 'web'
         ? `${typeof window !== 'undefined' ? window.location.origin : ''}/update-password`
-        : Linking.createURL('/update-password');
+        : getPasswordResetRedirectUrl();
       const { error } = await supabase.auth.resetPasswordForEmail(email, {
         redirectTo: appUrl,
       });
@@ -326,12 +394,14 @@ export const [AuthProvider, useAuth] = createContextHook(() => {
     signIn,
     signUp,
     signOut,
+    deleteAccount,
     resetPassword,
     resendConfirmation,
     refreshProfile,
     signInPending: signInMutation.isPending,
     signUpPending: signUpMutation.isPending,
     signOutPending: signOutMutation.isPending,
+    deleteAccountPending: deleteAccountMutation.isPending,
     resetPasswordPending: resetPasswordMutation.isPending,
     resendConfirmationPending: resendConfirmationMutation.isPending,
     signInError: signInMutation.error,
@@ -340,8 +410,9 @@ export const [AuthProvider, useAuth] = createContextHook(() => {
   }), [
     user, session, profileRow, isSignedIn, isEnabled, isAdmin,
     sessionLoading, profileQuery.isLoading,
-    signIn, signUp, signOut, resetPassword, resendConfirmation, refreshProfile,
+    signIn, signUp, signOut, deleteAccount, resetPassword, resendConfirmation, refreshProfile,
     signInMutation.isPending, signUpMutation.isPending, signOutMutation.isPending,
+    deleteAccountMutation.isPending,
     resetPasswordMutation.isPending, resendConfirmationMutation.isPending,
     signInMutation.error, signUpMutation.error, resetPasswordMutation.error,
   ]);

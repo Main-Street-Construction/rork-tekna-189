@@ -841,12 +841,27 @@ export async function submitPendingEdit(
   }
 }
 
+function enrichPendingEditSubmitter(edit: PendingEdit): PendingEdit {
+  const data = edit.data ?? {};
+  const snappedName =
+    typeof data.submitter_name === 'string' ? data.submitter_name.trim() : '';
+  const snappedEmail =
+    typeof data.submitter_email === 'string' ? data.submitter_email.trim() : '';
+  return {
+    ...edit,
+    submitter_name: edit.submitter_name?.trim() || snappedName || edit.submitter_name,
+    submitter_email: edit.submitter_email?.trim() || snappedEmail || edit.submitter_email,
+  };
+}
+
 export async function fetchPendingEdits(): Promise<{ edits: PendingEdit[]; error?: string }> {
   try {
     const { data: rpcData, error: rpcError } = await supabase.rpc('admin_list_pending_edits');
 
     if (!rpcError && rpcData) {
-      return { edits: (rpcData ?? []) as PendingEdit[] };
+      return {
+        edits: ((rpcData ?? []) as PendingEdit[]).map(enrichPendingEditSubmitter),
+      };
     }
 
     const { data, error } = await supabase
@@ -865,7 +880,9 @@ export async function fetchPendingEdits(): Promise<{ edits: PendingEdit[]; error
       return { edits: [], error: error.message };
     }
 
-    return { edits: (data ?? []) as PendingEdit[] };
+    return {
+      edits: ((data ?? []) as PendingEdit[]).map(enrichPendingEditSubmitter),
+    };
   } catch (e) {
     return { edits: [], error: String(e) };
   }

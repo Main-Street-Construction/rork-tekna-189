@@ -38,6 +38,26 @@ export async function flushPendingAccessNotifications(): Promise<void> {
   }
 }
 
+/** Self-service account deletion (App Store Guideline 5.1.1). */
+export async function deleteMyAccount(): Promise<{ success: boolean; error?: string }> {
+  try {
+    const { data, error } = await supabase.functions.invoke('delete-my-account', {
+      body: {},
+    });
+    if (!error && data && typeof data === 'object' && (data as { success?: boolean }).success) {
+      return { success: true };
+    }
+    const message =
+      error?.message ||
+      (data && typeof data === 'object' && 'error' in data
+        ? String((data as { error: unknown }).error)
+        : 'Failed to delete account');
+    return { success: false, error: message };
+  } catch (e) {
+    return { success: false, error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
 export async function adminDeleteUser(targetUserId: string): Promise<{ success: boolean; error?: string }> {
   try {
     const { data, error } = await supabase.functions.invoke('admin-delete-user', {
@@ -103,6 +123,35 @@ export async function registerPushToken(
   if (error) return { success: false, error: error.message };
   const result = data as { success: boolean; error?: string };
   return result.success ? { success: true } : { success: false, error: result.error };
+}
+
+export async function updateProfileDisplayName(
+  displayName: string
+): Promise<{ success: boolean; error?: string }> {
+  const { data, error } = await supabase.rpc('update_profile_display_name', {
+    display_name: displayName,
+  });
+  if (error) {
+    // Fallback for projects that have not applied v8 yet
+    const fallback = await setProfileFullName(displayName);
+    return fallback.success ? { success: true } : { success: false, error: error.message };
+  }
+  const result = data as { success: boolean; error?: string };
+  return result.success ? { success: true } : { success: false, error: result.error };
+}
+
+export async function getNextGedcomId(
+  prefix: 'I' | 'F'
+): Promise<{ success: boolean; gedcomId?: string; error?: string }> {
+  const { data, error } = await supabase.rpc('get_next_gedcom_id', {
+    id_prefix: prefix,
+  });
+  if (error) return { success: false, error: error.message };
+  const result = data as { success: boolean; gedcom_id?: string; error?: string };
+  if (!result.success || !result.gedcom_id) {
+    return { success: false, error: result.error ?? 'Failed to allocate ID' };
+  }
+  return { success: true, gedcomId: result.gedcom_id };
 }
 
 export async function unregisterPushToken(expoPushToken: string): Promise<void> {

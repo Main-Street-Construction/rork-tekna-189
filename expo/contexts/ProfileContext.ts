@@ -4,7 +4,11 @@ import { useQuery, useMutation } from '@tanstack/react-query';
 import createContextHook from '@nkzw/create-context-hook';
 import { UserProfile } from '@/types/genealogy';
 import { useAuth } from '@/contexts/AuthContext';
-import { submitIdentityClaim, clearIdentityClaim } from '@/lib/supabase-rpc';
+import {
+  submitIdentityClaim,
+  clearIdentityClaim,
+  updateProfileDisplayName,
+} from '@/lib/supabase-rpc';
 import { supabase } from '@/lib/supabase';
 import { fetchIndividualByGedcomId } from '@/lib/supabase-db';
 
@@ -235,8 +239,16 @@ export const [ProfileProvider, useProfile] = createContextHook(() => {
         .slice(0, 2);
       updated.avatarInitials = initials;
       saveMutation.mutate(updated);
+      // Sync real name for admin/pending-edit labels — not on identity claim.
+      if (isSignedIn && updated.displayName.trim()) {
+        void updateProfileDisplayName(updated.displayName.trim()).then((sync) => {
+          if (!sync.success) {
+            console.warn('[Profile] Failed to sync display name to cloud:', sync.error);
+          }
+        });
+      }
     },
-    [profile, saveMutation]
+    [profile, saveMutation, isSignedIn]
   );
 
   const resetClaim = useCallback(async () => {

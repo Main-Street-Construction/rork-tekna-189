@@ -50,6 +50,18 @@ interface ValidationIssue {
   message: string;
 }
 
+/** Keep the submitter's allocated ID unless it already exists in the tree. */
+async function resolveSubmittedPersonId(
+  submittedId: string | undefined,
+  treeData: FamilyTreeData | null,
+  allocateGedcomId: (prefix: 'I' | 'F') => Promise<string>
+): Promise<string> {
+  if (submittedId && (!treeData || !treeData.individuals.has(submittedId))) {
+    return submittedId;
+  }
+  return allocateGedcomId('I');
+}
+
 function validateEdit(edit: PendingEdit, treeData: FamilyTreeData | null): ValidationIssue[] {
   const issues: ValidationIssue[] = [];
   const data = edit.data as Record<string, unknown>;
@@ -146,7 +158,7 @@ export default function PendingEditsScreen() {
     unlinkSpouses,
     updateFamily,
     treeData,
-    generateNewId,
+    allocateGedcomId,
     refreshFromCloud,
   } = useFamilyTree();
 
@@ -193,8 +205,8 @@ export default function PendingEditsScreen() {
       if (edit.edit_type === 'add_person') {
         const individual = data.individual as GedcomIndividual;
         if (!individual) return { success: false, error: 'Missing individual data' };
-        const freshId = generateNewId('I');
-        return await addPerson({ ...individual, id: freshId });
+        const id = await resolveSubmittedPersonId(individual.id, treeData, allocateGedcomId);
+        return await addPerson({ ...individual, id });
       }
       if (edit.edit_type === 'add_child') {
         const child = data.child as GedcomIndividual;
@@ -202,7 +214,8 @@ export default function PendingEditsScreen() {
         const parentId = data.parentId as string | undefined;
         const spouseId = data.spouseId as string | undefined;
         if (!child) return { success: false, error: 'Missing child data' };
-        const freshChild = { ...child, id: generateNewId('I'), familiesAsSpouse: child.familiesAsSpouse ?? [] };
+        const id = await resolveSubmittedPersonId(child.id, treeData, allocateGedcomId);
+        const freshChild = { ...child, id, familiesAsSpouse: child.familiesAsSpouse ?? [] };
         if (familyId) return await addChildToFamily(freshChild, familyId);
         if (parentId) return await createFamilyAndAddChild(freshChild, parentId, spouseId);
         return { success: false, error: 'Missing familyId or parentId' };
@@ -211,7 +224,8 @@ export default function PendingEditsScreen() {
         const spouse = data.spouse as GedcomIndividual;
         const targetPersonId = data.personId as string | undefined;
         if (!spouse || !targetPersonId) return { success: false, error: 'Missing spouse or target' };
-        const freshSpouse = { ...spouse, id: generateNewId('I'), familiesAsSpouse: spouse.familiesAsSpouse ?? [] };
+        const id = await resolveSubmittedPersonId(spouse.id, treeData, allocateGedcomId);
+        const freshSpouse = { ...spouse, id, familiesAsSpouse: spouse.familiesAsSpouse ?? [] };
         return await addSpouse(targetPersonId, freshSpouse, data.marriageDate as string | undefined, data.marriagePlace as string | undefined);
       }
       if (edit.edit_type === 'link_spouses') {
@@ -267,7 +281,7 @@ export default function PendingEditsScreen() {
     } catch (e) {
       return { success: false, error: String(e) };
     }
-  }, [updatePerson, addPerson, addChildToFamily, createFamilyAndAddChild, createFamilyWithParents, addSpouse, linkExistingSpouses, linkChildToFamily, removeChildFromFamily, editParentFamily, unlinkSpouses, updateFamily, treeData, generateNewId]);
+  }, [updatePerson, addPerson, addChildToFamily, createFamilyAndAddChild, createFamilyWithParents, addSpouse, linkExistingSpouses, linkChildToFamily, removeChildFromFamily, editParentFamily, unlinkSpouses, updateFamily, treeData, allocateGedcomId]);
 
   const handleApprove = useCallback(async (edit: PendingEdit, didRefresh = false) => {
     let issues = validateEdit(edit, treeData);
@@ -428,16 +442,18 @@ export default function PendingEditsScreen() {
   };
 
   const submitterLabel = (edit: PendingEdit) => {
-    const name = edit.submitter_name?.trim();
-    const email = edit.submitter_email?.trim();
+    const data = edit.data as Record<string, unknown>;
+    const snappedName =
+      typeof data.submitter_name === 'string' ? data.submitter_name.trim() : '';
+    const snappedEmail =
+      typeof data.submitter_email === 'string' ? data.submitter_email.trim() : '';
+    const name = edit.submitter_name?.trim() || snappedName;
+    const email = edit.submitter_email?.trim() || snappedEmail;
     if (name && email && name.toLowerCase() !== email.toLowerCase()) {
       return `${name} (${email})`;
     }
     if (name) return name;
     if (email) return email;
-    if (edit.submitted_by && edit.submitted_by !== 'anonymous') {
-      return edit.submitted_by.length > 24 ? edit.submitted_by.slice(0, 24) + '…' : edit.submitted_by;
-    }
     return 'Unknown submitter';
   };
 

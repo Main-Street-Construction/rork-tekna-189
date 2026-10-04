@@ -28,7 +28,12 @@ import {
 } from '@/lib/supabase-db';
 import { PendingEdit } from '@/types/genealogy';
 import { useAuth } from '@/contexts/AuthContext';
-import { adminMergeIndividuals, adminMergeFamilies, adminDeleteFamily } from '@/lib/supabase-rpc';
+import {
+  adminMergeIndividuals,
+  adminMergeFamilies,
+  adminDeleteFamily,
+  getNextGedcomId,
+} from '@/lib/supabase-rpc';
 import { consolidateDuplicateFamilies, findDuplicateFamilyGroups } from '@/utils/family-admin';
 
 const STORAGE_KEY = 'family_tree_data';
@@ -648,6 +653,34 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
     []
   );
 
+  /**
+   * Prefer the cloud max ID so new people/families continue the original GEDCOM
+   * sequence instead of inventing a divergent local counter.
+   */
+  const allocateGedcomId = useCallback(
+    async (prefix: 'I' | 'F'): Promise<string> => {
+      try {
+        const remote = await getNextGedcomId(prefix);
+        if (remote.success && remote.gedcomId) {
+          const num = parseInt(remote.gedcomId.slice(1), 10);
+          if (!Number.isNaN(num)) {
+            nextIdRef.current[prefix] = Math.max(nextIdRef.current[prefix], num);
+          }
+          const current = treeDataRef.current;
+          const taken =
+            prefix === 'F'
+              ? current?.families.has(remote.gedcomId)
+              : current?.individuals.has(remote.gedcomId);
+          if (!taken) return remote.gedcomId;
+        }
+      } catch (e) {
+        console.warn('[FamilyTree] Cloud ID allocation failed, using local:', e);
+      }
+      return generateNewId(prefix);
+    },
+    [generateNewId]
+  );
+
   const persistTreeData = useCallback(
     async (newTree: FamilyTreeData) => {
       applyTreeData(newTree);
@@ -674,9 +707,24 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
       data: Record<string, unknown>
     ): Promise<{ success: boolean; error?: string }> => {
       const submitterId = user?.id ?? 'anonymous';
-      return submitPendingEdit(editType, targetId, data, submitterId);
+      const meta = (user?.user_metadata ?? {}) as Record<string, unknown>;
+      const metaFull =
+        typeof meta.full_name === 'string' ? meta.full_name.trim() : '';
+      const metaCombined = [meta.first_name, meta.last_name]
+        .filter((v): v is string => typeof v === 'string' && v.trim().length > 0)
+        .map((v) => v.trim())
+        .join(' ');
+      const profileName = profileRow?.full_name?.trim() || '';
+      const submitterName = profileName || metaFull || metaCombined || undefined;
+      const submitterEmail = user?.email?.trim() || undefined;
+      const enriched: Record<string, unknown> = {
+        ...data,
+        ...(submitterName ? { submitter_name: submitterName } : {}),
+        ...(submitterEmail ? { submitter_email: submitterEmail } : {}),
+      };
+      return submitPendingEdit(editType, targetId, enriched, submitterId);
     },
-    [user?.id]
+    [user?.id, user?.email, user?.user_metadata, profileRow?.full_name]
   );
 
   const addPerson = useCallback(
@@ -790,7 +838,7 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
       const current = treeDataRef.current;
       if (!current) return { success: false, error: 'No tree data loaded' };
 
-      const newFamilyId = generateNewId('F');
+      const newFamilyId = await allocateGedcomId('F');
       console.log('[FamilyTree] Creating new family', newFamilyId, 'for child', childIndividual.id);
 
       const parent1 = current.individuals.get(parent1Id);
@@ -881,7 +929,7 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
 
       return { success: true, familyId: newFamilyId };
     },
-    [generateNewId, persistTreeData]
+    [allocateGedcomId, persistTreeData]
   );
 
   const addSpouse = useCallback(
@@ -897,7 +945,7 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
       const person = current.individuals.get(personId);
       if (!person) return { success: false, error: 'Person not found' };
 
-      const newFamilyId = generateNewId('F');
+      const newFamilyId = await allocateGedcomId('F');
       console.log('[FamilyTree] Creating spouse family', newFamilyId, 'for', personId, '+', spouseIndividual.id);
 
       let husbandId: string | undefined;
@@ -963,7 +1011,7 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
 
       return { success: true, familyId: newFamilyId };
     },
-    [generateNewId, persistTreeData]
+    [allocateGedcomId, persistTreeData]
   );
 
   const linkExistingSpouses = useCallback(
@@ -1019,7 +1067,7 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
         return { success: false, error: 'These two people are already linked as spouses.' };
       }
 
-      const newFamilyId = generateNewId('F');
+      const newFamilyId = await allocateGedcomId('F');
       console.log('[FamilyTree] Linking existing spouses', person1Id, '+', person2Id, 'as family', newFamilyId);
 
       let husbandId: string | undefined;
@@ -1084,7 +1132,7 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
 
       return { success: true, familyId: newFamilyId };
     },
-    [generateNewId, persistTreeData, applyTreeData]
+    [allocateGedcomId, persistTreeData, applyTreeData]
   );
 
   const updateFamily = useCallback(
@@ -1121,7 +1169,7 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
       const parent2 = parent2Id ? treeData.individuals.get(parent2Id) : undefined;
       if (!parent1) return { success: false, error: 'Parent not found: ' + parent1Id };
 
-      const newFamilyId = generateNewId('F');
+      const newFamilyId = await allocateGedcomId('F');
       let husbandId: string | undefined;
       let wifeId: string | undefined;
 
@@ -1185,7 +1233,7 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
 
       return { success: true, familyId: newFamilyId };
     },
-    [generateNewId, persistTreeData]
+    [allocateGedcomId, persistTreeData]
   );
 
   const resolvePerson = resolveClaimedPerson;
@@ -1637,6 +1685,7 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
     reviewPendingEdit,
     refreshPendingCount,
     generateNewId,
+    allocateGedcomId,
     addPerson,
     updatePerson,
     addChildToFamily,
@@ -1664,7 +1713,7 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
     treeData, isReady, hasData, individualCount, familyCount,
     importGedcom, clearData, search, getPerson, resolveClaimedPerson, resolvePerson, isImporting, importError,
     isAdmin, pendingEditCount, submitEdit,
-    loadPendingEdits, loadMyEdits, reviewPendingEdit, refreshPendingCount, generateNewId,
+    loadPendingEdits, loadMyEdits, reviewPendingEdit, refreshPendingCount, generateNewId, allocateGedcomId,
     addPerson, updatePerson, addChildToFamily, createFamilyAndAddChild, createFamilyWithParents,
     addSpouse, linkExistingSpouses, linkChildToFamily, removeChildFromFamily, editParentFamily, unlinkSpouses,
     updateFamily, mergeIndividualsInTree, mergeFamiliesInTree, deleteFamilyFromTree, consolidateParallelFamilies,

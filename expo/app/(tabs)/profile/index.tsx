@@ -56,7 +56,15 @@ export default function ProfileScreen() {
     pendingEditCount, refreshPendingCount, loadMyEdits,
     isLoadingFromCloud, cloudError, loadProgress, refreshFromCloud,
   } = useFamilyTree();
-  const { isSignedIn, user, signOut, signOutPending, isEnabled } = useAuth();
+  const {
+    isSignedIn,
+    user,
+    signOut,
+    signOutPending,
+    deleteAccount,
+    deleteAccountPending,
+    isEnabled,
+  } = useAuth();
   const { replayTutorial } = useOnboarding();
 
   const [displayName, setDisplayName] = useState<string>(
@@ -248,6 +256,48 @@ export default function ProfileScreen() {
       },
     ]);
   }, [signOut]);
+
+  const handleDeleteAccount = useCallback(() => {
+    Alert.alert(
+      'Delete Account',
+      'This permanently deletes your account, profile, push tokens, and pending edit submissions. Shared family-tree records already in the database are kept. This cannot be undone.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete Account',
+          style: 'destructive',
+          onPress: () => {
+            Alert.alert(
+              'Confirm Deletion',
+              'Are you sure you want to permanently delete your Tekna account?',
+              [
+                { text: 'Cancel', style: 'cancel' },
+                {
+                  text: 'Delete Forever',
+                  style: 'destructive',
+                  onPress: () => {
+                    void (async () => {
+                      try {
+                        await deleteAccount();
+                        void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+                        Alert.alert('Account Deleted', 'Your account has been permanently deleted.');
+                      } catch (e) {
+                        void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+                        Alert.alert(
+                          'Deletion Failed',
+                          e instanceof Error ? e.message : 'Could not delete your account. Please try again.'
+                        );
+                      }
+                    })();
+                  },
+                },
+              ]
+            );
+          },
+        },
+      ]
+    );
+  }, [deleteAccount]);
 
   const handleRefresh = useCallback(() => {
     refreshMutation.mutate();
@@ -606,7 +656,7 @@ export default function ProfileScreen() {
               <TouchableOpacity
                 style={styles.logoutBtn}
                 onPress={handleSignOut}
-                disabled={signOutPending}
+                disabled={signOutPending || deleteAccountPending}
                 activeOpacity={0.7}
               >
                 {signOutPending ? (
@@ -615,6 +665,21 @@ export default function ProfileScreen() {
                   <LogOut size={16} color={Colors.danger} />
                 )}
                 <Text style={styles.logoutBtnText}>Sign Out</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.deleteAccountBtn}
+                onPress={handleDeleteAccount}
+                disabled={signOutPending || deleteAccountPending}
+                activeOpacity={0.7}
+                testID="delete-account-button"
+              >
+                {deleteAccountPending ? (
+                  <ActivityIndicator size="small" color={Colors.danger} />
+                ) : (
+                  <Trash2 size={16} color={Colors.danger} />
+                )}
+                <Text style={styles.deleteAccountBtnText}>Delete Account</Text>
               </TouchableOpacity>
             </View>
           ) : (
@@ -1308,6 +1373,20 @@ const styles = StyleSheet.create({
   logoutBtnText: {
     fontSize: 14,
     fontWeight: '500' as const,
+    color: Colors.danger,
+  },
+  deleteAccountBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    borderTopWidth: 1,
+    borderTopColor: Colors.divider,
+    gap: 10,
+  },
+  deleteAccountBtnText: {
+    fontSize: 14,
+    fontWeight: '600' as const,
     color: Colors.danger,
   },
   signInPromptCard: {

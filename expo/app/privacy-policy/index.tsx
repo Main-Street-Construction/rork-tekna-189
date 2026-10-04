@@ -9,7 +9,7 @@ import { Stack } from 'expo-router';
 import { Shield } from 'lucide-react-native';
 import Colors from '@/constants/colors';
 
-const LAST_UPDATED = 'March 11, 2026';
+const LAST_UPDATED = 'October 3, 2026';
 
 export default function PrivacyPolicyScreen() {
   return (
@@ -35,61 +35,66 @@ export default function PrivacyPolicyScreen() {
         </View>
 
         <Section title="Introduction">
-          This Privacy Policy describes how the Family Tree App ("we", "us", or "our")
+          This Privacy Policy describes how Tekna (the “Family Tree App”, “we”, “us”, or “our”)
           collects, uses, and protects your information when you use our mobile application.
           By using the app, you agree to the practices described in this policy.
         </Section>
 
         <Section title="Information We Collect">
-          <BulletPoint text="Account Information: When you create an account, we collect your email address, password, and full name. Passwords are securely hashed and never stored in plain text." />
-          <BulletPoint text="Profile Information: You may optionally provide a display name and link your identity to a person in the family tree database." />
-          <BulletPoint text="Family Tree Data: The app accesses shared genealogical data (names, dates, places, and family relationships) stored in our database. This data is managed by the administrator." />
+          <BulletPoint text="Account Information: When you create an account, we collect your email address, password, and full name. Passwords are securely hashed by our auth provider and never stored in plain text." />
+          <BulletPoint text="Profile Information: You may provide a display name and optionally claim / link your identity to a person in the family tree. Claimed identity IDs are stored with your account." />
+          <BulletPoint text="Family Tree Data: The app accesses shared genealogical data (names, dates, places, notes, and family relationships) stored in our database. Administrators manage imports and corrections to this shared data." />
+          <BulletPoint text="Edit Submissions: If you propose changes (for example adding a child or spouse), we store the proposed content along with your user ID and, when available, your name and email so administrators can review who submitted the request." />
           <BulletPoint text="Usage Data: We store your search history and relationship calculations locally on your device to improve your experience." />
-          <BulletPoint text="Feedback: If you submit feedback through the app, we collect the message content and your display name." />
-          <BulletPoint text="Push Notifications (admins only): If you are an administrator, the app may store a device push token to notify you when someone requests account access. You can deny notification permission in your device settings." />
+          <BulletPoint text="Feedback: If you submit feedback, we collect the message content, your display name, and any optional contact email you provide." />
+          <BulletPoint text="Push Notifications (admins only): If you are an administrator and grant notification permission, we store a device push token and platform (iOS/Android) to notify you about access requests. You can revoke permission in your device settings." />
         </Section>
 
         <Section title="How We Use Your Information">
-          <BulletPoint text="To provide access to the family tree database and relationship calculator." />
-          <BulletPoint text="To authenticate your identity and manage account access." />
-          <BulletPoint text="To allow administrators to review and approve user access." />
-          <BulletPoint text="To process and display your submitted edits and feedback." />
-          <BulletPoint text="To cache data locally for faster load times and offline browsing." />
+          <BulletPoint text="To provide access to the family tree database and relationship tools." />
+          <BulletPoint text="To authenticate your identity, reset passwords, and manage account access." />
+          <BulletPoint text="To allow administrators to review access requests, pending edits, feedback, and account roles." />
+          <BulletPoint text="To process, display, and apply approved genealogy edits you submit." />
+          <BulletPoint text="To cache tree data locally for faster load times and offline browsing." />
+          <BulletPoint text="To send admin-only push notifications about new access requests." />
         </Section>
 
         <Section title="Data Storage & Security">
-          Your account data is stored securely using Supabase, which provides
-          enterprise-grade security including encrypted data transmission (TLS),
-          encrypted data at rest, and row-level security policies that restrict
-          data access to authorized users only. Local data (profile, search history,
-          cached tree data) is stored on your device using secure storage mechanisms.
+          Your account and shared tree data are stored using Supabase, which provides
+          encrypted data transmission (TLS), encrypted data at rest, and row-level
+          security policies that restrict access to authorized users. Local data
+          (profile preferences, search history, and cached tree data) is stored on
+          your device. Email delivery for signup confirmation and password reset is
+          handled through our authentication provider.
         </Section>
 
         <Section title="Access Control">
           New accounts require administrator approval before accessing family tree data.
-          This ensures that only authorized individuals can view sensitive genealogical
-          information. Administrators can enable, disable, or grant admin privileges
-          to user accounts.
+          This helps ensure that only authorized individuals can view sensitive genealogical
+          information. Administrators can enable or disable accounts, grant or revoke admin
+          privileges, review pending edits, and delete accounts when appropriate.
         </Section>
 
-        <Section title="Data Sharing" intro="We do not sell, trade, or rent your personal information to third parties. Your data is only shared with:">
-          <BulletPoint text="Other approved users of the app who can view the shared family tree data." />
-          <BulletPoint text="Supabase (our database provider) for secure data storage and authentication." />
-          <BulletPoint text="No analytics services, advertising networks, or other third parties receive your data." />
+        <Section title="Data Sharing" intro="We do not sell, trade, or rent your personal information. Your data is only shared as needed to operate the app:">
+          <BulletPoint text="Other approved users of the app who can view the shared family tree data and, for admins, review pending edits and access requests." />
+          <BulletPoint text="Supabase, for authentication, database storage, and related backend services." />
+          <BulletPoint text="Expo’s push notification service, solely to deliver admin access-request alerts to devices that registered a push token." />
+          <BulletPoint text="We do not use advertising networks or sell your data to analytics brokers." />
         </Section>
 
         <Section title="Your Rights">
-          <BulletPoint text="Access: You can view all personal data associated with your account within the app." />
+          <BulletPoint text="Access: You can view personal data associated with your account within the app (profile, claim, and your submitted edits)." />
           <BulletPoint text="Correction: You can update your profile information at any time." />
-          <BulletPoint text="Deletion: You may request account deletion by contacting the administrator. Upon deletion, your account data and profile will be permanently removed." />
-          <BulletPoint text="Data Export: You may request an export of your personal data by contacting the administrator." />
+          <BulletPoint text="Deletion: You can permanently delete your account in the app under Profile → Account → Delete Account. This removes your credentials, profile, push tokens, pending edit submissions, and related account records. Shared family-tree records already saved in the database are retained as communal genealogy data." />
+          <BulletPoint text="Data Export: You may request an export of your personal account data by contacting the administrator through the in-app feedback form." />
         </Section>
 
         <Section title="Data Retention">
           We retain your account information for as long as your account is active.
-          Locally cached data can be cleared at any time from the Profile tab.
-          If your account is deleted, all associated data is permanently removed
-          from our servers.
+          Pending edits and feedback may be retained as part of administrative records
+          until reviewed, cleared, or removed when you delete your account. Locally
+          cached data can be cleared at any time from the Profile tab. Account deletion
+          permanently removes your personal account data from our servers.
         </Section>
 
         <Section title="Children's Privacy">
@@ -101,7 +106,7 @@ export default function PrivacyPolicyScreen() {
 
         <Section title="Changes to This Policy">
           We may update this Privacy Policy from time to time. Any changes will be
-          reflected with an updated "Last updated" date at the top of this page.
+          reflected with an updated “Last updated” date at the top of this page.
           Continued use of the app after changes constitutes acceptance of the
           revised policy.
         </Section>
@@ -113,7 +118,7 @@ export default function PrivacyPolicyScreen() {
         </Section>
 
         <View style={styles.footer}>
-          <Text style={styles.footerText}>Family Tree App</Text>
+          <Text style={styles.footerText}>Tekna</Text>
         </View>
       </ScrollView>
     </View>

@@ -17,6 +17,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import Colors from '@/constants/colors';
 import { useAuth } from '@/contexts/AuthContext';
 import { useAndroidKeyboardScroll } from '@/lib/keyboard-scroll';
+import { validateEmailAddress } from '@/utils/email';
 
 const PENDING_FULL_NAME_KEY = 'pending_signup_full_name';
 
@@ -47,14 +48,17 @@ export default function AuthScreen() {
     setErrorMessage('');
     setSuccessMessage('');
 
-    if (!email.trim()) {
-      setErrorMessage('Please enter your email address.');
+    const emailCheck = validateEmailAddress(email);
+    if (!emailCheck.ok) {
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+      setErrorMessage(emailCheck.error);
       return;
     }
+    const normalizedEmail = emailCheck.email;
 
     if (mode === 'reset') {
       try {
-        await resetPassword(email.trim());
+        await resetPassword(normalizedEmail);
         void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
         setSuccessMessage('Password reset email sent! Check your inbox (and spam folder).');
       } catch (e: unknown) {
@@ -96,19 +100,19 @@ export default function AuthScreen() {
 
     try {
       if (mode === 'signin') {
-        await signIn(email.trim(), password);
+        await signIn(normalizedEmail, password);
         void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
         router.back();
       } else {
-        const result = await signUp(email.trim(), password, trimmedName);
+        const result = await signUp(normalizedEmail, password, trimmedName);
         void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
 
         if (result.needsEmailConfirmation) {
           await AsyncStorage.setItem(
             PENDING_FULL_NAME_KEY,
-            JSON.stringify({ email: email.trim().toLowerCase(), fullName: trimmedName })
+            JSON.stringify({ email: normalizedEmail, fullName: trimmedName })
           );
-          setPendingEmail(email.trim());
+          setPendingEmail(normalizedEmail);
           setMode('confirm_email');
         } else {
           router.back();
@@ -119,7 +123,7 @@ export default function AuthScreen() {
 
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       if (msg.includes('Email not confirmed')) {
-        setPendingEmail(email.trim());
+        setPendingEmail(normalizedEmail);
         setMode('confirm_email');
       } else if (msg.includes('Invalid login credentials')) {
         setErrorMessage('Invalid email or password. Check your credentials or create a new account.');

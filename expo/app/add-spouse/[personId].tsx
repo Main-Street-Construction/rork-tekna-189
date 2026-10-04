@@ -30,7 +30,7 @@ export default function AddSpouseScreen() {
     treeData,
     getPerson,
     resolvePerson,
-    generateNewId,
+    allocateGedcomId,
     addSpouse,
     isAdmin,
     submitEdit,
@@ -95,7 +95,7 @@ export default function AddSpouseScreen() {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
 
     try {
-      const newId = generateNewId('I');
+      const newId = await allocateGedcomId('I');
       const givenWithMiddle = [trimmedGiven, trimmedMiddle].filter(Boolean).join(' ');
       const fullName = [givenWithMiddle, trimmedSurname].filter(Boolean).join(' ');
 
@@ -152,7 +152,7 @@ export default function AddSpouseScreen() {
     } finally {
       setIsSaving(false);
     }
-  }, [person, personId, givenName, middleName, surname, sex, birthDate, birthPlace, marriageDate, marriagePlace, generateNewId, addSpouse, router, isAdmin, submitEdit]);
+  }, [person, personId, givenName, middleName, surname, sex, birthDate, birthPlace, marriageDate, marriagePlace, allocateGedcomId, addSpouse, router, isAdmin, submitEdit]);
 
   const handleSave = useCallback(async () => {
     if (!person || !personId || !treeData) return;
