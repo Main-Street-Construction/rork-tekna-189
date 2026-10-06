@@ -4,16 +4,17 @@ import * as Device from 'expo-device';
 import Constants from 'expo-constants';
 import { registerPushToken, unregisterPushToken } from './supabase-rpc';
 
-Notifications.setNotificationHandler({
-  handleNotification: async () => ({
-    shouldShowAlert: true,
-    shouldPlaySound: true,
-    shouldSetBadge: true,
-    shouldShowBanner: true,
-    shouldShowList: true,
-  }),
-});
-
+if (Platform.OS !== 'web') {
+  Notifications.setNotificationHandler({
+    handleNotification: async () => ({
+      shouldShowAlert: true,
+      shouldPlaySound: true,
+      shouldSetBadge: true,
+      shouldShowBanner: true,
+      shouldShowList: true,
+    }),
+  });
+}
 let lastRegisteredToken: string | null = null;
 let registrationInFlight: Promise<void> | null = null;
 let appStateSub: { remove: () => void } | null = null;
