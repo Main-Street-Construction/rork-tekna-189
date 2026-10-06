@@ -1,0 +1,8 @@
+{
+  "name": "rork-tekna-189",
+  "private": true,
+  "description": "Root package for Vercel. The Expo app lives in /expo.",
+  "scripts": {
+    "build": "cd expo && npx expo export -p web"
+  }
+}

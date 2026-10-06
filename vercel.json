@@ -1,0 +1,9 @@
+{
+  "installCommand": "npm install --legacy-peer-deps --prefix expo",
+  "buildCommand": "cd expo && npx expo export -p web",
+  "outputDirectory": "expo/dist",
+  "framework": null,
+  "rewrites": [
+    { "source": "/(.*)", "destination": "/index.html" }
+  ]
+}

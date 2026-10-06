@@ -7,6 +7,7 @@
     "start:tunnel": "expo start --tunnel",
     "start-web": "expo start --web",
     "start-web-dev": "DEBUG=expo* expo start --web",
+    "export:web": "expo export -p web",
     "lint": "expo lint"
   },
   "dependencies": {

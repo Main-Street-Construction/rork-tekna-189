@@ -81,7 +81,9 @@
       "softwareKeyboardLayoutMode": "pan"
     },
     "web": {
-      "favicon": "./assets/images/favicon.png"
+      "favicon": "./assets/images/favicon.png",
+      "output": "static",
+      "bundler": "metro"
     },
     "plugins": [
       [
