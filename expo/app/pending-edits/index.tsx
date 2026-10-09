@@ -139,6 +139,8 @@ function validateEdit(edit: PendingEdit, treeData: FamilyTreeData | null): Valid
       return issues;
 }
 
+type SexType = 'M' | 'F' | 'U';
+
 export default function PendingEditsScreen() {
   const router = useRouter();
   const {
@@ -160,6 +162,9 @@ export default function PendingEditsScreen() {
     treeData,
     allocateGedcomId,
     refreshFromCloud,
+    ensureEditDependencies,
+    getTreeSnapshot,
+    isLoadingFromCloud,
   } = useFamilyTree();
 
   const [edits, setEdits] = useState<PendingEdit[]>([]);
@@ -171,6 +176,8 @@ export default function PendingEditsScreen() {
   const [oldestFirst, setOldestFirst] = useState(false);
   const [rejectNote, setRejectNote] = useState('');
   const [rejectingId, setRejectingId] = useState<string | null>(null);
+  /** Admin overrides for submitted child sex before approve */
+  const [sexOverrides, setSexOverrides] = useState<Record<string, SexType>>({});
 
   const loadEdits = useCallback(async () => {
     const result = await loadPendingEdits();
@@ -194,8 +201,19 @@ export default function PendingEditsScreen() {
     });
   }, [edits, filter, oldestFirst]);
 
-  const applyEdit = useCallback(async (edit: PendingEdit): Promise<{ success: boolean; error?: string }> => {
+  const getChildSex = useCallback((edit: PendingEdit): SexType => {
+    if (sexOverrides[edit.id]) return sexOverrides[edit.id];
+    const child = (edit.data as Record<string, unknown>).child as GedcomIndividual | undefined;
+    const sex = child?.sex;
+    return sex === 'M' || sex === 'F' || sex === 'U' ? sex : 'U';
+  }, [sexOverrides]);
+
+  const applyEdit = useCallback(async (
+    edit: PendingEdit,
+    snapshot: FamilyTreeData | null
+  ): Promise<{ success: boolean; error?: string }> => {
     const data = edit.data as Record<string, unknown>;
+    const localTree = snapshot ?? getTreeSnapshot();
     try {
       if (edit.edit_type === 'update_person') {
         const individual = data.individual as GedcomIndividual;
@@ -205,7 +223,7 @@ export default function PendingEditsScreen() {
       if (edit.edit_type === 'add_person') {
         const individual = data.individual as GedcomIndividual;
         if (!individual) return { success: false, error: 'Missing individual data' };
-        const id = await resolveSubmittedPersonId(individual.id, treeData, allocateGedcomId);
+        const id = await resolveSubmittedPersonId(individual.id, localTree, allocateGedcomId);
         return await addPerson({ ...individual, id });
       }
       if (edit.edit_type === 'add_child') {
@@ -214,8 +232,14 @@ export default function PendingEditsScreen() {
         const parentId = data.parentId as string | undefined;
         const spouseId = data.spouseId as string | undefined;
         if (!child) return { success: false, error: 'Missing child data' };
-        const id = await resolveSubmittedPersonId(child.id, treeData, allocateGedcomId);
-        const freshChild = { ...child, id, familiesAsSpouse: child.familiesAsSpouse ?? [] };
+        const id = await resolveSubmittedPersonId(child.id, localTree, allocateGedcomId);
+        const sex = getChildSex(edit);
+        const freshChild = {
+          ...child,
+          id,
+          sex,
+          familiesAsSpouse: child.familiesAsSpouse ?? [],
+        };
         if (familyId) return await addChildToFamily(freshChild, familyId);
         if (parentId) return await createFamilyAndAddChild(freshChild, parentId, spouseId);
         return { success: false, error: 'Missing familyId or parentId' };
@@ -224,7 +248,7 @@ export default function PendingEditsScreen() {
         const spouse = data.spouse as GedcomIndividual;
         const targetPersonId = data.personId as string | undefined;
         if (!spouse || !targetPersonId) return { success: false, error: 'Missing spouse or target' };
-        const id = await resolveSubmittedPersonId(spouse.id, treeData, allocateGedcomId);
+        const id = await resolveSubmittedPersonId(spouse.id, localTree, allocateGedcomId);
         const freshSpouse = { ...spouse, id, familiesAsSpouse: spouse.familiesAsSpouse ?? [] };
         return await addSpouse(targetPersonId, freshSpouse, data.marriageDate as string | undefined, data.marriagePlace as string | undefined);
       }
@@ -235,8 +259,8 @@ export default function PendingEditsScreen() {
       }
       if (edit.edit_type === 'edit_marriage') {
         const familyId = data.familyId as string;
-        if (!familyId || !treeData) return { success: false, error: 'Missing family' };
-        const family = treeData.families.get(familyId);
+        if (!familyId || !localTree) return { success: false, error: 'Missing family' };
+        const family = localTree.families.get(familyId);
         if (!family) return { success: false, error: `Family ${familyId} not found` };
         const updatedFamily: GedcomFamily = {
           ...family,
@@ -252,7 +276,7 @@ export default function PendingEditsScreen() {
         const spouseId = data.spouseId as string | undefined;
         if (!childId || !parentId) return { success: false, error: 'Missing child or parent' };
         if (familyId) return await linkChildToFamily(childId, familyId);
-        const child = treeData?.individuals.get(childId);
+        const child = localTree?.individuals.get(childId);
         if (!child) return { success: false, error: 'Child not in local tree' };
         const created = await createFamilyWithParents(parentId, spouseId);
         if (!created.success || !created.familyId) {
@@ -281,60 +305,90 @@ export default function PendingEditsScreen() {
     } catch (e) {
       return { success: false, error: String(e) };
     }
-  }, [updatePerson, addPerson, addChildToFamily, createFamilyAndAddChild, createFamilyWithParents, addSpouse, linkExistingSpouses, linkChildToFamily, removeChildFromFamily, editParentFamily, unlinkSpouses, updateFamily, treeData, allocateGedcomId]);
+  }, [updatePerson, addPerson, addChildToFamily, createFamilyAndAddChild, createFamilyWithParents, addSpouse, linkExistingSpouses, linkChildToFamily, removeChildFromFamily, editParentFamily, unlinkSpouses, updateFamily, allocateGedcomId, getTreeSnapshot, getChildSex]);
 
-  const handleApprove = useCallback(async (edit: PendingEdit, didRefresh = false) => {
-    let issues = validateEdit(edit, treeData);
-    let blocking = issues.filter((i) => i.blocking);
-    if (blocking.length > 0 && !didRefresh && blocking.some((i) => i.message.includes('not found'))) {
-      const refreshResult = await refreshFromCloud();
-      if (refreshResult.success) {
-        await handleApprove(edit, true);
-        return;
-      }
-    }
-    issues = validateEdit(edit, treeData);
-    blocking = issues.filter((i) => i.blocking);
-    if (blocking.length > 0) {
-      Alert.alert('Cannot Approve', blocking.map((i) => i.message).join('\n'));
+  const handleApprove = useCallback(async (edit: PendingEdit) => {
+    setProcessingId(edit.id);
+    // Hydrate any missing parents/families from cloud before validation
+    const hydrate = await ensureEditDependencies(edit);
+    const snapshot = hydrate.tree ?? getTreeSnapshot();
+    const issues = validateEdit(edit, snapshot);
+    const blocking = issues.filter((i) => i.blocking);
+
+    if (!hydrate.success || blocking.length > 0) {
+      setProcessingId(null);
+      Alert.alert(
+        'Cannot Approve',
+        [
+          ...blocking.map((i) => i.message),
+          hydrate.error && !blocking.length ? hydrate.error : null,
+          'Try Sync from Cloud, then approve again.',
+        ].filter(Boolean).join('\n')
+      );
       return;
     }
 
-    Alert.alert('Approve Edit', `Apply this ${EDIT_TYPE_LABELS[edit.edit_type] ?? edit.edit_type}?`, [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Approve',
-        onPress: async () => {
-          setProcessingId(edit.id);
-          void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-          const result = await applyEdit(edit);
-          if (result.success) {
-            await reviewPendingEdit(edit.id, 'approved');
-            setEdits((prev) => prev.filter((e) => e.id !== edit.id));
-            void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-          } else {
-            const errorMsg = result.error ?? 'Unknown error';
-            Alert.alert('Apply Failed', errorMsg, [
-              { text: 'Cancel', style: 'cancel' },
-              {
-                text: 'Retry',
-                onPress: () => void handleApprove(edit),
-              },
-              {
-                text: 'Reject',
-                style: 'destructive',
-                onPress: async () => {
-                  await reviewPendingEdit(edit.id, 'rejected', errorMsg);
-                  setEdits((prev) => prev.filter((e) => e.id !== edit.id));
-                },
-              },
-            ]);
-          }
-          setProcessingId(null);
+    setProcessingId(null);
+    const sex = getChildSex(edit);
+    const sexNote =
+      edit.edit_type === 'add_child'
+        ? `\nSex: ${sex === 'M' ? 'Male' : sex === 'F' ? 'Female' : 'Unknown'}`
+        : '';
+
+    Alert.alert(
+      'Approve Edit',
+      `Apply this ${EDIT_TYPE_LABELS[edit.edit_type] ?? edit.edit_type}?${sexNote}`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Approve',
+          onPress: () => {
+            void (async () => {
+              setProcessingId(edit.id);
+              void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+              // Re-hydrate right before apply in case tree changed during the dialog
+              const again = await ensureEditDependencies(edit);
+              const latest = again.tree ?? getTreeSnapshot();
+              const result = await applyEdit(edit, latest);
+              if (result.success) {
+                await reviewPendingEdit(edit.id, 'approved');
+                setEdits((prev) => prev.filter((e) => e.id !== edit.id));
+                setSexOverrides((prev) => {
+                  const next = { ...prev };
+                  delete next[edit.id];
+                  return next;
+                });
+                void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+              } else {
+                const errorMsg = result.error ?? 'Unknown error';
+                Alert.alert('Apply Failed', errorMsg, [
+                  { text: 'Cancel', style: 'cancel' },
+                  {
+                    text: 'Sync & Retry',
+                    onPress: () => {
+                      void (async () => {
+                        await refreshFromCloud({ force: true });
+                        void handleApprove(edit);
+                      })();
+                    },
+                  },
+                  {
+                    text: 'Reject',
+                    style: 'destructive',
+                    onPress: async () => {
+                      await reviewPendingEdit(edit.id, 'rejected', errorMsg);
+                      setEdits((prev) => prev.filter((e) => e.id !== edit.id));
+                    },
+                  },
+                ]);
+              }
+              setProcessingId(null);
+            })();
+          },
         },
-      },
-    ]);
-  }, [applyEdit, reviewPendingEdit, treeData, refreshFromCloud]);
+      ]
+    );
+  }, [ensureEditDependencies, getTreeSnapshot, applyEdit, reviewPendingEdit, refreshFromCloud, getChildSex]);
 
   const submitReject = useCallback(async (edit: PendingEdit, note?: string) => {
     setProcessingId(edit.id);
@@ -394,7 +448,9 @@ export default function PendingEditsScreen() {
         rows.push(renderDiffRow('Name', undefined, ind.name));
         rows.push(renderDiffRow('Birth Date', undefined, ind.birthDate));
         rows.push(renderDiffRow('Birth Place', undefined, ind.birthPlace));
-        rows.push(renderDiffRow('Sex', undefined, ind.sex));
+        if (edit.edit_type !== 'add_child') {
+          rows.push(renderDiffRow('Sex', undefined, ind.sex));
+        }
       }
       if (edit.edit_type === 'add_child') {
         const parentId = data.parentId as string | undefined;
@@ -484,7 +540,18 @@ export default function PendingEditsScreen() {
       ) : (
         <ScrollView
           contentContainerStyle={styles.scrollContent}
-          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={async () => { setRefreshing(true); await loadEdits(); setRefreshing(false); }} tintColor={Colors.accent} />}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing || isLoadingFromCloud}
+              onRefresh={async () => {
+                setRefreshing(true);
+                await refreshFromCloud({ force: true });
+                await loadEdits();
+                setRefreshing(false);
+              }}
+              tintColor={Colors.accent}
+            />
+          }
         >
           <View style={styles.toolbar}>
             <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterRow}>
@@ -498,9 +565,24 @@ export default function PendingEditsScreen() {
                 </TouchableOpacity>
               ))}
             </ScrollView>
-            <TouchableOpacity style={styles.sortBtn} onPress={() => setOldestFirst((v) => !v)}>
-              <Text style={styles.sortBtnText}>{oldestFirst ? 'Oldest first' : 'Newest first'}</Text>
-            </TouchableOpacity>
+            <View style={styles.toolbarRight}>
+              <TouchableOpacity
+                style={styles.sortBtn}
+                onPress={() => {
+                  void (async () => {
+                    setRefreshing(true);
+                    await refreshFromCloud({ force: true });
+                    await loadEdits();
+                    setRefreshing(false);
+                  })();
+                }}
+              >
+                <Text style={styles.sortBtnText}>{isLoadingFromCloud ? 'Syncing…' : 'Sync from Cloud'}</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.sortBtn} onPress={() => setOldestFirst((v) => !v)}>
+                <Text style={styles.sortBtnText}>{oldestFirst ? 'Oldest first' : 'Newest first'}</Text>
+              </TouchableOpacity>
+            </View>
           </View>
 
           {filteredEdits.length === 0 ? (
@@ -539,9 +621,9 @@ export default function PendingEditsScreen() {
                     {hasBlocking && (
                       <View style={styles.warningBanner}>
                         <AlertTriangle size={14} color={Colors.danger} />
-                        <Text style={styles.warningText}>{issues.map((i) => i.message).join(' · ')}</Text>
-                        <TouchableOpacity onPress={() => void refreshFromCloud()}>
-                          <Text style={styles.refreshLink}>Refresh</Text>
+                        <Text style={styles.warningText}>{issues.map((i) => i.message).join(' · ')} — Approve will sync missing records first</Text>
+                        <TouchableOpacity onPress={() => void refreshFromCloud({ force: true })}>
+                          <Text style={styles.refreshLink}>Sync</Text>
                         </TouchableOpacity>
                       </View>
                     )}
@@ -554,6 +636,33 @@ export default function PendingEditsScreen() {
                           <Text style={styles.submitterBannerMeta}>{new Date(edit.submitted_at).toLocaleString()}</Text>
                         </View>
                         {renderEditDetails(edit)}
+                        {edit.edit_type === 'add_child' ? (
+                          <View style={styles.sexEditor}>
+                            <Text style={styles.sexEditorLabel}>Sex (fix before approve if needed)</Text>
+                            <View style={styles.sexRow}>
+                              {([
+                                { key: 'M' as SexType, label: 'Male' },
+                                { key: 'F' as SexType, label: 'Female' },
+                                { key: 'U' as SexType, label: 'Unknown' },
+                              ]).map((option) => {
+                                const selected = getChildSex(edit) === option.key;
+                                return (
+                                  <TouchableOpacity
+                                    key={option.key}
+                                    style={[styles.sexChip, selected && styles.sexChipActive]}
+                                    onPress={() =>
+                                      setSexOverrides((prev) => ({ ...prev, [edit.id]: option.key }))
+                                    }
+                                  >
+                                    <Text style={[styles.sexChipText, selected && styles.sexChipTextActive]}>
+                                      {option.label}
+                                    </Text>
+                                  </TouchableOpacity>
+                                );
+                              })}
+                            </View>
+                          </View>
+                        ) : null}
                         {personId ? (
                           <TouchableOpacity style={styles.personLink} onPress={() => router.push(`/person/${personId}`)}>
                             <Text style={styles.personLinkText}>View person in tree</Text>
@@ -586,14 +695,16 @@ export default function PendingEditsScreen() {
                               <Text style={styles.rejectBtnText}>Reject</Text>
                             </TouchableOpacity>
                             <TouchableOpacity
-                              style={[styles.actionBtn, styles.approveBtn, hasBlocking && styles.approveBtnDisabled]}
+                              style={[styles.actionBtn, styles.approveBtn]}
                               onPress={() => void handleApprove(edit)}
-                              disabled={isProcessing || hasBlocking}
+                              disabled={isProcessing}
                             >
                               {isProcessing ? <ActivityIndicator size="small" color={Colors.white} /> : (
                                 <>
                                   <Check size={16} color={Colors.white} />
-                                  <Text style={styles.approveBtnText}>Approve</Text>
+                                  <Text style={styles.approveBtnText}>
+                                    {hasBlocking ? 'Sync & Approve' : 'Approve'}
+                                  </Text>
                                 </>
                               )}
                             </TouchableOpacity>
@@ -623,8 +734,23 @@ const styles = StyleSheet.create({
   filterChipActive: { backgroundColor: Colors.accent, borderColor: Colors.accent },
   filterChipText: { fontSize: 13, fontWeight: '600' as const, color: Colors.textSecondary },
   filterChipTextActive: { color: Colors.white },
+  toolbarRight: { flexDirection: 'row', justifyContent: 'flex-end', gap: 16 },
   sortBtn: { alignSelf: 'flex-end' },
   sortBtnText: { fontSize: 12, color: Colors.accent, fontWeight: '600' as const },
+  sexEditor: { marginTop: 10, marginBottom: 4, gap: 8 },
+  sexEditorLabel: { fontSize: 11, fontWeight: '600' as const, color: Colors.textSecondary, textTransform: 'uppercase' as const },
+  sexRow: { flexDirection: 'row', gap: 8 },
+  sexChip: {
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 20,
+    backgroundColor: Colors.background,
+    borderWidth: 1,
+    borderColor: Colors.cardBorder,
+  },
+  sexChipActive: { backgroundColor: Colors.accent, borderColor: Colors.accent },
+  sexChipText: { fontSize: 13, fontWeight: '600' as const, color: Colors.textSecondary },
+  sexChipTextActive: { color: Colors.white },
   countRow: { flexDirection: 'row', alignItems: 'center', marginHorizontal: 16, marginVertical: 12, gap: 8 },
   countText: { fontSize: 14, fontWeight: '600' as const, color: Colors.text },
   editCard: { backgroundColor: Colors.card, marginHorizontal: 16, marginBottom: 10, borderRadius: 14, borderWidth: 1, borderColor: Colors.cardBorder, overflow: 'hidden' },

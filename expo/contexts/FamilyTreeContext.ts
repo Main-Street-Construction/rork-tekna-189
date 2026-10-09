@@ -23,10 +23,61 @@ import {
   getPendingEditCount,
   getCloudCounts,
   fetchIndividualByGedcomId,
+  fetchFamilyBundleByGedcomId,
   fetchMyPendingEdits,
   LoadProgress,
 } from '@/lib/supabase-db';
 import { PendingEdit } from '@/types/genealogy';
+
+function collectEditDependencyIds(edit: PendingEdit): { personIds: string[]; familyIds: string[] } {
+  const data = edit.data as Record<string, unknown>;
+  const personIds = new Set<string>();
+  const familyIds = new Set<string>();
+
+  const addPerson = (id: unknown) => {
+    if (typeof id === 'string' && id.trim()) personIds.add(id.trim());
+  };
+  const addFamily = (id: unknown) => {
+    if (typeof id === 'string' && id.trim()) familyIds.add(id.trim());
+  };
+
+  switch (edit.edit_type) {
+    case 'update_person':
+      addPerson((data.individual as GedcomIndividual | undefined)?.id ?? edit.target_id);
+      break;
+    case 'add_child':
+      addPerson(data.parentId);
+      addPerson(data.spouseId);
+      addFamily(data.familyId);
+      break;
+    case 'add_spouse':
+      addPerson(data.personId);
+      break;
+    case 'link_spouses':
+      addPerson(data.person1Id);
+      addPerson(data.person2Id);
+      break;
+    case 'edit_marriage':
+    case 'unlink_spouses':
+      addFamily(data.familyId);
+      break;
+    case 'link_child':
+      addPerson(data.childId);
+      addPerson(data.parentId);
+      addPerson(data.spouseId);
+      addFamily(data.familyId);
+      break;
+    case 'edit_parent':
+    case 'remove_child':
+      addPerson(data.childId);
+      addFamily(data.familyId);
+      break;
+    default:
+      break;
+  }
+
+  return { personIds: [...personIds], familyIds: [...familyIds] };
+}
 import { useAuth } from '@/contexts/AuthContext';
 import {
   adminMergeIndividuals,
@@ -595,39 +646,46 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
     return { success: false, error: 'No data found in database' };
   }, [handleProgress, applyTreeData]);
 
-  const refreshFromCloud = useCallback(async (): Promise<{ success: boolean; error?: string }> => {
+  const refreshFromCloud = useCallback(async (
+    options?: { force?: boolean }
+  ): Promise<{ success: boolean; error?: string }> => {
     setIsLoadingFromCloud(true);
     setCloudError(null);
     try {
+      if (options?.force) {
+        console.log('[FamilyTree] Forced full cloud reload');
+        return await fullReloadFromCloud();
+      }
+
       const current = treeDataRef.current;
       const localIndCount = current?.individuals.size ?? 0;
       const localFamCount = current?.families.size ?? 0;
 
       if (localIndCount === 0) {
         console.log('[FamilyTree] No local data — doing full reload');
-        const result = await fullReloadFromCloud();
-        return result;
+        return await fullReloadFromCloud();
       }
 
       const cloudCounts = await getCloudCounts();
       if (!cloudCounts) {
         console.warn('[FamilyTree] Could not fetch cloud counts, doing full sync to be safe');
-        const result = await fullReloadFromCloud();
-        return result;
+        return await fullReloadFromCloud();
       }
 
+      const indRatio = cloudCounts.individuals > 0 ? localIndCount / cloudCounts.individuals : 1;
+      const famRatio = cloudCounts.families > 0 ? localFamCount / cloudCounts.families : 1;
       const indDiff = Math.abs(cloudCounts.individuals - localIndCount);
       const famDiff = Math.abs(cloudCounts.families - localFamCount);
 
-      if (indDiff === 0 && famDiff === 0) {
+      // Sync when counts differ OR local is a partial snapshot of cloud
+      if (indDiff === 0 && famDiff === 0 && indRatio >= PARTIAL_SYNC_THRESHOLD && famRatio >= PARTIAL_SYNC_THRESHOLD) {
         console.log('[FamilyTree] Data is up-to-date (local:', localIndCount, 'ind,', localFamCount, 'fam | cloud:', cloudCounts.individuals, 'ind,', cloudCounts.families, 'fam)');
         await safeSetItem(LAST_CLOUD_SYNC_KEY, String(Date.now()));
         return { success: true };
       }
 
-      console.log('[FamilyTree] Data mismatch detected (local:', localIndCount, 'ind,', localFamCount, 'fam | cloud:', cloudCounts.individuals, 'ind,', cloudCounts.families, 'fam) — syncing...');
-      const result = await fullReloadFromCloud();
-      return result;
+      console.log('[FamilyTree] Data mismatch/partial local detected (local:', localIndCount, 'ind,', localFamCount, 'fam | cloud:', cloudCounts.individuals, 'ind,', cloudCounts.families, 'fam) — syncing...');
+      return await fullReloadFromCloud();
     } catch (e) {
       const msg = String(e);
       setCloudError(msg);
@@ -636,6 +694,129 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
       setIsLoadingFromCloud(false);
     }
   }, [fullReloadFromCloud]);
+
+  const persistMergedTree = useCallback(async (newTree: FamilyTreeData) => {
+    applyTreeData(newTree);
+    const serialized = serializeFamilyTreeData(newTree);
+    await safeSetItem(STORAGE_KEY, serialized);
+  }, [applyTreeData]);
+
+  /**
+   * Pull any people/families an edit needs from cloud into the local tree.
+   * Falls back to a forced full reload if targeted fetch still leaves gaps.
+   */
+  const ensureEditDependencies = useCallback(async (
+    edit: PendingEdit
+  ): Promise<{ success: boolean; error?: string; tree: FamilyTreeData | null }> => {
+    const { personIds, familyIds } = collectEditDependencyIds(edit);
+
+    if (!treeDataRef.current || treeDataRef.current.individuals.size === 0) {
+      const reload = await refreshFromCloud({ force: true });
+      return {
+        success: reload.success,
+        error: reload.error,
+        tree: treeDataRef.current,
+      };
+    }
+
+    let working: FamilyTreeData = {
+      individuals: new Map(treeDataRef.current.individuals),
+      families: new Map(treeDataRef.current.families),
+    };
+    let changed = false;
+
+    const missingPeople = personIds.filter((id) => !working.individuals.has(id));
+    for (const personId of missingPeople) {
+      const fetched = await fetchIndividualByGedcomId(personId);
+      if (fetched) {
+        working.individuals.set(personId, {
+          ...fetched,
+          familiesAsSpouse: Array.isArray(fetched.familiesAsSpouse) ? fetched.familiesAsSpouse : [],
+        });
+        changed = true;
+      }
+    }
+
+    const missingFamilies = familyIds.filter((id) => !working.families.has(id));
+    for (const familyId of missingFamilies) {
+      const bundle = await fetchFamilyBundleByGedcomId(familyId);
+      if (!bundle) continue;
+
+      for (const ind of bundle.individuals) {
+        if (!working.individuals.has(ind.id)) {
+          working.individuals.set(ind.id, {
+            ...ind,
+            familiesAsSpouse: Array.isArray(ind.familiesAsSpouse) ? ind.familiesAsSpouse : [],
+          });
+          changed = true;
+        }
+      }
+
+      // Keep spouse/child links coherent for locally merged people
+      const fam = bundle.family;
+      working.families.set(fam.id, fam);
+      changed = true;
+
+      if (fam.husbandId) {
+        const husband = working.individuals.get(fam.husbandId);
+        if (husband) {
+          const list = safeFamiliesAsSpouse(husband.familiesAsSpouse);
+          if (!list.includes(fam.id)) {
+            working.individuals.set(fam.husbandId, {
+              ...husband,
+              familiesAsSpouse: [...list, fam.id],
+            });
+          }
+        }
+      }
+      if (fam.wifeId) {
+        const wife = working.individuals.get(fam.wifeId);
+        if (wife) {
+          const list = safeFamiliesAsSpouse(wife.familiesAsSpouse);
+          if (!list.includes(fam.id)) {
+            working.individuals.set(fam.wifeId, {
+              ...wife,
+              familiesAsSpouse: [...list, fam.id],
+            });
+          }
+        }
+      }
+    }
+
+    if (changed) {
+      await persistMergedTree(working);
+    }
+
+    const stillMissingPeople = personIds.filter((id) => !treeDataRef.current?.individuals.has(id));
+    const stillMissingFamilies = familyIds.filter((id) => !treeDataRef.current?.families.has(id));
+
+    if (stillMissingPeople.length > 0 || stillMissingFamilies.length > 0) {
+      console.warn(
+        '[FamilyTree] Targeted hydrate incomplete; forcing full sync. Missing people:',
+        stillMissingPeople,
+        'families:',
+        stillMissingFamilies
+      );
+      const reload = await refreshFromCloud({ force: true });
+      if (!reload.success) {
+        return { success: false, error: reload.error, tree: treeDataRef.current };
+      }
+
+      const afterPeople = personIds.filter((id) => !treeDataRef.current?.individuals.has(id));
+      const afterFamilies = familyIds.filter((id) => !treeDataRef.current?.families.has(id));
+      if (afterPeople.length > 0 || afterFamilies.length > 0) {
+        return {
+          success: false,
+          error: `Still missing after sync: ${[...afterPeople, ...afterFamilies].join(', ')}`,
+          tree: treeDataRef.current,
+        };
+      }
+    }
+
+    return { success: true, tree: treeDataRef.current };
+  }, [persistMergedTree, refreshFromCloud]);
+
+  const getTreeSnapshot = useCallback((): FamilyTreeData | null => treeDataRef.current, []);
 
   const generateNewId = useCallback(
     (prefix: string): string => {
@@ -1709,6 +1890,8 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
     lastSyncResult,
     isDataIncomplete,
     refreshFromCloud,
+    ensureEditDependencies,
+    getTreeSnapshot,
   }), [
     treeData, isReady, hasData, individualCount, familyCount,
     importGedcom, clearData, search, getPerson, resolveClaimedPerson, resolvePerson, isImporting, importError,
@@ -1719,5 +1902,6 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
     updateFamily, mergeIndividualsInTree, mergeFamiliesInTree, deleteFamilyFromTree, consolidateParallelFamilies,
     isLoadingFromCloud,
     isBackgroundSyncing, cloudError, loadProgress, lastSyncResult, isDataIncomplete, refreshFromCloud,
+    ensureEditDependencies, getTreeSnapshot,
   ]);
 });

@@ -590,6 +590,75 @@ export async function fetchIndividualByGedcomId(gedcomId: string): Promise<Gedco
   }
 }
 
+/** Load one family plus husband/wife/children individuals for local merge. */
+export async function fetchFamilyBundleByGedcomId(gedcomId: string): Promise<{
+  family: GedcomFamily;
+  individuals: GedcomIndividual[];
+} | null> {
+  try {
+    const { data: famRows, error: famError } = await supabase
+      .from('families')
+      .select(FAMILIES_COLUMNS)
+      .eq('gedcom_id', gedcomId)
+      .limit(1);
+
+    if (famError || !famRows || famRows.length === 0) {
+      console.log('[Supabase] fetchFamilyBundle: family not found', gedcomId, famError?.message);
+      return null;
+    }
+
+    const famRow = famRows[0] as SupabaseFamily;
+    const { data: memberRows, error: memberError } = await supabase
+      .from('family_members')
+      .select(FAMILY_MEMBERS_COLUMNS)
+      .eq('family_id', famRow.id);
+
+    if (memberError) {
+      console.warn('[Supabase] fetchFamilyBundle: members error', memberError.message);
+    }
+
+    const relatedUuids = new Set<string>();
+    if (famRow.husband_id) relatedUuids.add(famRow.husband_id);
+    if (famRow.wife_id) relatedUuids.add(famRow.wife_id);
+    for (const row of memberRows ?? []) {
+      if (row.individual_id) relatedUuids.add(row.individual_id as string);
+    }
+
+    const uuidToGedcomId = new Map<string, string>();
+    const individuals: GedcomIndividual[] = [];
+
+    if (relatedUuids.size > 0) {
+      const { data: indRows, error: indError } = await supabase
+        .from('individuals')
+        .select(INDIVIDUALS_COLUMNS)
+        .in('id', [...relatedUuids]);
+
+      if (indError) {
+        console.warn('[Supabase] fetchFamilyBundle: individuals error', indError.message);
+      }
+
+      for (const row of (indRows ?? []) as SupabaseIndividual[]) {
+        uuidToGedcomId.set(row.id, row.gedcom_id);
+        individuals.push(supabaseToIndividual(row));
+      }
+    }
+
+    const childGedcomIds: string[] = [];
+    for (const row of memberRows ?? []) {
+      if (row.role === 'child') {
+        const childGedcomId = uuidToGedcomId.get(row.individual_id as string);
+        if (childGedcomId) childGedcomIds.push(childGedcomId);
+      }
+    }
+
+    const family = supabaseToFamily(famRow, uuidToGedcomId, childGedcomIds);
+    return { family, individuals };
+  } catch (e) {
+    console.error('[Supabase] fetchFamilyBundle crashed:', e);
+    return null;
+  }
+}
+
 export async function updateIndividualInSupabase(
   individual: GedcomIndividual
 ): Promise<{ success: boolean; error?: string }> {
