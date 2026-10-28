@@ -109,7 +109,7 @@ export default function AddChildScreen() {
       const parts: string[] = [];
       if (h) parts.push(h.givenName || h.name);
       if (w) parts.push(w.givenName || w.name);
-      const kids = fam.childrenIds.length;
+      const kids = Array.isArray(fam.childrenIds) ? fam.childrenIds.length : 0;
       const marriage = [fam.marriageDate, fam.marriagePlace].filter(Boolean).join(' — ');
       const base = `${parts.join(' & ')}${kids > 0 ? ` (${kids} children)` : ''}`;
       return marriage ? `${base} · ${marriage}` : base;
@@ -315,7 +315,7 @@ export default function AddChildScreen() {
                   <Text style={styles.sectionTitle}>Select Family</Text>
                 </View>
                 <Text style={styles.hint}>
-                  Choose an existing family or create a new one (for remarriage or step-family).
+                  Pick the parent pair this child belongs with, or create a new family for a previous spouse / different mother or father.
                 </Text>
                 {existingFamilies.map((fam) => (
                   <TouchableOpacity

@@ -16,7 +16,7 @@ const PROFILE_KEY = 'user_profile';
 const CLAIMED_KEY = 'identity_claimed';
 
 export const [ProfileProvider, useProfile] = createContextHook(() => {
-  const { isSignedIn, profileRow } = useAuth();
+  const { isSignedIn, profileRow, refreshProfile } = useAuth();
   const [profile, setProfile] = useState<UserProfile | null>(null);
 
   const loadQuery = useQuery({
@@ -70,39 +70,51 @@ export const [ProfileProvider, useProfile] = createContextHook(() => {
 
     if (error) return;
 
+    let personName: string | undefined;
     const row = data?.[0] as { first_name?: string; last_name?: string } | undefined;
-    if (!row) {
-      await clearIdentityClaim();
-      await AsyncStorage.removeItem(CLAIMED_KEY);
-      setIsClaimed(false);
-      if (profile?.rootPersonId) {
-        const updated: UserProfile = {
-          ...profile,
-          rootPersonId: undefined,
-          rootPersonName: undefined,
-        };
-        await AsyncStorage.setItem(PROFILE_KEY, JSON.stringify(updated));
-        setProfile(updated);
+    if (row) {
+      personName = [row.first_name, row.last_name].filter(Boolean).join(' ');
+    } else {
+      // Transient miss / import lag — keep the server claim; try a second path.
+      const fetched = await fetchIndividualByGedcomId(gedcomId);
+      if (fetched) {
+        personName = fetched.name || [fetched.givenName, fetched.surname].filter(Boolean).join(' ');
+      } else {
+        // Do NOT clearIdentityClaim on empty select — that wiped valid claims.
+        setClaimRepairNotice(true);
+        await AsyncStorage.setItem(CLAIMED_KEY, 'true');
+        setIsClaimed(true);
+        if (profile?.rootPersonId !== gedcomId) {
+          const existing = profile ?? {
+            id: Date.now().toString(),
+            displayName: '',
+            createdAt: Date.now(),
+          };
+          const updated: UserProfile = {
+            ...existing,
+            rootPersonId: gedcomId,
+            rootPersonName: existing.rootPersonName ?? gedcomId,
+          };
+          await AsyncStorage.setItem(PROFILE_KEY, JSON.stringify(updated));
+          setProfile(updated);
+        }
+        return;
       }
-      setClaimRepairNotice(true);
-      return;
     }
-
-    const personName = [row.first_name, row.last_name].filter(Boolean).join(' ');
 
     await AsyncStorage.setItem(CLAIMED_KEY, 'true');
     setIsClaimed(true);
 
     const existing = profile ?? {
       id: Date.now().toString(),
-      displayName: personName,
+      displayName: personName || gedcomId,
       createdAt: Date.now(),
     };
     const updated: UserProfile = {
       ...existing,
       rootPersonId: gedcomId,
-      rootPersonName: personName,
-      displayName: personName,
+      rootPersonName: personName || existing.rootPersonName || gedcomId,
+      displayName: personName || existing.displayName || gedcomId,
     };
     const initials = updated.displayName
       .split(' ')
@@ -170,7 +182,10 @@ export const [ProfileProvider, useProfile] = createContextHook(() => {
     setIsValidatingClaim(true);
     try {
       if (!gedcomId) {
-        await repairBrokenClaim(true);
+        // Local flag without an id — soft notice only; never wipe a server claim.
+        if (!profileRow?.claimed_gedcom_id) {
+          setClaimRepairNotice(true);
+        }
         return;
       }
 
@@ -184,8 +199,12 @@ export const [ProfileProvider, useProfile] = createContextHook(() => {
         const fetched = await fetchIndividualByGedcomId(gedcomId);
         if (!fetched) return;
       } else if (!data?.[0]) {
-        await repairBrokenClaim(true);
-        return;
+        const fetched = await fetchIndividualByGedcomId(gedcomId);
+        if (!fetched) {
+          // Keep server claim; show repair banner so the user can re-claim if needed.
+          setClaimRepairNotice(true);
+          return;
+        }
       }
 
       if (profileRow?.claimed_gedcom_id) {
@@ -200,7 +219,6 @@ export const [ProfileProvider, useProfile] = createContextHook(() => {
     profileRow?.claimed_gedcom_id,
     profile?.rootPersonId,
     isClaimed,
-    repairBrokenClaim,
     syncClaimFromServer,
   ]);
 
@@ -294,13 +312,18 @@ export const [ProfileProvider, useProfile] = createContextHook(() => {
       updated.avatarInitials = initials;
       await AsyncStorage.setItem(CLAIMED_KEY, 'true');
       setIsClaimed(true);
+      setClaimRepairNotice(false);
       saveMutation.mutate(updated);
+      refreshProfile();
     },
-    [profile, saveMutation]
+    [profile, saveMutation, refreshProfile]
   );
 
   const hasProfile = profile !== null && profile.displayName.length > 0;
-  const hasClaimed = isClaimed && profile?.rootPersonId != null;
+  const hasClaimed =
+    !!profileRow?.claimed_gedcom_id ||
+    (isClaimed && profile?.rootPersonId != null) ||
+    !!profile?.rootPersonId;
 
   return useMemo(() => ({
     profile,

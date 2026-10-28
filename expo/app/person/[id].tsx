@@ -154,16 +154,23 @@ export default function PersonDetailScreen() {
     setTreeExpanded((prev) => !prev);
   }, []);
 
+  const handleGoBack = useCallback(() => {
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    navigateBack(router);
+  }, [router]);
+
   const handleGoHome = useCallback(() => {
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    router.replace('/');
+    // Prefer navigate over replace so search tab state/history survives.
+    router.navigate('/(tabs)/(search)');
   }, [router]);
 
   const handlePersonPress = useCallback(
     (p: { id: string }) => {
-      router.push(`/person/${p.id}`);
+      if (p.id === id) return;
+      router.push(`/person/${p.id}` as const);
     },
-    [router]
+    [router, id]
   );
 
   const handleEdit = useCallback(() => {
@@ -319,8 +326,13 @@ export default function PersonDetailScreen() {
           headerStyle: { backgroundColor: Colors.background },
           headerTintColor: Colors.text,
           headerShadowVisible: false,
+          headerLeft: () => (
+            <TouchableOpacity onPress={handleGoBack} style={styles.editHeaderBtn} hitSlop={12}>
+              <ArrowLeft size={20} color={Colors.accent} />
+            </TouchableOpacity>
+          ),
           headerRight: () => (
-            <TouchableOpacity onPress={handleGoHome} style={styles.editHeaderBtn}>
+            <TouchableOpacity onPress={handleGoHome} style={styles.editHeaderBtn} hitSlop={12}>
               <Home size={18} color={Colors.accent} />
             </TouchableOpacity>
           ),
@@ -635,7 +647,9 @@ export default function PersonDetailScreen() {
               <SectionHeader title="Children" count={children.length} />
               <View style={styles.relationList}>
                 {children.map((c) => {
-                  const childFamily = spouseFamilies.find((f) => f.childrenIds.includes(c.id))
+                  const childFamily = spouseFamilies.find((f) =>
+                    (Array.isArray(f.childrenIds) ? f.childrenIds : []).includes(c.id)
+                  )
                     ?? (c.familyAsChild && treeData?.families.get(c.familyAsChild) ? treeData.families.get(c.familyAsChild) : undefined);
                   const childFamilyId = childFamily?.id;
                   return (
@@ -699,7 +713,7 @@ export default function PersonDetailScreen() {
           <View style={styles.actionButtons}>
             <TouchableOpacity style={styles.actionBtn} onPress={handleEdit} activeOpacity={0.7}>
               <Pencil size={18} color={Colors.white} />
-              <Text style={styles.actionBtnText}>Edit</Text>
+              <Text style={styles.actionBtnText}>{isAdmin ? 'Edit' : 'Suggest edit'}</Text>
             </TouchableOpacity>
             <TouchableOpacity style={styles.addChildBtn} onPress={() => { void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); setChildMenuVisible(true); }} activeOpacity={0.7}>
               <UserPlus size={18} color={Colors.accent} />
@@ -710,6 +724,11 @@ export default function PersonDetailScreen() {
               <Text style={styles.addChildBtnText}>Spouse</Text>
             </TouchableOpacity>
           </View>
+          <Text style={styles.actionHint}>
+            {isAdmin
+              ? 'Edit names, add children, or link another spouse (including a previous marriage).'
+              : 'Suggest name fixes, add a child, or link a spouse — including a previous marriage. Changes go to admins for approval; track them under Profile → My Edits.'}
+          </Text>
 
           <Modal
             visible={spouseMenuVisible}
@@ -728,7 +747,7 @@ export default function PersonDetailScreen() {
                   <UserPlus size={20} color={Colors.accent} />
                   <View style={styles.menuOptionTextWrap}>
                     <Text style={styles.menuOptionTitle}>Create New Person</Text>
-                    <Text style={styles.menuOptionDesc}>Add a new spouse to the tree</Text>
+                    <Text style={styles.menuOptionDesc}>Add a current or previous spouse</Text>
                   </View>
                 </TouchableOpacity>
                 <TouchableOpacity
@@ -770,7 +789,7 @@ export default function PersonDetailScreen() {
                   <UserPlus size={20} color={Colors.accent} />
                   <View style={styles.menuOptionTextWrap}>
                     <Text style={styles.menuOptionTitle}>Create New Person</Text>
-                    <Text style={styles.menuOptionDesc}>Add a new child to the tree</Text>
+                    <Text style={styles.menuOptionDesc}>Add a child — pick which spouse/family on the next screen</Text>
                   </View>
                 </TouchableOpacity>
                 <TouchableOpacity
@@ -781,7 +800,7 @@ export default function PersonDetailScreen() {
                   <Link size={20} color={Colors.accent} />
                   <View style={styles.menuOptionTextWrap}>
                     <Text style={styles.menuOptionTitle}>Link Existing Person</Text>
-                    <Text style={styles.menuOptionDesc}>Connect someone already in the tree</Text>
+                    <Text style={styles.menuOptionDesc}>Connect someone already in the tree as a child</Text>
                   </View>
                 </TouchableOpacity>
                 <TouchableOpacity
@@ -1158,6 +1177,13 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     marginTop: 24,
     gap: 12,
+  },
+  actionHint: {
+    marginHorizontal: 20,
+    marginTop: 10,
+    fontSize: 12,
+    lineHeight: 17,
+    color: Colors.textSecondary,
   },
   actionBtn: {
     flex: 1,

@@ -95,14 +95,8 @@ async function ensureProfileExists(userId: string, email?: string): Promise<User
           .single();
         return (retry as UserProfileRow) ?? null;
       }
-      return {
-        id: userId,
-        is_enabled: false,
-        is_admin: false,
-        full_name: null,
-        claimed_gedcom_id: null,
-        claimed_at: null,
-      };
+      // Don't fabricate "unverified / unclaimed" — that wiped features on transient insert errors.
+      return null;
     }
 
     if (email) {
@@ -117,14 +111,8 @@ async function ensureProfileExists(userId: string, email?: string): Promise<User
 
     return created as UserProfileRow;
   } catch {
-    return {
-      id: userId,
-      is_enabled: false,
-      is_admin: false,
-      full_name: null,
-      claimed_gedcom_id: null,
-      claimed_at: null,
-    };
+    // Keep caller on previous profileRow rather than faking disabled + no claim.
+    return null;
   }
 }
 
@@ -206,7 +194,8 @@ export const [AuthProvider, useAuth] = createContextHook(() => {
   });
 
   useEffect(() => {
-    if (profileQuery.data !== undefined) {
+    // Ignore null from failed fetches so we don't clobber a good cached profile.
+    if (profileQuery.data) {
       setProfileRow(profileQuery.data);
     }
   }, [profileQuery.data]);

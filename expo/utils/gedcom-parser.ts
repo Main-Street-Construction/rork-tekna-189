@@ -757,21 +757,55 @@ export function getChildren(
   return children;
 }
 
+/**
+ * Siblings via shared parents across all families (matches relationship calculator).
+ * Includes half-siblings and children split across parallel/duplicate families.
+ */
 export function getSiblings(
   personId: string,
   data: FamilyTreeData
 ): GedcomIndividual[] {
+  if (!data.individuals.has(personId)) return [];
+
+  const parentIds = new Set<string>();
+  const addParentsFromFamily = (family: GedcomFamily | undefined) => {
+    if (!family) return;
+    if (family.husbandId) parentIds.add(family.husbandId);
+    if (family.wifeId) parentIds.add(family.wifeId);
+  };
+
   const person = data.individuals.get(personId);
-  if (!person?.familyAsChild) return [];
+  if (person?.familyAsChild) {
+    addParentsFromFamily(data.families.get(person.familyAsChild));
+  }
 
-  const family = data.families.get(person.familyAsChild);
-  if (!family) return [];
+  data.families.forEach((family) => {
+    const kids = Array.isArray(family.childrenIds) ? family.childrenIds : [];
+    if (kids.includes(personId)) {
+      addParentsFromFamily(family);
+    }
+  });
 
-  const sibIds = Array.isArray(family.childrenIds) ? family.childrenIds : [];
-  return sibIds
-    .filter((id) => id !== personId)
-    .map((id) => data.individuals.get(id))
-    .filter((p): p is GedcomIndividual => p !== undefined);
+  if (parentIds.size === 0) return [];
+
+  const siblingIds = new Set<string>();
+  data.families.forEach((family) => {
+    const sharesParent =
+      (family.husbandId != null && parentIds.has(family.husbandId)) ||
+      (family.wifeId != null && parentIds.has(family.wifeId));
+    if (!sharesParent) return;
+    const kids = Array.isArray(family.childrenIds) ? family.childrenIds : [];
+    for (const childId of kids) {
+      if (childId !== personId) siblingIds.add(childId);
+    }
+  });
+
+  const siblings: GedcomIndividual[] = [];
+  siblingIds.forEach((id) => {
+    const sib = data.individuals.get(id);
+    if (sib) siblings.push(sib);
+  });
+  return siblings;
 }
 
 function hasDisplayableName(person: GedcomIndividual): boolean {

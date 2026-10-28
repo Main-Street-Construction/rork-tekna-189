@@ -59,7 +59,11 @@ function SearchScreenContent() {
       if (text.trim().length >= 2 && canSearch) {
         searchTimerRef.current = setTimeout(() => {
           try {
-            const found = search(text);
+            let found = search(text);
+            // Exclude claimed identity so results focus on relatives
+            if (hasClaimed && profile?.rootPersonId) {
+              found = found.filter((p) => p.id !== profile.rootPersonId);
+            }
             setResults(found);
             setHasSearched(true);
           } catch {
@@ -75,7 +79,7 @@ function SearchScreenContent() {
         }
       }
     },
-    [search, canSearch]
+    [search, canSearch, hasClaimed, profile?.rootPersonId]
   );
 
   useEffect(() => {
@@ -301,7 +305,7 @@ function SearchScreenContent() {
         )}
 
         {isDataIncomplete && hasData && (
-          <TouchableOpacity style={styles.warningRow} onPress={() => void refreshFromCloud()} activeOpacity={0.7}>
+          <TouchableOpacity style={styles.warningRow} onPress={() => void refreshFromCloud({ force: true })} activeOpacity={0.7}>
             <AlertCircle size={14} color={Colors.danger} />
             <Text style={styles.warningText} numberOfLines={2}>
               {lastSyncResult ?? 'Tree data may be incomplete. Tap to retry sync.'}

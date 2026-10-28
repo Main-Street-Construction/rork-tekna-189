@@ -47,6 +47,45 @@ import { useOnboarding } from '@/contexts/OnboardingContext';
 import { useRouter } from 'expo-router';
 import { GedcomIndividual, PendingEdit } from '@/types/genealogy';
 
+const EMAIL_TLD_TYPOS: Record<string, string> = {
+  '.ney': '.net',
+  '.con': '.com',
+  '.cpm': '.com',
+  '.comm': '.com',
+  '.coom': '.com',
+  '.og': '.org',
+  '.orrg': '.org',
+};
+
+function suggestEmailTypoFix(value: string): string | null {
+  const email = value.trim().toLowerCase();
+  if (!email.includes('@')) return null;
+  for (const [typo, fix] of Object.entries(EMAIL_TLD_TYPOS)) {
+    if (email.endsWith(typo)) {
+      return `Did you mean ${email.slice(0, -typo.length)}${fix}?`;
+    }
+  }
+  return null;
+}
+
+function applyEmailTypoFix(value: string): string {
+  const trimmed = value.trim();
+  const lower = trimmed.toLowerCase();
+  for (const [typo, fix] of Object.entries(EMAIL_TLD_TYPOS)) {
+    if (lower.endsWith(typo)) {
+      return trimmed.slice(0, -typo.length) + fix;
+    }
+  }
+  return trimmed;
+}
+
+function editStatusLabel(status: string): string {
+  if (status === 'approved') return 'Approved — now on the tree';
+  if (status === 'rejected') return 'Rejected';
+  if (status === 'pending') return 'Pending admin review';
+  return status;
+}
+
 export default function ProfileScreen() {
   const router = useRouter();
   const { profile, hasProfile, hasClaimed, isClaimed, saveProfile, claimIdentity, resetClaim, isSaving, claimRepairNotice, dismissClaimRepairNotice, isValidatingClaim } = useProfile();
@@ -101,6 +140,7 @@ export default function ProfileScreen() {
   const refreshMutation = useMutation({
     mutationFn: async () => {
       void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+      // Smart sync: incremental when only fields changed; full reload if structure changed
       return refreshFromCloud();
     },
   });
@@ -108,8 +148,25 @@ export default function ProfileScreen() {
   useEffect(() => {
     if (!isSignedIn) return;
     setLoadingMyEdits(true);
-    void loadMyEdits().then(setMyEdits).finally(() => setLoadingMyEdits(false));
-  }, [isSignedIn, loadMyEdits]);
+    void (async () => {
+      try {
+        const edits = await loadMyEdits();
+        setMyEdits(edits);
+        const recentApproval = edits.find(
+          (e) =>
+            e.status === 'approved' &&
+            e.reviewed_at &&
+            Date.now() - new Date(e.reviewed_at).getTime() < 14 * 24 * 60 * 60 * 1000
+        );
+        if (recentApproval) {
+          // Smart sync (delta when possible) so approved edits show without a full reload
+          await refreshFromCloud();
+        }
+      } finally {
+        setLoadingMyEdits(false);
+      }
+    })();
+  }, [isSignedIn, loadMyEdits, refreshFromCloud]);
 
   useEffect(() => {
     if (isAdmin) {
@@ -122,12 +179,36 @@ export default function ProfileScreen() {
       Alert.alert('Name Required', 'Please enter your display name.');
       return;
     }
-    void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    saveProfile({
-      displayName: displayName.trim(),
-      email: email.trim() || undefined,
-    });
-    setIsEditing(false);
+    const trimmedEmail = email.trim();
+    const typoHint = suggestEmailTypoFix(trimmedEmail);
+    const save = () => {
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      saveProfile({
+        displayName: displayName.trim(),
+        email: trimmedEmail || undefined,
+      });
+      setIsEditing(false);
+    };
+    if (typoHint) {
+      Alert.alert('Check email?', typoHint, [
+        { text: 'Keep as typed', onPress: save },
+        {
+          text: 'Fix it',
+          onPress: () => {
+            const fixed = applyEmailTypoFix(trimmedEmail);
+            setEmail(fixed);
+            void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+            saveProfile({
+              displayName: displayName.trim(),
+              email: fixed || undefined,
+            });
+            setIsEditing(false);
+          },
+        },
+      ]);
+      return;
+    }
+    save();
   }, [displayName, email, saveProfile]);
 
   const handleClearData = useCallback(() => {
@@ -392,15 +473,19 @@ export default function ProfileScreen() {
                 <Mail size={18} color={Colors.textSecondary} />
                 <TextInput
                   style={styles.input}
-                  placeholder="Email (optional)"
+                  placeholder="Contact email (for corrections)"
                   placeholderTextColor={Colors.textLight}
                   value={email}
                   onChangeText={setEmail}
                   keyboardType="email-address"
                   autoCapitalize="none"
+                  autoCorrect={false}
                   testID="profile-email-input"
                 />
               </View>
+              <Text style={styles.emailHint}>
+                Used if we need to reach you about edits. You can fix typos here anytime (e.g. .ney → .net).
+              </Text>
             </View>
 
             <TouchableOpacity
@@ -754,16 +839,26 @@ export default function ProfileScreen() {
         {isSignedIn && (
           <View style={styles.feedbackSection}>
             <Text style={styles.sectionTitle}>My Edits</Text>
+            <Text style={styles.feedbackDesc}>
+              Track name fixes, new children, and other suggestions. Approved changes appear on the tree after sync (this screen refreshes automatically).
+            </Text>
             {loadingMyEdits ? (
               <ActivityIndicator color={Colors.accent} />
             ) : myEdits.length === 0 ? (
-              <Text style={styles.feedbackDesc}>No submitted edits yet.</Text>
+              <Text style={styles.feedbackDesc}>No submitted edits yet. Open a person and tap Suggest edit, Child, or Spouse.</Text>
             ) : (
               myEdits.slice(0, 5).map((edit) => (
                 <View key={edit.id} style={styles.myEditRow}>
                   <Text style={styles.myEditType}>{edit.edit_type.replace(/_/g, ' ')}</Text>
-                  <Text style={[styles.myEditStatus, edit.status === 'rejected' && styles.myEditRejected]}>
-                    {edit.status}
+                  <Text
+                    style={[
+                      styles.myEditStatus,
+                      edit.status === 'rejected' && styles.myEditRejected,
+                      edit.status === 'approved' && styles.myEditApproved,
+                      edit.status === 'pending' && styles.myEditPending,
+                    ]}
+                  >
+                    {editStatusLabel(edit.status)}
                   </Text>
                   {edit.reviewer_note ? (
                     <Text style={styles.myEditNote}>{edit.reviewer_note}</Text>
@@ -776,7 +871,9 @@ export default function ProfileScreen() {
 
         {isSignedIn && <View style={styles.feedbackSection}>
           <Text style={styles.sectionTitle}>Feedback</Text>
-          <Text style={styles.feedbackDesc}>Have a suggestion or found a bug? Let us know!</Text>
+          <Text style={styles.feedbackDesc}>
+            For name or family corrections, open the person and use Suggest edit / Child / Spouse. Use feedback for bugs and app ideas.
+          </Text>
           {feedbackSent && (
             <View style={styles.feedbackSuccess}>
               <Check size={14} color={Colors.success} />
@@ -1518,6 +1615,18 @@ const styles = StyleSheet.create({
   },
   myEditRejected: {
     color: Colors.danger,
+  },
+  myEditApproved: {
+    color: Colors.success,
+  },
+  myEditPending: {
+    color: Colors.accent,
+  },
+  emailHint: {
+    fontSize: 12,
+    color: Colors.textSecondary,
+    marginTop: 8,
+    lineHeight: 16,
   },
   myEditNote: {
     fontSize: 12,

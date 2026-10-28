@@ -22,6 +22,8 @@ import {
   reviewPendingEdit as reviewPendingEditApi,
   getPendingEditCount,
   getCloudCounts,
+  getCloudDataWatermark,
+  loadDeltaFromSupabase,
   fetchIndividualByGedcomId,
   fetchFamilyBundleByGedcomId,
   fetchMyPendingEdits,
@@ -91,6 +93,7 @@ const STORAGE_KEY = 'family_tree_data';
 const RAW_GEDCOM_KEY = 'raw_gedcom';
 
 const LAST_CLOUD_SYNC_KEY = 'last_cloud_sync';
+const LAST_CLOUD_WATERMARK_KEY = 'last_cloud_watermark';
 const DATA_FORMAT_VERSION_KEY = 'data_format_version';
 const CURRENT_DATA_FORMAT_VERSION = '7';
 const CLOUD_SYNC_INTERVAL = 12 * 60 * 60 * 1000;
@@ -99,6 +102,13 @@ const BG_SYNC_START_DELAY_MS = 4000;
 const AUTO_SYNC_DEBOUNCE_MS = 30_000;
 const PARTIAL_SYNC_THRESHOLD = 0.95;
 const MAX_ASYNC_STORAGE_BYTES = 4 * 1024 * 1024;
+
+async function persistCloudWatermark(explicit?: string): Promise<void> {
+  const watermark = explicit ?? (await getCloudDataWatermark());
+  if (watermark) {
+    await safeSetItem(LAST_CLOUD_WATERMARK_KEY, watermark);
+  }
+}
 
 function safeFamiliesAsSpouse(arr: string[] | undefined | null): string[] {
   return Array.isArray(arr) ? arr : [];
@@ -218,7 +228,13 @@ async function safeGetItem(key: string): Promise<string | null> {
 
 async function aggressiveCleanup(): Promise<void> {
   console.warn('[FamilyTree] Running aggressive storage cleanup...');
-  const keysToRemove = [STORAGE_KEY, RAW_GEDCOM_KEY, LAST_CLOUD_SYNC_KEY, DATA_FORMAT_VERSION_KEY];
+  const keysToRemove = [
+    STORAGE_KEY,
+    RAW_GEDCOM_KEY,
+    LAST_CLOUD_SYNC_KEY,
+    LAST_CLOUD_WATERMARK_KEY,
+    DATA_FORMAT_VERSION_KEY,
+  ];
   for (const k of keysToRemove) {
     await safeRemoveItem(k);
   }
@@ -306,6 +322,7 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
       if (cached) {
         await safeSetItem(LAST_CLOUD_SYNC_KEY, String(Date.now()));
         await safeSetItem(DATA_FORMAT_VERSION_KEY, CURRENT_DATA_FORMAT_VERSION);
+        await persistCloudWatermark();
       }
       return cached;
     } catch (e) {
@@ -323,6 +340,26 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
     setIsBackgroundSyncing(true);
     setCloudError(null);
     try {
+      const current = treeDataRef.current;
+      const localWatermark = await safeGetItem(LAST_CLOUD_WATERMARK_KEY);
+
+      // Prefer cheap incremental sync when we already have a full local tree
+      if (current && current.individuals.size > 0 && localWatermark) {
+        const delta = await loadDeltaFromSupabase(localWatermark, current, handleProgress);
+        if (delta.data && !delta.needsFullReload) {
+          if (delta.data.individuals !== current.individuals) {
+            applyTreeData(delta.data);
+            void persistCloudData(delta.data);
+            setLastSyncResult('Background quick sync complete');
+          } else {
+            await safeSetItem(LAST_CLOUD_SYNC_KEY, String(Date.now()));
+            if (delta.watermark) await persistCloudWatermark(delta.watermark);
+          }
+          cloudRetryCountRef.current = 0;
+          return;
+        }
+      }
+
       const cloudResult = await loadAllFromSupabase(handleProgress);
       if (cloudResult.data && cloudResult.data.individuals.size > 0) {
         const claimedId = profileRow?.claimed_gedcom_id ?? undefined;
@@ -332,8 +369,8 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
           return;
         }
         console.log('[FamilyTree] Background sync complete:', cloudResult.data.individuals.size, 'individuals');
-        await persistCloudData(cloudResult.data);
         applyTreeData(cloudResult.data);
+        void persistCloudData(cloudResult.data);
         cloudRetryCountRef.current = 0;
         if (cloudResult.error) {
           setLastSyncResult(`Synced with warnings: ${cloudResult.error}`);
@@ -446,6 +483,7 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
         console.log('[FamilyTree] Data format version mismatch, forcing fresh load from cloud');
         await safeRemoveItem(STORAGE_KEY);
         await safeRemoveItem(LAST_CLOUD_SYNC_KEY);
+        await safeRemoveItem(LAST_CLOUD_WATERMARK_KEY);
       }
 
       let stored: string | null = null;
@@ -557,6 +595,7 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
       await safeRemoveItem(STORAGE_KEY);
       await safeRemoveItem(RAW_GEDCOM_KEY);
       await safeRemoveItem(LAST_CLOUD_SYNC_KEY);
+      await safeRemoveItem(LAST_CLOUD_WATERMARK_KEY);
       await safeRemoveItem(DATA_FORMAT_VERSION_KEY);
     },
     onSuccess: () => {
@@ -624,19 +663,21 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
   const fullReloadFromCloud = useCallback(async (): Promise<{ success: boolean; error?: string }> => {
     console.log('[FamilyTree] Performing full reload from cloud...');
     storageDisabled = false;
-    await aggressiveCleanup();
+    // Do not wipe local cache first — apply new data then overwrite. Clearing first
+    // made every refresh rewrite the whole DB and left users empty if the load failed.
 
     const result = await loadAllFromSupabase(handleProgress);
     if (result.data && result.data.individuals.size > 0) {
-      const serialized = serializeFamilyTreeData(result.data);
-      const cached = await safeSetItem(STORAGE_KEY, serialized);
-      if (cached) {
-        await safeSetItem(LAST_CLOUD_SYNC_KEY, String(Date.now()));
-        await safeSetItem(DATA_FORMAT_VERSION_KEY, CURRENT_DATA_FORMAT_VERSION);
-      }
+      // Show data immediately; persist in the background
       applyTreeData(result.data);
       setIsReady(true);
+      if (result.error) {
+        setLastSyncResult(`Synced with warnings: ${result.error}`);
+      } else {
+        setLastSyncResult(`Synced ${result.data.individuals.size.toLocaleString()} people`);
+      }
       console.log('[FamilyTree] Full reload complete:', result.data.individuals.size, 'individuals');
+      void persistCloudData(result.data);
       return { success: true };
     }
     if (result.error) {
@@ -644,7 +685,38 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
       return { success: false, error: result.error };
     }
     return { success: false, error: 'No data found in database' };
-  }, [handleProgress, applyTreeData]);
+  }, [handleProgress, applyTreeData, persistCloudData]);
+
+  const incrementalSyncFromCloud = useCallback(async (): Promise<{
+    success: boolean;
+    error?: string;
+    needsFullReload?: boolean;
+  }> => {
+    const current = treeDataRef.current;
+    const localWatermark = await safeGetItem(LAST_CLOUD_WATERMARK_KEY);
+    if (!current || current.individuals.size === 0 || !localWatermark) {
+      return { success: false, needsFullReload: true };
+    }
+
+    console.log('[FamilyTree] Incremental sync since', localWatermark);
+    const delta = await loadDeltaFromSupabase(localWatermark, current, handleProgress);
+    if (delta.needsFullReload || !delta.data) {
+      return { success: false, needsFullReload: true, error: delta.error };
+    }
+
+    const hadChanges = delta.data.individuals !== current.individuals;
+    if (hadChanges) {
+      applyTreeData(delta.data);
+      setLastSyncResult('Updated from cloud (quick sync)');
+      void persistCloudData(delta.data);
+    } else {
+      setLastSyncResult('Already up to date');
+      await safeSetItem(LAST_CLOUD_SYNC_KEY, String(Date.now()));
+      if (delta.watermark) await persistCloudWatermark(delta.watermark);
+    }
+    setIsReady(true);
+    return { success: true };
+  }, [handleProgress, applyTreeData, persistCloudData]);
 
   const refreshFromCloud = useCallback(async (
     options?: { force?: boolean }
@@ -652,11 +724,6 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
     setIsLoadingFromCloud(true);
     setCloudError(null);
     try {
-      if (options?.force) {
-        console.log('[FamilyTree] Forced full cloud reload');
-        return await fullReloadFromCloud();
-      }
-
       const current = treeDataRef.current;
       const localIndCount = current?.individuals.size ?? 0;
       const localFamCount = current?.families.size ?? 0;
@@ -666,25 +733,44 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
         return await fullReloadFromCloud();
       }
 
-      const cloudCounts = await getCloudCounts();
-      if (!cloudCounts) {
-        console.warn('[FamilyTree] Could not fetch cloud counts, doing full sync to be safe');
+      // Prefer incremental unless caller forces a full rebuild (e.g. admin recovery)
+      if (!options?.force) {
+        const cloudCounts = await getCloudCounts();
+        if (!cloudCounts) {
+          console.warn('[FamilyTree] Could not fetch cloud counts — trying incremental then full');
+          const inc = await incrementalSyncFromCloud();
+          if (inc.success) return { success: true };
+          return await fullReloadFromCloud();
+        }
+
+        const indRatio = cloudCounts.individuals > 0 ? localIndCount / cloudCounts.individuals : 1;
+        const famRatio = cloudCounts.families > 0 ? localFamCount / cloudCounts.families : 1;
+        const countsLookFresh =
+          Math.abs(cloudCounts.individuals - localIndCount) === 0 &&
+          Math.abs(cloudCounts.families - localFamCount) === 0 &&
+          indRatio >= PARTIAL_SYNC_THRESHOLD &&
+          famRatio >= PARTIAL_SYNC_THRESHOLD;
+
+        if (countsLookFresh) {
+          const [cloudWatermark, localWatermark] = await Promise.all([
+            getCloudDataWatermark(),
+            safeGetItem(LAST_CLOUD_WATERMARK_KEY),
+          ]);
+          if (localWatermark && cloudWatermark && cloudWatermark <= localWatermark) {
+            console.log('[FamilyTree] Data is up-to-date (counts + watermark match)');
+            return { success: true };
+          }
+          // Field-level updates only — fast delta merge
+          const inc = await incrementalSyncFromCloud();
+          if (inc.success) return { success: true };
+        }
+
+        // New people/families or delta failed — full reload
+        console.log('[FamilyTree] Structure changed or delta incomplete — full reload');
         return await fullReloadFromCloud();
       }
 
-      const indRatio = cloudCounts.individuals > 0 ? localIndCount / cloudCounts.individuals : 1;
-      const famRatio = cloudCounts.families > 0 ? localFamCount / cloudCounts.families : 1;
-      const indDiff = Math.abs(cloudCounts.individuals - localIndCount);
-      const famDiff = Math.abs(cloudCounts.families - localFamCount);
-
-      // Sync when counts differ OR local is a partial snapshot of cloud
-      if (indDiff === 0 && famDiff === 0 && indRatio >= PARTIAL_SYNC_THRESHOLD && famRatio >= PARTIAL_SYNC_THRESHOLD) {
-        console.log('[FamilyTree] Data is up-to-date (local:', localIndCount, 'ind,', localFamCount, 'fam | cloud:', cloudCounts.individuals, 'ind,', cloudCounts.families, 'fam)');
-        await safeSetItem(LAST_CLOUD_SYNC_KEY, String(Date.now()));
-        return { success: true };
-      }
-
-      console.log('[FamilyTree] Data mismatch/partial local detected (local:', localIndCount, 'ind,', localFamCount, 'fam | cloud:', cloudCounts.individuals, 'ind,', cloudCounts.families, 'fam) — syncing...');
+      console.log('[FamilyTree] Forced full cloud reload');
       return await fullReloadFromCloud();
     } catch (e) {
       const msg = String(e);
@@ -692,8 +778,9 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
       return { success: false, error: msg };
     } finally {
       setIsLoadingFromCloud(false);
+      setLoadProgress(null);
     }
-  }, [fullReloadFromCloud]);
+  }, [fullReloadFromCloud, incrementalSyncFromCloud]);
 
   const persistMergedTree = useCallback(async (newTree: FamilyTreeData) => {
     applyTreeData(newTree);
@@ -946,6 +1033,7 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
       const result = await updateIndividualInSupabase(individual);
       if (!result.success) {
         console.error('[FamilyTree] Cloud update failed, local saved:', result.error);
+        return { success: false, error: result.error ?? 'Cloud update failed' };
       }
 
       return { success: true };
@@ -1329,6 +1417,7 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
       const result = await upsertFamilyInSupabase(family);
       if (!result.success) {
         console.error('[FamilyTree] Cloud update family failed:', result.error);
+        return { success: false, error: result.error ?? 'Cloud update family failed' };
       }
 
       return { success: true };

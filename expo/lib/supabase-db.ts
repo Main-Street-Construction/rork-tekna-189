@@ -1,11 +1,12 @@
 import { supabase } from './supabase';
 import { GedcomIndividual, GedcomFamily, FamilyTreeData, PendingEdit, PendingEditType } from '@/types/genealogy';
 
-const FETCH_TIMEOUT_MS = 90000;
-const MAX_RETRIES = 4;
-const RETRY_DELAY_MS = 1000;
+const FETCH_TIMEOUT_MS = 45000;
+const MAX_RETRIES = 3;
+const RETRY_DELAY_MS = 600;
 const BATCH_PAGE_SIZE = 1000;
-const MAX_CONCURRENT_PAGES = 15;
+const MAX_CONCURRENT_PAGES = 20;
+const PAGE_MAX_RETRIES = 2;
 
 interface SupabaseQueryResult<T> {
   data: T[] | null;
@@ -69,7 +70,7 @@ export interface SupabaseFamily {
 }
 
 export interface SupabaseFamilyMember {
-  id: string;
+  id?: string;
   family_id: string;
   individual_id: string;
   role: string;
@@ -177,8 +178,9 @@ async function _resolveFamilyGedcomIdToUuid(gedcomId: string): Promise<string | 
 }
 
 const INDIVIDUALS_COLUMNS = 'id,gedcom_id,first_name,last_name,gender,birth_date,birth_place,death_date,death_place,notes' as const;
+const INDIVIDUALS_DELTA_COLUMNS = 'id,gedcom_id,first_name,last_name,gender,birth_date,birth_place,death_date,death_place,notes,updated_at' as const;
 const FAMILIES_COLUMNS = 'id,gedcom_id,husband_id,wife_id,marriage_date,marriage_place' as const;
-const FAMILY_MEMBERS_COLUMNS = 'id,family_id,individual_id,role' as const;
+const FAMILY_MEMBERS_COLUMNS = 'family_id,individual_id,role' as const;
 
 async function getTableCount(table: string): Promise<number | null> {
   try {
@@ -215,7 +217,7 @@ async function fetchPageWithRetry<T>(
   columns: string,
   from: number,
   to: number,
-  maxRetries: number = MAX_RETRIES
+  maxRetries: number = PAGE_MAX_RETRIES
 ): Promise<{ data: T[]; error?: string; pageFrom: number }> {
   for (let attempt = 0; attempt < maxRetries; attempt++) {
     const result = await fetchPageRange<T>(table, columns, from, to);
@@ -230,6 +232,143 @@ async function fetchPageWithRetry<T>(
     }
   }
   return { data: [], error: 'Max retries exceeded', pageFrom: from };
+}
+
+/** Individuals changed since a watermark — used for fast incremental sync. */
+export async function fetchIndividualsUpdatedSince(
+  sinceIso: string
+): Promise<{ rows: GedcomIndividual[]; error?: string; newestUpdatedAt?: string }> {
+  try {
+    const pageSize = 500;
+    const all: GedcomIndividual[] = [];
+    let newestUpdatedAt: string | undefined;
+    let from = 0;
+
+    while (true) {
+      const { data, error } = await fetchWithRetry<SupabaseIndividual>(() =>
+        supabase
+          .from('individuals')
+          .select(INDIVIDUALS_DELTA_COLUMNS)
+          .gt('updated_at', sinceIso)
+          .order('updated_at', { ascending: true })
+          .range(from, from + pageSize - 1) as unknown as PromiseLike<SupabaseQueryResult<SupabaseIndividual>>
+      );
+
+      if (error) {
+        return { rows: all, error: error.message, newestUpdatedAt };
+      }
+
+      const rows = (data ?? []) as SupabaseIndividual[];
+      if (rows.length === 0) break;
+
+      for (const row of rows) {
+        all.push(supabaseToIndividual(row));
+        if (row.updated_at) newestUpdatedAt = row.updated_at;
+      }
+
+      if (rows.length < pageSize) break;
+      from += pageSize;
+    }
+
+    return { rows: all, newestUpdatedAt };
+  } catch (e) {
+    return { rows: [], error: String(e) };
+  }
+}
+
+/**
+ * Fast path when only person fields changed (name edits, etc.): merge updated
+ * individuals into the local tree without re-downloading families/members.
+ * Returns null data + needsFullReload when structure (counts) changed.
+ */
+export async function loadDeltaFromSupabase(
+  sinceWatermark: string,
+  base: FamilyTreeData,
+  onProgress?: (progress: LoadProgress) => void
+): Promise<{
+  data: FamilyTreeData | null;
+  error?: string;
+  needsFullReload?: boolean;
+  watermark?: string;
+}> {
+  const start = Date.now();
+  onProgress?.({
+    phase: 'loading',
+    individualsLoaded: 0,
+    familiesLoaded: base.families.size,
+    membersLoaded: 0,
+  });
+
+  const [cloudCounts, delta] = await Promise.all([
+    getCloudCounts(),
+    fetchIndividualsUpdatedSince(sinceWatermark),
+  ]);
+
+  if (delta.error && delta.rows.length === 0) {
+    return { data: null, error: delta.error, needsFullReload: true };
+  }
+
+  if (!cloudCounts) {
+    return { data: null, error: 'Could not read cloud counts', needsFullReload: true };
+  }
+
+  const localInd = base.individuals.size;
+  const localFam = base.families.size;
+  const structureChanged =
+    cloudCounts.individuals !== localInd || cloudCounts.families !== localFam;
+
+  if (structureChanged) {
+    console.log(
+      '[Supabase] Delta aborted — structure changed (local',
+      localInd,
+      '/',
+      localFam,
+      'vs cloud',
+      cloudCounts.individuals,
+      '/',
+      cloudCounts.families,
+      ')'
+    );
+    return { data: null, needsFullReload: true };
+  }
+
+  if (delta.rows.length === 0) {
+    // Watermark/counts can move from family_members-only edits with no individual
+    // field changes — fall back to full reload so links aren't missed.
+    console.log('[Supabase] Delta: no individual updates since', sinceWatermark, '— full reload needed');
+    return { data: null, needsFullReload: true };
+  }
+
+  const individuals = new Map(base.individuals);
+  for (const incoming of delta.rows) {
+    const existing = individuals.get(incoming.id);
+    individuals.set(incoming.id, {
+      ...incoming,
+      // Preserve local relationship links — field updates don't change them
+      familiesAsSpouse: existing?.familiesAsSpouse ?? incoming.familiesAsSpouse ?? [],
+      familyAsChild: existing?.familyAsChild ?? incoming.familyAsChild,
+    });
+  }
+
+  onProgress?.({
+    phase: 'done',
+    individualsLoaded: individuals.size,
+    familiesLoaded: base.families.size,
+    membersLoaded: 0,
+  });
+
+  console.log(
+    '[Supabase] Delta merged',
+    delta.rows.length,
+    'individuals in',
+    Date.now() - start,
+    'ms'
+  );
+
+  return {
+    data: { individuals, families: base.families },
+    watermark: delta.newestUpdatedAt ?? sinceWatermark,
+  };
 }
 
 async function fetchAllPages<T>(
@@ -542,15 +681,73 @@ export async function loadAllFromSupabase(
   }
 }
 
+export type TreeMeta = {
+  dataVersion: string;
+  individuals: number;
+  families: number;
+  members: number;
+};
+
+/** Prefer tree_meta (v9+) — one row instead of exact COUNT(*) scans. */
+export async function getTreeMeta(): Promise<TreeMeta | null> {
+  try {
+    const { data, error } = await supabase.rpc('get_tree_meta');
+    if (!error && data && typeof data === 'object') {
+      const row = data as Record<string, unknown>;
+      if (row.success === false) return null;
+      const dataVersion = row.data_version != null ? String(row.data_version) : null;
+      const individuals = Number(row.individuals);
+      const families = Number(row.families);
+      if (dataVersion && Number.isFinite(individuals) && Number.isFinite(families)) {
+        return {
+          dataVersion,
+          individuals,
+          families,
+          members: Number(row.members) || 0,
+        };
+      }
+    }
+
+    // Direct table read if RPC not deployed yet
+    const { data: metaRow, error: metaErr } = await supabase
+      .from('tree_meta')
+      .select('data_version, individual_count, family_count, member_count')
+      .eq('id', 1)
+      .limit(1);
+
+    if (!metaErr && metaRow?.[0]) {
+      const r = metaRow[0] as {
+        data_version: string;
+        individual_count: number;
+        family_count: number;
+        member_count: number;
+      };
+      return {
+        dataVersion: String(r.data_version),
+        individuals: Number(r.individual_count) || 0,
+        families: Number(r.family_count) || 0,
+        members: Number(r.member_count) || 0,
+      };
+    }
+
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 export async function getCloudCounts(): Promise<{ individuals: number; families: number } | null> {
   try {
+    const meta = await getTreeMeta();
+    if (meta) {
+      return { individuals: meta.individuals, families: meta.families };
+    }
 
     const { count: indCount, error: indError } = await supabase
       .from('individuals')
       .select('*', { count: 'exact', head: true });
 
     if (indError) {
-
       return null;
     }
 
@@ -559,12 +756,32 @@ export async function getCloudCounts(): Promise<{ individuals: number; families:
       .select('*', { count: 'exact', head: true });
 
     if (famError) {
-
       return null;
     }
 
-
     return { individuals: indCount ?? 0, families: famCount ?? 0 };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Sync watermark: prefers tree_meta.data_version (cheap), falls back to
+ * MAX(individuals.updated_at) before v9 is applied.
+ */
+export async function getCloudDataWatermark(): Promise<string | null> {
+  try {
+    const meta = await getTreeMeta();
+    if (meta?.dataVersion) return meta.dataVersion;
+
+    const { data, error } = await supabase
+      .from('individuals')
+      .select('updated_at')
+      .order('updated_at', { ascending: false })
+      .limit(1);
+
+    if (error || !data?.[0]?.updated_at) return null;
+    return String(data[0].updated_at);
   } catch {
     return null;
   }
