@@ -16,7 +16,7 @@ const PROFILE_KEY = 'user_profile';
 const CLAIMED_KEY = 'identity_claimed';
 
 export const [ProfileProvider, useProfile] = createContextHook(() => {
-  const { isSignedIn, profileRow, refreshProfile } = useAuth();
+  const { isSignedIn, profileRow, refreshProfile, profileLoading } = useAuth();
   const [profile, setProfile] = useState<UserProfile | null>(null);
 
   const loadQuery = useQuery({
@@ -80,8 +80,8 @@ export const [ProfileProvider, useProfile] = createContextHook(() => {
       if (fetched) {
         personName = fetched.name || [fetched.givenName, fetched.surname].filter(Boolean).join(' ');
       } else {
-        // Do NOT clearIdentityClaim on empty select — that wiped valid claims.
-        setClaimRepairNotice(true);
+        // Do NOT clear the claim and do NOT show a "reset" banner — empty selects
+        // are common right after sign-in before tree/RLS is ready.
         await AsyncStorage.setItem(CLAIMED_KEY, 'true');
         setIsClaimed(true);
         if (profile?.rootPersonId !== gedcomId) {
@@ -104,6 +104,7 @@ export const [ProfileProvider, useProfile] = createContextHook(() => {
 
     await AsyncStorage.setItem(CLAIMED_KEY, 'true');
     setIsClaimed(true);
+    setClaimRepairNotice(false);
 
     const existing = profile ?? {
       id: Date.now().toString(),
@@ -129,6 +130,8 @@ export const [ProfileProvider, useProfile] = createContextHook(() => {
 
   useEffect(() => {
     if (profileRow?.claimed_gedcom_id) {
+      // Server still has the claim — clear any stale "reset" banner from a prior race.
+      setClaimRepairNotice(false);
       void syncClaimFromServer();
     }
   }, [profileRow?.claimed_gedcom_id, syncClaimFromServer]);
@@ -182,10 +185,8 @@ export const [ProfileProvider, useProfile] = createContextHook(() => {
     setIsValidatingClaim(true);
     try {
       if (!gedcomId) {
-        // Local flag without an id — soft notice only; never wipe a server claim.
-        if (!profileRow?.claimed_gedcom_id) {
-          setClaimRepairNotice(true);
-        }
+        // Local flag without an id — never wipe a server claim, and don't scare
+        // the user on a transient hydration race after sign-in.
         return;
       }
 
@@ -201,8 +202,12 @@ export const [ProfileProvider, useProfile] = createContextHook(() => {
       } else if (!data?.[0]) {
         const fetched = await fetchIndividualByGedcomId(gedcomId);
         if (!fetched) {
-          // Keep server claim; show repair banner so the user can re-claim if needed.
-          setClaimRepairNotice(true);
+          // Keep any server claim. Lookup misses after re-sign-in are usually
+          // timing/RLS, not a real reset — only surface the banner if we have
+          // a local-only claim with no server id to fall back on.
+          if (!profileRow?.claimed_gedcom_id) {
+            setClaimRepairNotice(true);
+          }
           return;
         }
       }
@@ -223,9 +228,11 @@ export const [ProfileProvider, useProfile] = createContextHook(() => {
   ]);
 
   useEffect(() => {
-    if (!isSignedIn || loadQuery.isLoading) return;
+    // Wait for auth profile hydration so we don't flash a false reset banner
+    // while claimed_gedcom_id is still loading after sign-in.
+    if (!isSignedIn || loadQuery.isLoading || profileLoading) return;
     void validateClaim();
-  }, [isSignedIn, loadQuery.isLoading, validateClaim]);
+  }, [isSignedIn, loadQuery.isLoading, profileLoading, validateClaim]);
 
   const dismissClaimRepairNotice = useCallback(() => {
     setClaimRepairNotice(false);

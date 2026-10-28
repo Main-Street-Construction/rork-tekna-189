@@ -29,11 +29,9 @@ import {
   Send,
   RefreshCw,
   ShieldCheck,
-  ClipboardList,
   Lock,
   LogIn,
   LogOut,
-  Users,
   FileText,
   BookOpen,
 } from 'lucide-react-native';
@@ -521,7 +519,7 @@ export default function ProfileScreen() {
               <View style={styles.claimRepairBanner}>
                 <AlertTriangle size={14} color={Colors.danger} />
                 <Text style={styles.claimRepairText}>
-                  Your previous identity link was reset after a database update. Please claim your identity again.
+                  We could not verify your identity link in the tree. If this persists, try reclaiming below.
                 </Text>
                 <TouchableOpacity
                   onPress={dismissClaimRepairNotice}
@@ -700,42 +698,20 @@ export default function ProfileScreen() {
               </View>
 
               {isAdmin && (
-                <>
-                  <TouchableOpacity
-                    style={styles.pendingEditsBtn}
-                    onPress={() => router.push('/pending-edits')}
-                    activeOpacity={0.7}
-                  >
-                    <ClipboardList size={16} color={Colors.accent} />
-                    <Text style={styles.pendingEditsBtnText}>Review Pending Edits</Text>
-                    {pendingEditCount > 0 && (
-                      <View style={styles.pendingBadge}>
-                        <Text style={styles.pendingBadgeText}>{pendingEditCount}</Text>
-                      </View>
-                    )}
-                    <ChevronRight size={14} color={Colors.textLight} />
-                  </TouchableOpacity>
-
-                  <TouchableOpacity
-                    style={styles.pendingEditsBtn}
-                    onPress={() => router.push('/admin')}
-                    activeOpacity={0.7}
-                  >
-                    <Users size={16} color={Colors.accent} />
-                    <Text style={styles.pendingEditsBtnText}>Manage Users</Text>
-                    <ChevronRight size={14} color={Colors.textLight} />
-                  </TouchableOpacity>
-
-                  <TouchableOpacity
-                    style={styles.pendingEditsBtn}
-                    onPress={() => router.push('/admin/data')}
-                    activeOpacity={0.7}
-                  >
-                    <Database size={16} color={Colors.accent} />
-                    <Text style={styles.pendingEditsBtnText}>Genealogy Data Console</Text>
-                    <ChevronRight size={14} color={Colors.textLight} />
-                  </TouchableOpacity>
-                </>
+                <TouchableOpacity
+                  style={styles.pendingEditsBtn}
+                  onPress={() => router.push('/admin')}
+                  activeOpacity={0.7}
+                >
+                  <ShieldCheck size={16} color={Colors.accent} />
+                  <Text style={styles.pendingEditsBtnText}>Admin Console</Text>
+                  {pendingEditCount > 0 && (
+                    <View style={styles.pendingBadge}>
+                      <Text style={styles.pendingBadgeText}>{pendingEditCount}</Text>
+                    </View>
+                  )}
+                  <ChevronRight size={14} color={Colors.textLight} />
+                </TouchableOpacity>
               )}
 
               <TouchableOpacity

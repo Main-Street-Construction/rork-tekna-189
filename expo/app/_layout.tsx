@@ -77,6 +77,15 @@ function RootLayoutNav() {
         }}
       />
       <Stack.Screen
+        name="tree/[id]"
+        options={{
+          title: "Tree Explorer",
+          headerShown: false,
+          gestureEnabled: true,
+          animation: "fade",
+        }}
+      />
+      <Stack.Screen
         name="import-data/index"
         options={{ presentation: "modal", title: "Import Data", gestureEnabled: true }}
       />
