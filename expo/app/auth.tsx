@@ -18,6 +18,7 @@ import Colors from '@/constants/colors';
 import { useAuth } from '@/contexts/AuthContext';
 import { useAndroidKeyboardScroll } from '@/lib/keyboard-scroll';
 import { validateEmailAddress } from '@/utils/email';
+import { navigateBack } from '@/utils/navigation';
 
 const PENDING_FULL_NAME_KEY = 'pending_signup_full_name';
 
@@ -102,7 +103,7 @@ export default function AuthScreen() {
       if (mode === 'signin') {
         await signIn(normalizedEmail, password);
         void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-        router.back();
+        navigateBack(router);
       } else {
         const result = await signUp(normalizedEmail, password, trimmedName);
         void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
@@ -115,7 +116,7 @@ export default function AuthScreen() {
           setPendingEmail(normalizedEmail);
           setMode('confirm_email');
         } else {
-          router.back();
+          navigateBack(router);
         }
       }
     } catch (e: unknown) {
@@ -170,7 +171,7 @@ export default function AuthScreen() {
             headerStyle: { backgroundColor: Colors.background },
             headerShadowVisible: false,
             headerLeft: () => (
-              <TouchableOpacity onPress={() => router.back()} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+              <TouchableOpacity onPress={() => navigateBack(router)} hitSlop={{ top: 16, bottom: 16, left: 16, right: 16 }}>
                 <ArrowLeft size={24} color={Colors.text} />
               </TouchableOpacity>
             ),
@@ -267,7 +268,7 @@ export default function AuthScreen() {
           headerStyle: { backgroundColor: Colors.background },
           headerShadowVisible: false,
           headerLeft: () => (
-            <TouchableOpacity onPress={() => router.back()} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+            <TouchableOpacity onPress={() => navigateBack(router)} hitSlop={{ top: 16, bottom: 16, left: 16, right: 16 }}>
               <ArrowLeft size={24} color={Colors.text} />
             </TouchableOpacity>
           ),

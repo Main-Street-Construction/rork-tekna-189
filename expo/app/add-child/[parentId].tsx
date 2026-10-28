@@ -14,14 +14,15 @@ import {
   FlatList,
 } from 'react-native';
 import { useLocalSearchParams, useRouter, Stack } from 'expo-router';
-import { UserPlus, X, User, Calendar, MapPin, Search, Check, Users } from 'lucide-react-native';
+import { UserPlus, User, Calendar, MapPin, Search, Check, Users } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import Colors from '@/constants/colors';
 import { useFamilyTree } from '@/contexts/FamilyTreeContext';
 import { GedcomIndividual } from '@/types/genealogy';
 import { getSpouses } from '@/utils/gedcom-parser';
 import { findSimilarIndividuals } from '@/utils/name-utils';
-import { navigateBack, modalScreenOptions } from '@/utils/navigation';
+import { modalScreenOptions } from '@/utils/navigation';
+import ModalCloseButton from '@/components/ModalCloseButton';
 
 function safeFamiliesAsSpouse(arr: string[] | undefined | null): string[] {
   return Array.isArray(arr) ? arr : [];
@@ -260,11 +261,7 @@ export default function AddChildScreen() {
           title: 'Add Child',
           headerStyle: { backgroundColor: Colors.background },
           headerTintColor: Colors.text,
-          headerLeft: () => (
-            <TouchableOpacity onPress={() => navigateBack(router)} style={styles.headerBtn}>
-              <X size={22} color={Colors.text} />
-            </TouchableOpacity>
-          ),
+          headerLeft: () => <ModalCloseButton />,
           headerRight: () => (
             <TouchableOpacity
               onPress={handleSave}

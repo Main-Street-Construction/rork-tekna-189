@@ -10,6 +10,13 @@ const corsHeaders = {
 interface NotifyRequest {
   user_id?: string;
   flush_pending?: boolean;
+  source?: string;
+  // Supabase Database Webhook / Realtime payload shape
+  type?: string;
+  table?: string;
+  schema?: string;
+  record?: { id?: string; is_enabled?: boolean; access_requested_at?: string | null };
+  old_record?: { id?: string; is_enabled?: boolean; access_requested_at?: string | null } | null;
 }
 
 interface ProfileRow {
@@ -248,6 +255,15 @@ Deno.serve(async (req) => {
 
     const body = (await req.json().catch(() => ({}))) as NotifyRequest;
     const admin = createClient(supabaseUrl, serviceRoleKey);
+
+    // Database Webhook / trigger payload → normalize to user_id
+    if (!body.user_id && body.record?.id && (body.table === 'profiles' || !body.table)) {
+      const record = body.record;
+      if (record.is_enabled) {
+        return json({ success: true, skipped: 'already_enabled', source: 'webhook' });
+      }
+      body.user_id = String(record.id);
+    }
 
     if (body.flush_pending) {
       const allowed = await callerIsAdmin(admin, supabaseUrl, anonKey, req.headers.get('Authorization'));

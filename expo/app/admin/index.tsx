@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useMemo } from 'react';
+import React, { useState, useCallback, useMemo, useEffect } from 'react';
 import {
   View,
   Text,
@@ -8,9 +8,10 @@ import {
   ActivityIndicator,
   Alert,
   RefreshControl,
+  TextInput,
   Switch,
 } from 'react-native';
-import { Stack, useRouter } from 'expo-router';
+import { Stack, useRouter, useFocusEffect } from 'expo-router';
 import {
   ShieldCheck,
   ShieldOff,
@@ -22,13 +23,21 @@ import {
   Trash2,
   Clock,
   UserCheck,
+  ClipboardList,
+  Database,
+  Search,
+  ChevronRight,
+  Bell,
+  X,
 } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import Colors from '@/constants/colors';
 import { useAuth } from '@/contexts/AuthContext';
+import { useFamilyTree } from '@/contexts/FamilyTreeContext';
 import { navigateBack } from '@/utils/navigation';
 import { supabase } from '@/lib/supabase';
+import { flushPendingAccessNotifications } from '@/lib/supabase-rpc';
 import {
   adminDeleteUser,
   adminListUsersWithEmail,
@@ -36,11 +45,18 @@ import {
   type AdminUserRow,
 } from '@/lib/supabase-rpc';
 
+type AdminTab = 'requests' | 'people';
+
 export default function AdminScreen() {
   const router = useRouter();
   const queryClient = useQueryClient();
   const { isAdmin, user } = useAuth();
+  const { pendingEditCount, refreshPendingCount } = useFamilyTree();
   const [updatingUserId, setUpdatingUserId] = useState<string | null>(null);
+  const [tab, setTab] = useState<AdminTab>('requests');
+  const [query, setQuery] = useState('');
+  const [peopleFilter, setPeopleFilter] = useState<'all' | 'pending' | 'enabled' | 'admins'>('all');
+  const [notifyStatus, setNotifyStatus] = useState<string | null>(null);
 
   const usersQuery = useQuery({
     queryKey: ['adminUsersList'],
@@ -64,7 +80,45 @@ export default function AdminScreen() {
       return users;
     },
     enabled: isAdmin,
+    refetchInterval: isAdmin ? 20_000 : false,
   });
+
+  // Live updates when profiles change (new signups) — no pull-to-refresh required
+  useEffect(() => {
+    if (!isAdmin) return;
+    const channel = supabase
+      .channel('admin-profiles')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'profiles' },
+        () => {
+          void queryClient.invalidateQueries({ queryKey: ['adminUsersList'] });
+        }
+      )
+      .subscribe();
+    return () => {
+      void supabase.removeChannel(channel);
+    };
+  }, [isAdmin, queryClient]);
+
+  // Flush any missed push notifications + refresh lists whenever admin opens this screen
+  useFocusEffect(
+    useCallback(() => {
+      if (!isAdmin) return;
+      let cancelled = false;
+      void (async () => {
+        setNotifyStatus('Checking for new requests…');
+        await flushPendingAccessNotifications();
+        if (cancelled) return;
+        await queryClient.invalidateQueries({ queryKey: ['adminUsersList'] });
+        await refreshPendingCount();
+        if (!cancelled) setNotifyStatus(null);
+      })();
+      return () => {
+        cancelled = true;
+      };
+    }, [isAdmin, refreshPendingCount, queryClient])
+  );
 
   const updateUserMutation = useMutation({
     mutationFn: async (params: {
@@ -119,59 +173,120 @@ export default function AdminScreen() {
   });
 
   const users = usersQuery.data ?? [];
-  const pendingUsers = useMemo(
-    () => users.filter((u) => !u.is_enabled).sort((a, b) => {
-      const aTime = a.created_at ? new Date(a.created_at).getTime() : 0;
-      const bTime = b.created_at ? new Date(b.created_at).getTime() : 0;
-      return bTime - aTime;
-    }),
-    [users]
+
+  const displayName = useCallback((u: AdminUserRow) => {
+    if (u.full_name?.trim()) return u.full_name.trim();
+    return u.email ?? u.id.slice(0, 8) + '…';
+  }, []);
+
+  const matchesQuery = useCallback(
+    (u: AdminUserRow, q: string) => {
+      if (!q) return true;
+      const haystacks = [
+        u.full_name,
+        u.email,
+        u.claimed_person_name,
+        u.claimed_gedcom_id,
+        u.id,
+      ]
+        .filter(Boolean)
+        .map((s) => String(s).toLowerCase());
+      // Prefer prefix matches on name/email for ranking feel
+      return haystacks.some((h) => h.includes(q));
+    },
+    []
   );
+
+  const sortByName = useCallback(
+    (a: AdminUserRow, b: AdminUserRow) =>
+      displayName(a).localeCompare(displayName(b), undefined, { sensitivity: 'base' }),
+    [displayName]
+  );
+
+  const sortPendingNewest = useCallback((a: AdminUserRow, b: AdminUserRow) => {
+    const aTime = a.created_at ? new Date(a.created_at).getTime() : 0;
+    const bTime = b.created_at ? new Date(b.created_at).getTime() : 0;
+    return bTime - aTime;
+  }, []);
+
+  const normalizedQuery = query.trim().toLowerCase();
+
+  const pendingUsers = useMemo(
+    () =>
+      users
+        .filter((u) => !u.is_enabled)
+        .filter((u) => matchesQuery(u, normalizedQuery))
+        .sort(sortPendingNewest),
+    [users, matchesQuery, normalizedQuery, sortPendingNewest]
+  );
+
   const enabledCount = users.filter((u) => u.is_enabled).length;
 
-  const displayName = (u: AdminUserRow) => {
-    if (u.full_name?.trim()) return u.full_name.trim();
-    return u.email ?? u.id.slice(0, 8) + '...';
-  };
+  /** People tab: group into Pending → Admins → Members for scanning */
+  const peopleGroups = useMemo(() => {
+    let list = users.filter((u) => matchesQuery(u, normalizedQuery));
+    if (peopleFilter === 'pending') list = list.filter((u) => !u.is_enabled);
+    if (peopleFilter === 'enabled') list = list.filter((u) => u.is_enabled);
+    if (peopleFilter === 'admins') list = list.filter((u) => u.is_admin);
+
+    const pending = list.filter((u) => !u.is_enabled).sort(sortPendingNewest);
+    const admins = list
+      .filter((u) => u.is_enabled && u.is_admin)
+      .sort(sortByName);
+    const members = list
+      .filter((u) => u.is_enabled && !u.is_admin)
+      .sort(sortByName);
+
+    return {
+      pending,
+      admins,
+      members,
+      total: pending.length + admins.length + members.length,
+    };
+  }, [users, peopleFilter, normalizedQuery, matchesQuery, sortByName, sortPendingNewest]);
 
   const formatDate = (iso: string | null) => {
     if (!iso) return null;
     return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
   };
 
-  const handleToggleEnabled = useCallback((targetUser: AdminUserRow) => {
-    const newValue = !targetUser.is_enabled;
-    Alert.alert(
-      `${newValue ? 'Enable' : 'Disable'} User`,
-      `Are you sure you want to ${newValue ? 'enable' : 'disable'} ${displayName(targetUser)}?`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: newValue ? 'Enable' : 'Disable',
-          style: newValue ? 'default' : 'destructive',
-          onPress: () => {
-            setUpdatingUserId(targetUser.id);
-            updateUserMutation.mutate({ targetUserId: targetUser.id, setIsEnabled: newValue });
+  const handleApprove = useCallback(
+    (targetUser: AdminUserRow) => {
+      setUpdatingUserId(targetUser.id);
+      updateUserMutation.mutate({ targetUserId: targetUser.id, setIsEnabled: true });
+    },
+    [updateUserMutation]
+  );
+
+  const handleToggleEnabled = useCallback(
+    (targetUser: AdminUserRow) => {
+      const newValue = !targetUser.is_enabled;
+      Alert.alert(
+        `${newValue ? 'Enable' : 'Disable'} User`,
+        `Are you sure you want to ${newValue ? 'enable' : 'disable'} ${displayName(targetUser)}?`,
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: newValue ? 'Enable' : 'Disable',
+            style: newValue ? 'default' : 'destructive',
+            onPress: () => {
+              setUpdatingUserId(targetUser.id);
+              updateUserMutation.mutate({ targetUserId: targetUser.id, setIsEnabled: newValue });
+            },
           },
-        },
-      ]
-    );
-  }, [updateUserMutation]);
+        ]
+      );
+    },
+    [updateUserMutation]
+  );
 
-  const handleQuickEnable = useCallback((targetUser: AdminUserRow) => {
-    setUpdatingUserId(targetUser.id);
-    updateUserMutation.mutate({ targetUserId: targetUser.id, setIsEnabled: true });
-  }, [updateUserMutation]);
-
-  const handleDeleteUser = useCallback((targetUser: AdminUserRow) => {
-    if (targetUser.id === user?.id) {
-      Alert.alert('Cannot Delete', 'You cannot delete your own account.');
-      return;
-    }
-    Alert.alert(
-      'Delete User',
-      `Permanently delete ${displayName(targetUser)}?`,
-      [
+  const handleDeleteUser = useCallback(
+    (targetUser: AdminUserRow) => {
+      if (targetUser.id === user?.id) {
+        Alert.alert('Cannot Delete', 'You cannot delete your own account.');
+        return;
+      }
+      Alert.alert('Delete User', `Permanently delete ${displayName(targetUser)}?`, [
         { text: 'Cancel', style: 'cancel' },
         {
           text: 'Delete',
@@ -181,77 +296,136 @@ export default function AdminScreen() {
             deleteUserMutation.mutate(targetUser.id);
           },
         },
-      ]
-    );
-  }, [deleteUserMutation, user?.id]);
+      ]);
+    },
+    [deleteUserMutation, user?.id]
+  );
 
-  const handleToggleAdmin = useCallback((targetUser: AdminUserRow) => {
-    if (targetUser.id === user?.id) {
-      Alert.alert('Cannot Change', 'You cannot revoke your own admin status.');
-      return;
-    }
-    const newValue = !targetUser.is_admin;
-    Alert.alert(
-      `${newValue ? 'Grant' : 'Revoke'} Admin`,
-      `Are you sure you want to ${newValue ? 'grant admin to' : 'revoke admin from'} ${displayName(targetUser)}?`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: newValue ? 'Grant' : 'Revoke',
-          onPress: () => {
-            setUpdatingUserId(targetUser.id);
-            updateUserMutation.mutate({ targetUserId: targetUser.id, setIsAdmin: newValue });
+  const handleToggleAdmin = useCallback(
+    (targetUser: AdminUserRow) => {
+      if (targetUser.id === user?.id) {
+        Alert.alert('Cannot Change', 'You cannot revoke your own admin status.');
+        return;
+      }
+      const newValue = !targetUser.is_admin;
+      Alert.alert(
+        `${newValue ? 'Grant' : 'Revoke'} Admin`,
+        `Are you sure you want to ${newValue ? 'grant admin to' : 'revoke admin from'} ${displayName(targetUser)}?`,
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: newValue ? 'Grant' : 'Revoke',
+            onPress: () => {
+              setUpdatingUserId(targetUser.id);
+              updateUserMutation.mutate({ targetUserId: targetUser.id, setIsAdmin: newValue });
+            },
           },
-        },
-      ]
-    );
-  }, [updateUserMutation, user?.id]);
+        ]
+      );
+    },
+    [updateUserMutation, user?.id]
+  );
 
-  const renderUserCard = (u: AdminUserRow, showQuickEnable = false) => {
-    const isSelf = u.id === user?.id;
+  const renderRequestCard = (u: AdminUserRow) => {
     const isUpdating = updatingUserId === u.id;
-    const primaryName = displayName(u);
     const createdDate = formatDate(u.created_at);
-    const lastSignIn = formatDate(u.last_sign_in_at);
 
     return (
-      <View key={u.id} style={[styles.userCard, isSelf && styles.userCardSelf, showQuickEnable && styles.userCardPending]}>
-        <View style={styles.userHeader}>
-          <View style={[styles.userIcon, u.is_admin && styles.userIconAdmin]}>
-            {u.is_admin ? (
-              <ShieldCheck size={18} color={Colors.success} />
-            ) : (
-              <Mail size={18} color={Colors.textSecondary} />
-            )}
+      <View key={u.id} style={styles.requestCard}>
+        <View style={styles.requestHeader}>
+          <View style={styles.requestAvatar}>
+            <Mail size={18} color={Colors.accent} />
           </View>
-          <View style={styles.userInfo}>
-            <View style={styles.userNameRow}>
-              <Text style={styles.userEmail} numberOfLines={1}>{primaryName}</Text>
-              {isSelf && (
-                <View style={styles.selfBadge}>
-                  <Text style={styles.selfBadgeText}>You</Text>
-                </View>
-              )}
-            </View>
+          <View style={styles.requestInfo}>
+            <Text style={styles.requestName} numberOfLines={1}>
+              {displayName(u)}
+            </Text>
             {u.email && u.full_name?.trim() ? (
-              <Text style={styles.userSecondaryEmail} numberOfLines={1}>{u.email}</Text>
+              <Text style={styles.requestEmail} numberOfLines={1}>
+                {u.email}
+              </Text>
             ) : null}
-            <View style={styles.userMeta}>
-              {createdDate && <Text style={styles.userDate}>Joined {createdDate}</Text>}
-              {lastSignIn && <Text style={styles.userDate}>Last sign-in {lastSignIn}</Text>}
+            <View style={styles.metaRow}>
+              {createdDate ? <Text style={styles.metaText}>Joined {createdDate}</Text> : null}
               {u.email_confirmed ? (
-                <View style={styles.confirmedBadge}>
+                <View style={styles.pillOk}>
                   <CheckCircle size={10} color={Colors.success} />
-                  <Text style={styles.confirmedText}>Confirmed</Text>
+                  <Text style={styles.pillOkText}>Email confirmed</Text>
                 </View>
               ) : (
-                <View style={styles.unconfirmedBadge}>
+                <View style={styles.pillWarn}>
                   <XCircle size={10} color={Colors.danger} />
-                  <Text style={styles.unconfirmedText}>Unconfirmed</Text>
+                  <Text style={styles.pillWarnText}>Email unconfirmed</Text>
                 </View>
               )}
             </View>
-            {u.claimed_gedcom_id ? (
+          </View>
+        </View>
+
+        {isUpdating ? (
+          <View style={styles.requestActions}>
+            <ActivityIndicator color={Colors.accent} />
+          </View>
+        ) : (
+          <View style={styles.requestActions}>
+            <TouchableOpacity
+              style={styles.denyBtn}
+              onPress={() => handleDeleteUser(u)}
+              activeOpacity={0.8}
+            >
+              <Trash2 size={15} color={Colors.danger} />
+              <Text style={styles.denyBtnText}>Remove</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.approveBtn}
+              onPress={() => handleApprove(u)}
+              activeOpacity={0.8}
+            >
+              <UserCheck size={16} color={Colors.white} />
+              <Text style={styles.approveBtnText}>Approve</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+      </View>
+    );
+  };
+
+  const renderPeopleCard = (u: AdminUserRow) => {
+    const isSelf = u.id === user?.id;
+    const isUpdating = updatingUserId === u.id;
+
+    return (
+      <View key={u.id} style={[styles.peopleCard, isSelf && styles.peopleCardSelf]}>
+        <View style={styles.peopleHeader}>
+          <View style={[styles.peopleIcon, u.is_admin && styles.peopleIconAdmin]}>
+            {u.is_admin ? (
+              <ShieldCheck size={16} color={Colors.success} />
+            ) : (
+              <Users size={16} color={Colors.textSecondary} />
+            )}
+          </View>
+          <View style={{ flex: 1 }}>
+            <View style={styles.nameRow}>
+              <Text style={styles.peopleName} numberOfLines={1}>
+                {displayName(u)}
+              </Text>
+              {isSelf ? (
+                <View style={styles.youBadge}>
+                  <Text style={styles.youBadgeText}>You</Text>
+                </View>
+              ) : null}
+              {!u.is_enabled ? (
+                <View style={styles.pendingMini}>
+                  <Text style={styles.pendingMiniText}>Pending</Text>
+                </View>
+              ) : null}
+            </View>
+            {u.email ? (
+              <Text style={styles.peopleEmail} numberOfLines={1}>
+                {u.email}
+              </Text>
+            ) : null}
+            {u.claimed_person_name || u.claimed_gedcom_id ? (
               <Text style={styles.claimText} numberOfLines={1}>
                 Claimed: {u.claimed_person_name ?? u.claimed_gedcom_id}
               </Text>
@@ -259,27 +433,14 @@ export default function AdminScreen() {
           </View>
         </View>
 
-        {showQuickEnable && !u.is_enabled && (
-          <TouchableOpacity
-            style={styles.quickEnableBtn}
-            onPress={() => handleQuickEnable(u)}
-            disabled={isUpdating}
-            activeOpacity={0.8}
-          >
-            <UserCheck size={16} color={Colors.white} />
-            <Text style={styles.quickEnableText}>Enable Access</Text>
-          </TouchableOpacity>
-        )}
-
         {isUpdating ? (
-          <View style={styles.updatingOverlay}>
-            <ActivityIndicator size="small" color={Colors.accent} />
-            <Text style={styles.updatingText}>Updating...</Text>
+          <View style={styles.togglesRow}>
+            <ActivityIndicator size="small" color={Colors.accent} style={{ margin: 12 }} />
           </View>
         ) : (
           <View style={styles.togglesRow}>
             <View style={styles.toggleItem}>
-              <Text style={styles.toggleLabel}>Enabled</Text>
+              <Text style={styles.toggleLabel}>Access</Text>
               <Switch
                 value={u.is_enabled}
                 onValueChange={() => handleToggleEnabled(u)}
@@ -298,14 +459,14 @@ export default function AdminScreen() {
                 thumbColor={Colors.white}
               />
             </View>
-            {!isSelf && (
+            {!isSelf ? (
               <>
                 <View style={styles.toggleDivider} />
                 <TouchableOpacity style={styles.deleteBtn} onPress={() => handleDeleteUser(u)}>
                   <Trash2 size={16} color={Colors.danger} />
                 </TouchableOpacity>
               </>
-            )}
+            ) : null}
           </View>
         )}
 
@@ -313,7 +474,7 @@ export default function AdminScreen() {
           <TouchableOpacity
             style={styles.resetClaimBtn}
             onPress={() => {
-              Alert.alert('Reset Claim', `Clear identity claim for ${primaryName}?`, [
+              Alert.alert('Reset Claim', `Clear identity claim for ${displayName(u)}?`, [
                 { text: 'Cancel', style: 'cancel' },
                 { text: 'Reset', onPress: () => resetClaimMutation.mutate(u.id) },
               ]);
@@ -329,7 +490,7 @@ export default function AdminScreen() {
   if (!isAdmin) {
     return (
       <View style={styles.container}>
-        <Stack.Screen options={{ title: 'Admin Panel' }} />
+        <Stack.Screen options={{ title: 'Admin' }} />
         <View style={styles.emptyContainer}>
           <ShieldOff size={48} color={Colors.textLight} />
           <Text style={styles.emptyTitle}>Access Denied</Text>
@@ -346,7 +507,7 @@ export default function AdminScreen() {
     <View style={styles.container}>
       <Stack.Screen
         options={{
-          title: 'Admin Panel',
+          title: 'Admin',
           headerStyle: { backgroundColor: Colors.background },
           headerTintColor: Colors.text,
           headerShadowVisible: false,
@@ -370,34 +531,229 @@ export default function AdminScreen() {
       ) : (
         <ScrollView
           contentContainerStyle={styles.scrollContent}
+          keyboardShouldPersistTaps="handled"
           refreshControl={
-            <RefreshControl refreshing={usersQuery.isRefetching} onRefresh={() => void usersQuery.refetch()} tintColor={Colors.accent} />
+            <RefreshControl
+              refreshing={usersQuery.isRefetching}
+              onRefresh={() => {
+                void flushPendingAccessNotifications();
+                void usersQuery.refetch();
+                void refreshPendingCount();
+              }}
+              tintColor={Colors.accent}
+            />
           }
         >
-          <View style={styles.statsRow}>
-            <Users size={16} color={Colors.accent} />
-            <Text style={styles.statsText}>{users.length} users</Text>
-            <View style={styles.statsDot} />
-            <Text style={styles.statsTextSecondary}>{enabledCount} enabled</Text>
-            <View style={styles.statsDot} />
-            <Text style={styles.statsTextSecondary}>{pendingUsers.length} pending</Text>
+          <Text style={styles.pageTitle}>Admin Console</Text>
+          <Text style={styles.pageSubtitle}>
+            Approve new members, review tree edits, and manage accounts.
+          </Text>
+
+          {notifyStatus ? (
+            <View style={styles.notifyBanner}>
+              <Bell size={14} color={Colors.accent} />
+              <Text style={styles.notifyBannerText}>{notifyStatus}</Text>
+            </View>
+          ) : null}
+
+          <View style={styles.toolGrid}>
+            <TouchableOpacity
+              style={[styles.toolCard, pendingUsers.length > 0 && styles.toolCardAlert]}
+              onPress={() => setTab('requests')}
+              activeOpacity={0.85}
+            >
+              <Clock size={20} color={pendingUsers.length > 0 ? Colors.accent : Colors.textSecondary} />
+              <Text style={styles.toolTitle}>Access requests</Text>
+              <Text style={styles.toolCount}>{pendingUsers.length}</Text>
+              <Text style={styles.toolHint}>waiting for approval</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.toolCard}
+              onPress={() => router.push('/pending-edits')}
+              activeOpacity={0.85}
+            >
+              <ClipboardList size={20} color={Colors.textSecondary} />
+              <Text style={styles.toolTitle}>Tree edits</Text>
+              <Text style={styles.toolCount}>{pendingEditCount}</Text>
+              <View style={styles.toolLinkRow}>
+                <Text style={styles.toolHint}>review queue</Text>
+                <ChevronRight size={12} color={Colors.textLight} />
+              </View>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.toolCard}
+              onPress={() => router.push('/admin/data')}
+              activeOpacity={0.85}
+            >
+              <Database size={20} color={Colors.textSecondary} />
+              <Text style={styles.toolTitle}>Genealogy data</Text>
+              <Text style={styles.toolCount}>{enabledCount}</Text>
+              <View style={styles.toolLinkRow}>
+                <Text style={styles.toolHint}>enabled users · console</Text>
+                <ChevronRight size={12} color={Colors.textLight} />
+              </View>
+            </TouchableOpacity>
           </View>
 
-          {pendingUsers.length > 0 && (
-            <>
-              <View style={styles.sectionHeader}>
-                <Clock size={16} color={Colors.accent} />
-                <Text style={styles.sectionTitle}>Pending Access ({pendingUsers.length})</Text>
+          <View style={styles.searchRow}>
+            <Search size={16} color={Colors.textLight} />
+            <TextInput
+              style={styles.searchInput}
+              placeholder="Search by name or email…"
+              placeholderTextColor={Colors.textLight}
+              value={query}
+              onChangeText={(text) => {
+                setQuery(text);
+                if (text.trim() && tab === 'requests') setTab('people');
+              }}
+              autoCapitalize="none"
+              autoCorrect={false}
+              clearButtonMode="while-editing"
+              returnKeyType="search"
+            />
+            {query.length > 0 ? (
+              <TouchableOpacity
+                onPress={() => setQuery('')}
+                hitSlop={10}
+                accessibilityLabel="Clear search"
+              >
+                <X size={16} color={Colors.textLight} />
+              </TouchableOpacity>
+            ) : null}
+          </View>
+
+          <View style={styles.segment}>
+            <TouchableOpacity
+              style={[styles.segmentBtn, tab === 'requests' && styles.segmentBtnActive]}
+              onPress={() => setTab('requests')}
+            >
+              <Text style={[styles.segmentText, tab === 'requests' && styles.segmentTextActive]}>
+                Requests{pendingUsers.length ? ` (${pendingUsers.length})` : ''}
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.segmentBtn, tab === 'people' && styles.segmentBtnActive]}
+              onPress={() => setTab('people')}
+            >
+              <Text style={[styles.segmentText, tab === 'people' && styles.segmentTextActive]}>
+                People ({users.length})
+              </Text>
+            </TouchableOpacity>
+          </View>
+
+          {tab === 'requests' ? (
+            pendingUsers.length === 0 ? (
+              <View style={styles.caughtUp}>
+                <CheckCircle size={28} color={Colors.success} />
+                <Text style={styles.caughtUpTitle}>
+                  {normalizedQuery ? 'No matching requests' : 'All caught up'}
+                </Text>
+                <Text style={styles.caughtUpDesc}>
+                  {normalizedQuery
+                    ? 'Try a different name or email, or switch to People.'
+                    : 'New signups will appear here automatically. Push alerts also fire when someone requests access.'}
+                </Text>
               </View>
-              {pendingUsers.map((u) => renderUserCard(u, true))}
+            ) : (
+              <>
+                <Text style={styles.sectionHint}>
+                  Newest first · Tap Approve to let them into the tree
+                </Text>
+                {pendingUsers.map(renderRequestCard)}
+              </>
+            )
+          ) : (
+            <>
+              <View style={styles.filterRow}>
+                {(
+                  [
+                    { key: 'all' as const, label: 'All' },
+                    { key: 'pending' as const, label: 'Pending' },
+                    { key: 'enabled' as const, label: 'Enabled' },
+                    { key: 'admins' as const, label: 'Admins' },
+                  ] as const
+                ).map((f) => (
+                  <TouchableOpacity
+                    key={f.key}
+                    style={[styles.filterChip, peopleFilter === f.key && styles.filterChipActive]}
+                    onPress={() => setPeopleFilter(f.key)}
+                  >
+                    <Text
+                      style={[
+                        styles.filterChipText,
+                        peopleFilter === f.key && styles.filterChipTextActive,
+                      ]}
+                    >
+                      {f.label}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+
+              {normalizedQuery ? (
+                <Text style={styles.matchCount}>
+                  {peopleGroups.total} match{peopleGroups.total === 1 ? '' : 'es'} for “{query.trim()}”
+                </Text>
+              ) : null}
+
+              {peopleGroups.total === 0 ? (
+                <View style={styles.caughtUp}>
+                  <Search size={28} color={Colors.textLight} />
+                  <Text style={styles.caughtUpTitle}>No people found</Text>
+                  <Text style={styles.caughtUpDesc}>
+                    {normalizedQuery
+                      ? 'No name or email matches that search.'
+                      : 'No users in this filter.'}
+                  </Text>
+                </View>
+              ) : (
+                <>
+                  {peopleGroups.pending.length > 0 && peopleFilter !== 'enabled' && peopleFilter !== 'admins' ? (
+                    <View style={styles.groupBlock}>
+                      <View style={styles.groupHeader}>
+                        <Clock size={14} color={Colors.accent} />
+                        <Text style={styles.groupTitle}>
+                          Pending access ({peopleGroups.pending.length})
+                        </Text>
+                      </View>
+                      <Text style={styles.groupHint}>Waiting for approval · newest first</Text>
+                      {peopleGroups.pending.map(renderPeopleCard)}
+                    </View>
+                  ) : null}
+
+                  {peopleGroups.admins.length > 0 && peopleFilter !== 'pending' ? (
+                    <View style={styles.groupBlock}>
+                      <View style={styles.groupHeader}>
+                        <ShieldCheck size={14} color={Colors.success} />
+                        <Text style={styles.groupTitle}>
+                          Admins ({peopleGroups.admins.length})
+                        </Text>
+                      </View>
+                      <Text style={styles.groupHint}>A–Z by name</Text>
+                      {peopleGroups.admins.map(renderPeopleCard)}
+                    </View>
+                  ) : null}
+
+                  {peopleGroups.members.length > 0 &&
+                  peopleFilter !== 'pending' &&
+                  peopleFilter !== 'admins' ? (
+                    <View style={styles.groupBlock}>
+                      <View style={styles.groupHeader}>
+                        <Users size={14} color={Colors.textSecondary} />
+                        <Text style={styles.groupTitle}>
+                          Members ({peopleGroups.members.length})
+                        </Text>
+                      </View>
+                      <Text style={styles.groupHint}>Enabled accounts · A–Z by name</Text>
+                      {peopleGroups.members.map(renderPeopleCard)}
+                    </View>
+                  ) : null}
+                </>
+              )}
             </>
           )}
-
-          <View style={styles.sectionHeader}>
-            <Users size={16} color={Colors.textSecondary} />
-            <Text style={styles.sectionTitle}>All Users</Text>
-          </View>
-          {users.map((u) => renderUserCard(u))}
         </ScrollView>
       )}
     </View>
@@ -406,22 +762,244 @@ export default function AdminScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: Colors.background },
-  scrollContent: { paddingBottom: 40 },
+  scrollContent: { paddingBottom: 48 },
   loadingContainer: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-  emptyContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 40, gap: 12 },
+  emptyContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 40,
+    gap: 12,
+  },
   emptyTitle: { fontSize: 20, fontWeight: '700' as const, color: Colors.text },
   emptyDesc: { fontSize: 14, color: Colors.textSecondary, textAlign: 'center' },
-  backBtn: { marginTop: 8, paddingHorizontal: 24, paddingVertical: 10, borderRadius: 10, backgroundColor: Colors.primary },
+  backBtn: {
+    marginTop: 8,
+    paddingHorizontal: 24,
+    paddingVertical: 10,
+    borderRadius: 10,
+    backgroundColor: Colors.primary,
+  },
   backBtnText: { fontSize: 14, fontWeight: '600' as const, color: Colors.white },
-  retryBtn: { marginTop: 8, paddingHorizontal: 24, paddingVertical: 10, borderRadius: 10, backgroundColor: Colors.accent },
+  retryBtn: {
+    marginTop: 8,
+    paddingHorizontal: 24,
+    paddingVertical: 10,
+    borderRadius: 10,
+    backgroundColor: Colors.accent,
+  },
   retryBtnText: { fontSize: 14, fontWeight: '600' as const, color: Colors.white },
-  statsRow: { flexDirection: 'row', alignItems: 'center', marginHorizontal: 16, marginTop: 16, marginBottom: 8, gap: 8 },
-  statsText: { fontSize: 14, fontWeight: '600' as const, color: Colors.text },
-  statsDot: { width: 4, height: 4, borderRadius: 2, backgroundColor: Colors.textLight },
-  statsTextSecondary: { fontSize: 14, color: Colors.textSecondary },
-  sectionHeader: { flexDirection: 'row', alignItems: 'center', gap: 8, marginHorizontal: 16, marginTop: 16, marginBottom: 8 },
-  sectionTitle: { fontSize: 15, fontWeight: '700' as const, color: Colors.text },
-  userCard: {
+
+  pageTitle: {
+    marginHorizontal: 16,
+    marginTop: 12,
+    fontSize: 26,
+    fontWeight: '700' as const,
+    color: Colors.text,
+  },
+  pageSubtitle: {
+    marginHorizontal: 16,
+    marginTop: 4,
+    marginBottom: 14,
+    fontSize: 14,
+    lineHeight: 20,
+    color: Colors.textSecondary,
+  },
+  notifyBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginHorizontal: 16,
+    marginBottom: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 10,
+    backgroundColor: 'rgba(200, 149, 108, 0.12)',
+  },
+  notifyBannerText: { fontSize: 12, color: Colors.accent, fontWeight: '600' as const },
+
+  toolGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+    marginHorizontal: 16,
+    marginBottom: 16,
+  },
+  toolCard: {
+    width: '47%',
+    flexGrow: 1,
+    backgroundColor: Colors.card,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: Colors.cardBorder,
+    padding: 14,
+    gap: 4,
+  },
+  toolCardAlert: {
+    borderColor: Colors.accent,
+    backgroundColor: 'rgba(200, 149, 108, 0.08)',
+  },
+  toolTitle: { fontSize: 13, fontWeight: '600' as const, color: Colors.text, marginTop: 6 },
+  toolCount: { fontSize: 22, fontWeight: '700' as const, color: Colors.text },
+  toolHint: { fontSize: 11, color: Colors.textSecondary },
+  toolLinkRow: { flexDirection: 'row', alignItems: 'center', gap: 2 },
+
+  segment: {
+    flexDirection: 'row',
+    marginHorizontal: 16,
+    marginBottom: 12,
+    padding: 4,
+    borderRadius: 12,
+    backgroundColor: Colors.searchBar,
+    gap: 4,
+  },
+  segmentBtn: {
+    flex: 1,
+    paddingVertical: 10,
+    borderRadius: 10,
+    alignItems: 'center',
+  },
+  segmentBtnActive: { backgroundColor: Colors.card },
+  segmentText: { fontSize: 13, fontWeight: '600' as const, color: Colors.textSecondary },
+  segmentTextActive: { color: Colors.text },
+
+  sectionHint: {
+    marginHorizontal: 16,
+    marginBottom: 10,
+    fontSize: 12,
+    color: Colors.textSecondary,
+    lineHeight: 17,
+  },
+  caughtUp: {
+    marginHorizontal: 16,
+    marginTop: 12,
+    padding: 28,
+    borderRadius: 16,
+    backgroundColor: Colors.card,
+    borderWidth: 1,
+    borderColor: Colors.cardBorder,
+    alignItems: 'center',
+    gap: 8,
+  },
+  caughtUpTitle: { fontSize: 17, fontWeight: '700' as const, color: Colors.text },
+  caughtUpDesc: { fontSize: 13, color: Colors.textSecondary, textAlign: 'center', lineHeight: 18 },
+
+  requestCard: {
+    backgroundColor: Colors.card,
+    marginHorizontal: 16,
+    marginBottom: 10,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: Colors.accent,
+    borderLeftWidth: 4,
+    overflow: 'hidden',
+  },
+  requestHeader: { flexDirection: 'row', alignItems: 'center', padding: 14, gap: 12 },
+  requestAvatar: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: 'rgba(200, 149, 108, 0.15)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  requestInfo: { flex: 1 },
+  requestName: { fontSize: 16, fontWeight: '700' as const, color: Colors.text },
+  requestEmail: { fontSize: 12, color: Colors.textSecondary, marginTop: 2 },
+  metaRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 6, alignItems: 'center' },
+  metaText: { fontSize: 11, color: Colors.textLight },
+  pillOk: { flexDirection: 'row', alignItems: 'center', gap: 3 },
+  pillOkText: { fontSize: 10, color: Colors.success, fontWeight: '600' as const },
+  pillWarn: { flexDirection: 'row', alignItems: 'center', gap: 3 },
+  pillWarnText: { fontSize: 10, color: Colors.danger, fontWeight: '600' as const },
+  requestActions: {
+    flexDirection: 'row',
+    gap: 10,
+    paddingHorizontal: 14,
+    paddingBottom: 14,
+  },
+  denyBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 12,
+    borderRadius: 10,
+    backgroundColor: 'rgba(196, 92, 74, 0.1)',
+    borderWidth: 1,
+    borderColor: 'rgba(196, 92, 74, 0.2)',
+  },
+  denyBtnText: { fontSize: 14, fontWeight: '600' as const, color: Colors.danger },
+  approveBtn: {
+    flex: 1.4,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 12,
+    borderRadius: 10,
+    backgroundColor: Colors.success,
+  },
+  approveBtnText: { fontSize: 14, fontWeight: '700' as const, color: Colors.white },
+
+  searchRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginHorizontal: 16,
+    marginBottom: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 11,
+    borderRadius: 12,
+    backgroundColor: Colors.card,
+    borderWidth: 1,
+    borderColor: Colors.cardBorder,
+  },
+  searchInput: { flex: 1, fontSize: 15, color: Colors.text, padding: 0 },
+  filterRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginHorizontal: 16,
+    marginBottom: 8,
+  },
+  filterChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 16,
+    backgroundColor: Colors.card,
+    borderWidth: 1,
+    borderColor: Colors.cardBorder,
+  },
+  filterChipActive: { backgroundColor: Colors.accent, borderColor: Colors.accent },
+  filterChipText: { fontSize: 12, fontWeight: '600' as const, color: Colors.textSecondary },
+  filterChipTextActive: { color: Colors.white },
+  matchCount: {
+    marginHorizontal: 16,
+    marginBottom: 8,
+    fontSize: 12,
+    fontWeight: '600' as const,
+    color: Colors.textSecondary,
+  },
+  groupBlock: { marginBottom: 8 },
+  groupHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginHorizontal: 16,
+    marginTop: 8,
+    marginBottom: 2,
+  },
+  groupTitle: { fontSize: 14, fontWeight: '700' as const, color: Colors.text },
+  groupHint: {
+    marginHorizontal: 16,
+    marginBottom: 8,
+    fontSize: 11,
+    color: Colors.textLight,
+  },
+
+  peopleCard: {
     backgroundColor: Colors.card,
     marginHorizontal: 16,
     marginBottom: 10,
@@ -430,43 +1008,52 @@ const styles = StyleSheet.create({
     borderColor: Colors.cardBorder,
     overflow: 'hidden',
   },
-  userCardSelf: { borderColor: Colors.accent, borderWidth: 1.5 },
-  userCardPending: { borderColor: Colors.accent, borderLeftWidth: 4 },
-  userHeader: { flexDirection: 'row', alignItems: 'center', padding: 14, gap: 12 },
-  userIcon: { width: 40, height: 40, borderRadius: 20, backgroundColor: Colors.overlay, justifyContent: 'center', alignItems: 'center' },
-  userIconAdmin: { backgroundColor: 'rgba(74, 124, 89, 0.1)' },
-  userInfo: { flex: 1 },
-  userNameRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  userEmail: { fontSize: 15, fontWeight: '600' as const, color: Colors.text, flexShrink: 1 },
-  userSecondaryEmail: { fontSize: 12, color: Colors.textSecondary, marginTop: 2 },
-  selfBadge: { backgroundColor: Colors.accent, paddingHorizontal: 8, paddingVertical: 2, borderRadius: 8 },
-  selfBadgeText: { fontSize: 10, fontWeight: '700' as const, color: Colors.white },
-  userMeta: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 8, marginTop: 4 },
-  userDate: { fontSize: 11, color: Colors.textLight },
-  confirmedBadge: { flexDirection: 'row', alignItems: 'center', gap: 3 },
-  confirmedText: { fontSize: 10, color: Colors.success, fontWeight: '500' as const },
-  unconfirmedBadge: { flexDirection: 'row', alignItems: 'center', gap: 3 },
-  unconfirmedText: { fontSize: 10, color: Colors.danger, fontWeight: '500' as const },
-  claimText: { fontSize: 11, color: Colors.accent, marginTop: 4, fontWeight: '500' as const },
-  quickEnableBtn: {
-    flexDirection: 'row',
+  peopleCardSelf: { borderColor: Colors.accent, borderWidth: 1.5 },
+  peopleHeader: { flexDirection: 'row', alignItems: 'center', padding: 14, gap: 12 },
+  peopleIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: Colors.overlay,
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 8,
-    marginHorizontal: 14,
-    marginBottom: 10,
-    paddingVertical: 10,
-    backgroundColor: Colors.success,
-    borderRadius: 10,
   },
-  quickEnableText: { fontSize: 14, fontWeight: '600' as const, color: Colors.white },
+  peopleIconAdmin: { backgroundColor: 'rgba(74, 124, 89, 0.12)' },
+  nameRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  peopleName: { fontSize: 15, fontWeight: '600' as const, color: Colors.text, flexShrink: 1 },
+  peopleEmail: { fontSize: 12, color: Colors.textSecondary, marginTop: 2 },
+  youBadge: {
+    backgroundColor: Colors.accent,
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 8,
+  },
+  youBadgeText: { fontSize: 10, fontWeight: '700' as const, color: Colors.white },
+  pendingMini: {
+    backgroundColor: 'rgba(200, 149, 108, 0.15)',
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 8,
+  },
+  pendingMiniText: { fontSize: 10, fontWeight: '700' as const, color: Colors.accent },
+  claimText: { fontSize: 11, color: Colors.accent, marginTop: 4, fontWeight: '500' as const },
   togglesRow: { flexDirection: 'row', borderTopWidth: 1, borderTopColor: Colors.divider },
-  toggleItem: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingVertical: 12 },
+  toggleItem: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+  },
   toggleDivider: { width: 1, backgroundColor: Colors.divider },
   toggleLabel: { fontSize: 13, fontWeight: '500' as const, color: Colors.textSecondary },
-  updatingOverlay: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', borderTopWidth: 1, borderTopColor: Colors.divider, paddingVertical: 14, gap: 8 },
-  updatingText: { fontSize: 13, color: Colors.textSecondary },
   deleteBtn: { paddingHorizontal: 14, justifyContent: 'center', alignItems: 'center' },
-  resetClaimBtn: { paddingVertical: 10, alignItems: 'center', borderTopWidth: 1, borderTopColor: Colors.divider },
+  resetClaimBtn: {
+    paddingVertical: 10,
+    alignItems: 'center',
+    borderTopWidth: 1,
+    borderTopColor: Colors.divider,
+  },
   resetClaimText: { fontSize: 12, color: Colors.accent, fontWeight: '600' as const },
 });

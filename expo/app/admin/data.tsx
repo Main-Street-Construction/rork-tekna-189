@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useMemo } from 'react';
+import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -40,7 +40,45 @@ import {
   findDuplicateFamilyGroups,
   personFamilyMap,
 } from '@/utils/family-admin';
+import { searchIndividuals } from '@/utils/gedcom-parser';
 import type { GedcomFamily, GedcomIndividual } from '@/types/genealogy';
+
+function personToAdminRow(person: GedcomIndividual): AdminIndividualRow {
+  return {
+    gedcom_id: person.id,
+    first_name: person.givenName || null,
+    last_name: person.surname || null,
+    gender: person.sex || null,
+    birth_date: person.birthDate ?? null,
+    birth_place: person.birthPlace ?? null,
+    death_date: person.deathDate ?? null,
+    death_place: person.deathPlace ?? null,
+    notes: person.note ?? null,
+  };
+}
+
+function mergeAdminRows(primary: AdminIndividualRow[], secondary: AdminIndividualRow[]): AdminIndividualRow[] {
+  const seen = new Set<string>();
+  const out: AdminIndividualRow[] = [];
+  for (const row of [...primary, ...secondary]) {
+    const id = row.gedcom_id;
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    out.push(row);
+  }
+  return out;
+}
+
+function tokensMatchHaystack(query: string, haystack: string): boolean {
+  const tokens = query
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s'-]/gu, ' ')
+    .split(/\s+/)
+    .filter(Boolean);
+  if (tokens.length === 0) return true;
+  const hay = haystack.toLowerCase();
+  return tokens.every((t) => hay.includes(t));
+}
 
 type TabKey = 'people' | 'families' | 'issues';
 
@@ -92,7 +130,7 @@ export default function AdminDataScreen() {
 
   const familyHits = useMemo(() => {
     if (!treeData) return [] as GedcomFamily[];
-    const q = familyQuery.trim().toLowerCase();
+    const q = familyQuery.trim();
     const all = Array.from(treeData.families.values());
     if (!q) return all.slice(0, 40);
     return all
@@ -107,12 +145,11 @@ export default function AdminDataScreen() {
           wife?.name,
           wife?.givenName,
           wife?.surname,
-          ...family.childrenIds.map((id) => getPerson(id)?.name),
+          ...(family.childrenIds ?? []).map((id) => getPerson(id)?.name),
         ]
           .filter(Boolean)
-          .join(' ')
-          .toLowerCase();
-        return hay.includes(q);
+          .join(' ');
+        return tokensMatchHaystack(q, hay);
       })
       .slice(0, 60);
   }, [treeData, familyQuery, getPerson]);
@@ -124,17 +161,50 @@ export default function AdminDataScreen() {
 
   const inspectPerson = inspectPersonId ? getPerson(inspectPersonId) : null;
 
-  const handleSearch = useCallback(async () => {
-    if (!query.trim()) return;
+  const handleSearch = useCallback(async (rawQuery?: string) => {
+    const q = (rawQuery ?? query).trim();
+    if (!q) {
+      setResults([]);
+      return;
+    }
     setSearching(true);
-    const { rows, error } = await adminSearchIndividuals(query.trim());
+
+    const localRows = treeData
+      ? searchIndividuals(q, treeData).map(personToAdminRow)
+      : [];
+
+    // Show local fuzzy hits immediately so typing feels instant.
+    if (localRows.length > 0) {
+      setResults(localRows.slice(0, 50));
+    }
+
+    const { rows: cloudRows, error } = await adminSearchIndividuals(q, 50);
     setSearching(false);
-    if (error) {
+
+    if (error && localRows.length === 0) {
       Alert.alert('Search Error', error);
       return;
     }
-    setResults(rows);
-  }, [query]);
+
+    // Prefer cloud field data when both match; keep local-only fuzzy hits.
+    setResults(mergeAdminRows(cloudRows, localRows).slice(0, 60));
+  }, [query, treeData]);
+
+  const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+    const q = query.trim();
+    if (!q) {
+      setResults([]);
+      return;
+    }
+    searchDebounceRef.current = setTimeout(() => {
+      void handleSearch(q);
+    }, 280);
+    return () => {
+      if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+    };
+  }, [query, handleSearch]);
 
   const openEdit = (row: AdminIndividualRow) => {
     setSelected(row);
@@ -445,12 +515,14 @@ export default function AdminDataScreen() {
               <Search size={18} color={Colors.textSecondary} />
               <TextInput
                 style={styles.searchInput}
-                placeholder="Search by name or ID..."
+                placeholder="Any name order, typos OK…"
                 placeholderTextColor={Colors.textLight}
                 value={query}
                 onChangeText={setQuery}
                 onSubmitEditing={() => void handleSearch()}
                 returnKeyType="search"
+                autoCorrect={false}
+                autoCapitalize="none"
               />
               <TouchableOpacity style={styles.searchBtn} onPress={() => void handleSearch()} disabled={searching}>
                 {searching ? <ActivityIndicator size="small" color={Colors.white} /> : <Text style={styles.searchBtnText}>Go</Text>}
@@ -559,7 +631,7 @@ export default function AdminDataScreen() {
               <Search size={18} color={Colors.textSecondary} />
               <TextInput
                 style={styles.searchInput}
-                placeholder="Filter families by parent, child, or ID..."
+                placeholder="Any name order — parent, child, or ID…"
                 placeholderTextColor={Colors.textLight}
                 value={familyQuery}
                 onChangeText={setFamilyQuery}

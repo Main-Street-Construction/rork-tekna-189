@@ -69,35 +69,40 @@ function RootLayoutNav() {
       <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
       <Stack.Screen
         name="person/[id]"
-        options={{ title: "Person" }}
+        options={{
+          title: "Person",
+          headerBackVisible: true,
+          headerBackButtonDisplayMode: "minimal",
+          gestureEnabled: true,
+        }}
       />
       <Stack.Screen
         name="import-data/index"
-        options={{ presentation: "modal", title: "Import Data" }}
+        options={{ presentation: "modal", title: "Import Data", gestureEnabled: true }}
       />
       <Stack.Screen
         name="edit-person/[id]"
-        options={{ presentation: "modal", title: "Edit Person" }}
+        options={{ presentation: "modal", title: "Edit Person", gestureEnabled: true }}
       />
       <Stack.Screen
         name="add-child/[parentId]"
-        options={{ presentation: "modal", title: "Add Child" }}
+        options={{ presentation: "modal", title: "Add Child", gestureEnabled: true }}
       />
       <Stack.Screen
         name="add-spouse/[personId]"
-        options={{ presentation: "modal", title: "Add Spouse" }}
+        options={{ presentation: "modal", title: "Add Spouse", gestureEnabled: true }}
       />
       <Stack.Screen
         name="pending-edits/index"
-        options={{ title: "Pending Edits" }}
+        options={{ title: "Pending Edits", headerBackVisible: true, gestureEnabled: true }}
       />
       <Stack.Screen
         name="link-spouses/index"
-        options={{ presentation: "modal", title: "Link Spouses" }}
+        options={{ presentation: "modal", title: "Link Spouses", gestureEnabled: true }}
       />
       <Stack.Screen
         name="edit-marriage/[familyId]"
-        options={{ presentation: "modal", title: "Edit Marriage" }}
+        options={{ presentation: "modal", title: "Edit Marriage", gestureEnabled: true }}
       />
       <Stack.Screen
         name="auth"
@@ -105,29 +110,31 @@ function RootLayoutNav() {
           // Android modals don't resize for the keyboard and cover the fields.
           presentation: Platform.OS === "android" ? "card" : "modal",
           title: "Account",
+          gestureEnabled: true,
         }}
       />
       <Stack.Screen
         name="admin/index"
-        options={{ title: "Admin Panel" }}
+        options={{ title: "Admin Panel", headerBackVisible: true, gestureEnabled: true }}
       />
       <Stack.Screen
         name="admin/data"
-        options={{ title: "Data Console" }}
+        options={{ title: "Data Console", headerBackVisible: true, gestureEnabled: true }}
       />
       <Stack.Screen
         name="privacy-policy/index"
-        options={{ title: "Privacy Policy" }}
+        options={{ title: "Privacy Policy", headerBackVisible: true, gestureEnabled: true }}
       />
       <Stack.Screen
         name="link-child/[parentId]"
-        options={{ presentation: "modal", title: "Link Child" }}
+        options={{ presentation: "modal", title: "Link Child", gestureEnabled: true }}
       />
       <Stack.Screen
         name="update-password"
         options={{
           presentation: Platform.OS === "android" ? "card" : "modal",
           title: "Update Password",
+          gestureEnabled: true,
         }}
       />
     </Stack>

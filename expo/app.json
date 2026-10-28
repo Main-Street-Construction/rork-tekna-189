@@ -2,7 +2,7 @@
   "expo": {
     "name": "Tekna",
     "slug": "family-tree-research-app",
-    "version": "1.7.0",
+    "version": "1.7.1",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "rork-app",
@@ -16,7 +16,7 @@
     "ios": {
       "supportsTablet": false,
       "bundleIdentifier": "app.rork.family-tree-research-app",
-      "buildNumber": "3",
+      "buildNumber": "4",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false,
         "UIBackgroundModes": ["remote-notification"],
@@ -76,7 +76,7 @@
         "backgroundColor": "#ffffff"
       },
       "package": "app.rork.family_tree_research_app",
-      "versionCode": 5,
+      "versionCode": 6,
       "permissions": ["android.permission.POST_NOTIFICATIONS"],
       "softwareKeyboardLayoutMode": "pan"
     },

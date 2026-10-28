@@ -13,12 +13,13 @@ import {
   Animated,
 } from 'react-native';
 import { useLocalSearchParams, useRouter, Stack } from 'expo-router';
-import { Save, X, Heart, Calendar, MapPin } from 'lucide-react-native';
+import { Save, Heart, Calendar, MapPin } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import Colors from '@/constants/colors';
 import { useFamilyTree } from '@/contexts/FamilyTreeContext';
 import { GedcomFamily } from '@/types/genealogy';
-import { navigateBack, modalScreenOptions } from '@/utils/navigation';
+import { modalScreenOptions } from '@/utils/navigation';
+import ModalCloseButton from '@/components/ModalCloseButton';
 
 export default function EditMarriageScreen() {
   const { familyId } = useLocalSearchParams<{ familyId: string }>();
@@ -137,11 +138,7 @@ export default function EditMarriageScreen() {
           title: 'Edit Marriage',
           headerStyle: { backgroundColor: Colors.background },
           headerTintColor: Colors.text,
-          headerLeft: () => (
-            <TouchableOpacity onPress={() => navigateBack(router)} style={styles.headerBtn}>
-              <X size={22} color={Colors.text} />
-            </TouchableOpacity>
-          ),
+          headerLeft: () => <ModalCloseButton />,
           headerRight: () => (
             <TouchableOpacity
               onPress={handleSave}

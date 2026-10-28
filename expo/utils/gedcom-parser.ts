@@ -851,18 +851,70 @@ function getSearchableNames(person: GedcomIndividual): {
 
 const MAX_SEARCH_RESULTS = 100;
 
+function normalizeSearchText(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s'-]/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function tokenizeSearch(value: string): string[] {
+  return normalizeSearchText(value).split(' ').filter(Boolean);
+}
+
+function editDistance(a: string, b: string, maxDist: number): number {
+  if (a === b) return 0;
+  if (Math.abs(a.length - b.length) > maxDist) return maxDist + 1;
+  if (a.length === 0) return b.length;
+  if (b.length === 0) return a.length;
+
+  let prev = Array.from({ length: b.length + 1 }, (_, i) => i);
+  for (let i = 1; i <= a.length; i++) {
+    const cur = [i];
+    let rowMin = i;
+    for (let j = 1; j <= b.length; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      const val = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + cost);
+      cur[j] = val;
+      if (val < rowMin) rowMin = val;
+    }
+    if (rowMin > maxDist) return maxDist + 1;
+    prev = cur;
+  }
+  return prev[b.length];
+}
+
+/** Score how well a query token matches a candidate name token. 0 = no match. */
+function scoreTokenMatch(queryToken: string, candidate: string): number {
+  if (!candidate) return 0;
+  if (candidate === queryToken) return 100;
+  if (candidate.startsWith(queryToken)) return 85;
+  if (queryToken.startsWith(candidate) && candidate.length >= 3) return 70;
+  if (candidate.includes(queryToken)) return 55;
+
+  const maxDist = queryToken.length >= 7 ? 2 : queryToken.length >= 4 ? 1 : 0;
+  if (maxDist > 0) {
+    const dist = editDistance(queryToken, candidate, maxDist);
+    if (dist <= maxDist) return 45 - dist * 10;
+  }
+  return 0;
+}
+
+/**
+ * Soft search: case-insensitive, token order doesn't matter, middle names optional,
+ * light typo tolerance. Every query token must match somewhere in the name/id.
+ */
 export function searchIndividuals(
   query: string,
   data: FamilyTreeData
 ): GedcomIndividual[] {
-  if (!query.trim()) return [];
-  const lower = query.toLowerCase().trim();
-  const queryParts = lower.split(/\s+/).filter(Boolean);
+  const queryTokens = tokenizeSearch(query);
+  if (queryTokens.length === 0) return [];
 
   const scored: { person: GedcomIndividual; score: number }[] = [];
   let checked = 0;
   let filtered = 0;
-  let lowestKeptScore = -1;
 
   const iter = data.individuals.values();
   let next = iter.next();
@@ -877,54 +929,50 @@ export function searchIndividuals(
     }
 
     const { firstName, surname, fullGiven, fullName } = getSearchableNames(person);
+    const personId = person.id.toLowerCase();
+    const nameTokens = Array.from(
+      new Set([
+        ...tokenizeSearch(fullGiven),
+        ...tokenizeSearch(surname),
+        ...tokenizeSearch(fullName),
+        firstName,
+        surname,
+      ].filter(Boolean))
+    );
 
-    let score = -1;
+    let totalScore = 0;
+    let allMatched = true;
 
-    if (queryParts.length >= 2) {
-      const firstQ = queryParts[0];
-      const lastQ = queryParts[queryParts.length - 1];
-      if (firstName.startsWith(firstQ) && surname.startsWith(lastQ)) {
-        score = 100;
-      } else if (firstName.includes(firstQ) && surname.includes(lastQ)) {
-        score = 90;
-      } else if (surname.startsWith(firstQ) && firstName.startsWith(lastQ)) {
-        score = 85;
-      } else if (fullName.includes(queryParts.join(' '))) {
-        score = 75;
+    for (const qt of queryTokens) {
+      let best = 0;
+      for (const nt of nameTokens) {
+        const s = scoreTokenMatch(qt, nt);
+        if (s > best) best = s;
       }
-    }
-
-    if (score < 0) {
-      if (firstName === lower || surname === lower) {
-        score = 80;
-      } else if (firstName.startsWith(lower)) {
-        score = 70;
-      } else if (surname.startsWith(lower)) {
-        score = 65;
-      } else if (firstName.includes(lower) || surname.includes(lower)) {
-        score = 50;
-      } else if (fullGiven.includes(lower)) {
-        score = 30;
-      } else if (fullName.includes(lower)) {
-        score = 25;
-      } else if (score < 0 && lowestKeptScore <= 10) {
+      if (best === 0 && fullName.includes(qt)) best = 40;
+      if (best === 0 && personId.includes(qt)) best = 15;
+      if (best === 0) {
         const birthPlace = person.birthPlace?.toLowerCase() || '';
         const deathPlace = person.deathPlace?.toLowerCase() || '';
-        if (birthPlace.includes(lower) || deathPlace.includes(lower)) {
-          score = 10;
-        } else {
-          const personId = person.id.toLowerCase();
-          if (personId.includes(lower)) {
-            score = 5;
-          }
-        }
+        if (birthPlace.includes(qt) || deathPlace.includes(qt)) best = 8;
       }
+      if (best === 0) {
+        allMatched = false;
+        break;
+      }
+      totalScore += best;
     }
 
-    if (score >= 0) {
-      if (scored.length < MAX_SEARCH_RESULTS || score > lowestKeptScore) {
-        scored.push({ person, score });
+    if (allMatched) {
+      // Prefer classic first+last order slightly when it clearly matches.
+      if (
+        queryTokens.length >= 2 &&
+        firstName.startsWith(queryTokens[0]) &&
+        surname.startsWith(queryTokens[queryTokens.length - 1])
+      ) {
+        totalScore += 20;
       }
+      scored.push({ person, score: totalScore });
     }
 
     next = iter.next();

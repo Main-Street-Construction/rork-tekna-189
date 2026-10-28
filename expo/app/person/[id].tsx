@@ -162,6 +162,13 @@ export default function PersonDetailScreen() {
   const handleGoHome = useCallback(() => {
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     // Prefer navigate over replace so search tab state/history survives.
+    if (typeof router.dismissAll === 'function') {
+      try {
+        router.dismissAll();
+      } catch {
+        // fall through
+      }
+    }
     router.navigate('/(tabs)/(search)');
   }, [router]);
 
@@ -324,15 +331,14 @@ export default function PersonDetailScreen() {
         options={{
           title: person.name,
           headerStyle: { backgroundColor: Colors.background },
-          headerTintColor: Colors.text,
+          headerTintColor: Colors.accent,
           headerShadowVisible: false,
-          headerLeft: () => (
-            <TouchableOpacity onPress={handleGoBack} style={styles.editHeaderBtn} hitSlop={12}>
-              <ArrowLeft size={20} color={Colors.accent} />
-            </TouchableOpacity>
-          ),
+          // Use the native stack back control — custom headerLeft was unreliable on modals/cards.
+          headerBackVisible: true,
+          headerBackButtonDisplayMode: 'minimal',
+          headerLeft: undefined,
           headerRight: () => (
-            <TouchableOpacity onPress={handleGoHome} style={styles.editHeaderBtn} hitSlop={12}>
+            <TouchableOpacity onPress={handleGoHome} style={styles.editHeaderBtn} hitSlop={16}>
               <Home size={18} color={Colors.accent} />
             </TouchableOpacity>
           ),

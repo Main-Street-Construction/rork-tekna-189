@@ -16,6 +16,7 @@ import * as DocumentPicker from 'expo-document-picker';
 import { File } from 'expo-file-system';
 import Colors from '@/constants/colors';
 import { useFamilyTree } from '@/contexts/FamilyTreeContext';
+import ModalCloseButton from '@/components/ModalCloseButton';
 
 export default function ImportDataScreen() {
   const router = useRouter();
@@ -173,6 +174,8 @@ export default function ImportDataScreen() {
           headerTintColor: Colors.text,
           headerShadowVisible: false,
           presentation: 'modal',
+          gestureEnabled: true,
+          headerLeft: () => <ModalCloseButton />,
         }}
       />
       <ScrollView

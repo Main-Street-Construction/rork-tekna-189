@@ -19,7 +19,8 @@ import Colors from '@/constants/colors';
 import { useFamilyTree } from '@/contexts/FamilyTreeContext';
 import { GedcomIndividual } from '@/types/genealogy';
 import { getSpouses } from '@/utils/gedcom-parser';
-import { navigateBack, modalScreenOptions } from '@/utils/navigation';
+import { modalScreenOptions } from '@/utils/navigation';
+import ModalCloseButton from '@/components/ModalCloseButton';
 
 function safeFamiliesAsSpouse(arr: string[] | undefined | null): string[] {
   return Array.isArray(arr) ? arr : [];
@@ -173,11 +174,7 @@ export default function LinkChildScreen() {
           title: 'Link Child',
           headerStyle: { backgroundColor: Colors.background },
           headerTintColor: Colors.text,
-          headerLeft: () => (
-            <TouchableOpacity onPress={() => navigateBack(router)} style={styles.headerBtn}>
-              <X size={22} color={Colors.text} />
-            </TouchableOpacity>
-          ),
+          headerLeft: () => <ModalCloseButton />,
           headerRight: () => (
             <TouchableOpacity
               onPress={handleSave}
