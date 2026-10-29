@@ -301,33 +301,55 @@ export default function TreeExplorerCanvas({
                   pointerEvents="none"
                 >
                   {visibleEdges.map((edge) => {
-                    const a = posById.get(edge.fromId);
-                    const b = posById.get(edge.toId);
-                    if (!a || !b) return null;
-                    const x1 = a.x - svgMinX;
-                    const y1 = a.y - svgMinY;
-                    const x2 = b.x - svgMinX;
-                    const y2 = b.y - svgMinY;
                     if (edge.kind === 'spouse') {
+                      const a = posById.get(edge.fromId);
+                      const b = posById.get(edge.toId);
+                      if (!a || !b) return null;
                       return (
                         <Line
                           key={edge.id}
-                          x1={x1}
-                          y1={y1}
-                          x2={x2}
-                          y2={y2}
+                          x1={a.x - svgMinX}
+                          y1={a.y - svgMinY}
+                          x2={b.x - svgMinX}
+                          y2={b.y - svgMinY}
                           stroke={Colors.accentLight}
                           strokeWidth={2}
                           strokeLinecap="round"
                         />
                       );
                     }
-                    const midY = (y1 + y2) / 2;
-                    const d = `M ${x1} ${y1 + 28} V ${midY} H ${x2} V ${y2 - 28}`;
+
+                    // Descent: drop from couple midpoint → horizontal bus → each child
+                    const parents = (edge.parentIds ?? [])
+                      .map((id) => posById.get(id))
+                      .filter((n): n is NonNullable<typeof n> => !!n);
+                    const kids = (edge.childIds ?? [])
+                      .map((id) => posById.get(id))
+                      .filter((n): n is NonNullable<typeof n> => !!n);
+                    if (parents.length === 0 || kids.length === 0) return null;
+
+                    const parentMidX =
+                      parents.reduce((sum, p) => sum + p.x, 0) / parents.length - svgMinX;
+                    const parentY = parents[0].y - svgMinY + 30;
+                    const childY = kids[0].y - svgMinY - 30;
+                    const busY = (parentY + childY) / 2;
+                    const kidXs = kids.map((k) => k.x - svgMinX);
+                    const busLeft = Math.min(parentMidX, ...kidXs);
+                    const busRight = Math.max(parentMidX, ...kidXs);
+
+                    const parts = [
+                      `M ${parentMidX} ${parentY} V ${busY}`,
+                      `M ${busLeft} ${busY} H ${busRight}`,
+                      ...kids.map((k) => {
+                        const kx = k.x - svgMinX;
+                        return `M ${kx} ${busY} V ${childY}`;
+                      }),
+                    ];
+
                     return (
                       <Path
                         key={edge.id}
-                        d={d}
+                        d={parts.join(' ')}
                         stroke={Colors.cardBorder}
                         strokeWidth={1.5}
                         fill="none"
@@ -350,7 +372,7 @@ export default function TreeExplorerCanvas({
       <View style={styles.hud} pointerEvents="box-none">
         <View style={styles.hintPill}>
           <Text style={styles.hintText}>
-            Drag to pan · pinch zoom · tap gold dot to expand · double-tap opens profile
+            Ancestors above · descendants below · tap gold dot to expand · double-tap opens profile
           </Text>
         </View>
 

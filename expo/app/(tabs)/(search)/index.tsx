@@ -58,19 +58,21 @@ function SearchScreenContent() {
       }
       if (text.trim().length >= 2 && canSearch) {
         searchTimerRef.current = setTimeout(() => {
-          try {
-            let found = search(text);
-            // Exclude claimed identity so results focus on relatives
-            if (hasClaimed && profile?.rootPersonId) {
-              found = found.filter((p) => p.id !== profile.rootPersonId);
+          // Defer off the keystroke frame so typing stays responsive on large trees.
+          requestAnimationFrame(() => {
+            try {
+              let found = search(text);
+              if (hasClaimed && profile?.rootPersonId) {
+                found = found.filter((p) => p.id !== profile.rootPersonId);
+              }
+              setResults(found);
+              setHasSearched(true);
+            } catch {
+              setResults([]);
+              setHasSearched(true);
             }
-            setResults(found);
-            setHasSearched(true);
-          } catch {
-            setResults([]);
-            setHasSearched(true);
-          }
-        }, 300);
+          });
+        }, 220);
       } else {
         searchTimerRef.current = null;
         setResults([]);

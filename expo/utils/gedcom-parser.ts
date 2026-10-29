@@ -849,7 +849,7 @@ function getSearchableNames(person: GedcomIndividual): {
   };
 }
 
-const MAX_SEARCH_RESULTS = 100;
+const MAX_SEARCH_RESULTS = 60;
 
 function normalizeSearchText(value: string): string {
   return value
@@ -863,47 +863,58 @@ function tokenizeSearch(value: string): string[] {
   return normalizeSearchText(value).split(' ').filter(Boolean);
 }
 
-function editDistance(a: string, b: string, maxDist: number): number {
-  if (a === b) return 0;
-  if (Math.abs(a.length - b.length) > maxDist) return maxDist + 1;
-  if (a.length === 0) return b.length;
-  if (b.length === 0) return a.length;
+type SearchIndexEntry = {
+  person: GedcomIndividual;
+  firstName: string;
+  surname: string;
+  fullName: string;
+  tokens: string[];
+  idLower: string;
+};
 
-  let prev = Array.from({ length: b.length + 1 }, (_, i) => i);
-  for (let i = 1; i <= a.length; i++) {
-    const cur = [i];
-    let rowMin = i;
-    for (let j = 1; j <= b.length; j++) {
-      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
-      const val = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + cost);
-      cur[j] = val;
-      if (val < rowMin) rowMin = val;
-    }
-    if (rowMin > maxDist) return maxDist + 1;
-    prev = cur;
+/** Rebuild only when the individuals map identity changes. */
+const searchIndexCache = new WeakMap<Map<string, GedcomIndividual>, SearchIndexEntry[]>();
+
+function getSearchIndex(data: FamilyTreeData): SearchIndexEntry[] {
+  const cached = searchIndexCache.get(data.individuals);
+  if (cached) return cached;
+
+  const entries: SearchIndexEntry[] = [];
+  for (const person of data.individuals.values()) {
+    if (!hasDisplayableName(person)) continue;
+    const { firstName, surname, fullGiven, fullName } = getSearchableNames(person);
+    const tokenSet = new Set<string>();
+    for (const t of tokenizeSearch(fullGiven)) tokenSet.add(t);
+    for (const t of tokenizeSearch(surname)) tokenSet.add(t);
+    for (const t of tokenizeSearch(fullName)) tokenSet.add(t);
+    if (firstName) tokenSet.add(firstName);
+    if (surname) tokenSet.add(surname);
+    entries.push({
+      person,
+      firstName,
+      surname,
+      fullName,
+      tokens: Array.from(tokenSet),
+      idLower: person.id.toLowerCase(),
+    });
   }
-  return prev[b.length];
+  searchIndexCache.set(data.individuals, entries);
+  return entries;
 }
 
-/** Score how well a query token matches a candidate name token. 0 = no match. */
-function scoreTokenMatch(queryToken: string, candidate: string): number {
+/** Fast token score — no edit-distance on the hot path. */
+function scoreTokenFast(queryToken: string, candidate: string): number {
   if (!candidate) return 0;
   if (candidate === queryToken) return 100;
   if (candidate.startsWith(queryToken)) return 85;
-  if (queryToken.startsWith(candidate) && candidate.length >= 3) return 70;
-  if (candidate.includes(queryToken)) return 55;
-
-  const maxDist = queryToken.length >= 7 ? 2 : queryToken.length >= 4 ? 1 : 0;
-  if (maxDist > 0) {
-    const dist = editDistance(queryToken, candidate, maxDist);
-    if (dist <= maxDist) return 45 - dist * 10;
-  }
+  if (queryToken.length >= 3 && candidate.includes(queryToken)) return 55;
+  if (queryToken.startsWith(candidate) && candidate.length >= 3) return 45;
   return 0;
 }
 
 /**
- * Soft search: case-insensitive, token order doesn't matter, middle names optional,
- * light typo tolerance. Every query token must match somewhere in the name/id.
+ * Soft search: case-insensitive, token order doesn't matter, middle names optional.
+ * Uses a cached name index; fuzzy/typo matching is skipped for speed on large trees.
  */
 export function searchIndividuals(
   query: string,
@@ -912,50 +923,28 @@ export function searchIndividuals(
   const queryTokens = tokenizeSearch(query);
   if (queryTokens.length === 0) return [];
 
+  const index = getSearchIndex(data);
   const scored: { person: GedcomIndividual; score: number }[] = [];
-  let checked = 0;
-  let filtered = 0;
+  let lowestKept = -1;
 
-  const iter = data.individuals.values();
-  let next = iter.next();
-  while (!next.done) {
-    const person = next.value;
-    checked++;
-
-    if (!hasDisplayableName(person)) {
-      filtered++;
-      next = iter.next();
-      continue;
-    }
-
-    const { firstName, surname, fullGiven, fullName } = getSearchableNames(person);
-    const personId = person.id.toLowerCase();
-    const nameTokens = Array.from(
-      new Set([
-        ...tokenizeSearch(fullGiven),
-        ...tokenizeSearch(surname),
-        ...tokenizeSearch(fullName),
-        firstName,
-        surname,
-      ].filter(Boolean))
-    );
-
+  for (let i = 0; i < index.length; i++) {
+    const entry = index[i];
     let totalScore = 0;
     let allMatched = true;
 
-    for (const qt of queryTokens) {
+    for (let t = 0; t < queryTokens.length; t++) {
+      const qt = queryTokens[t];
       let best = 0;
-      for (const nt of nameTokens) {
-        const s = scoreTokenMatch(qt, nt);
-        if (s > best) best = s;
+      const tokens = entry.tokens;
+      for (let n = 0; n < tokens.length; n++) {
+        const s = scoreTokenFast(qt, tokens[n]);
+        if (s > best) {
+          best = s;
+          if (best >= 100) break;
+        }
       }
-      if (best === 0 && fullName.includes(qt)) best = 40;
-      if (best === 0 && personId.includes(qt)) best = 15;
-      if (best === 0) {
-        const birthPlace = person.birthPlace?.toLowerCase() || '';
-        const deathPlace = person.deathPlace?.toLowerCase() || '';
-        if (birthPlace.includes(qt) || deathPlace.includes(qt)) best = 8;
-      }
+      if (best === 0 && entry.fullName.includes(qt)) best = 40;
+      if (best === 0 && entry.idLower.includes(qt)) best = 12;
       if (best === 0) {
         allMatched = false;
         break;
@@ -963,22 +952,33 @@ export function searchIndividuals(
       totalScore += best;
     }
 
-    if (allMatched) {
-      // Prefer classic first+last order slightly when it clearly matches.
-      if (
-        queryTokens.length >= 2 &&
-        firstName.startsWith(queryTokens[0]) &&
-        surname.startsWith(queryTokens[queryTokens.length - 1])
-      ) {
-        totalScore += 20;
-      }
-      scored.push({ person, score: totalScore });
+    if (!allMatched) continue;
+
+    if (
+      queryTokens.length >= 2 &&
+      entry.firstName.startsWith(queryTokens[0]) &&
+      entry.surname.startsWith(queryTokens[queryTokens.length - 1])
+    ) {
+      totalScore += 25;
     }
 
-    next = iter.next();
+    if (scored.length < MAX_SEARCH_RESULTS) {
+      scored.push({ person: entry.person, score: totalScore });
+      if (totalScore < lowestKept || lowestKept < 0) lowestKept = totalScore;
+    } else if (totalScore > lowestKept) {
+      // Replace weakest kept hit instead of unbounded growth.
+      let weakIdx = 0;
+      let weakScore = scored[0].score;
+      for (let s = 1; s < scored.length; s++) {
+        if (scored[s].score < weakScore) {
+          weakScore = scored[s].score;
+          weakIdx = s;
+        }
+      }
+      scored[weakIdx] = { person: entry.person, score: totalScore };
+      lowestKept = scored.reduce((m, row) => Math.min(m, row.score), Infinity);
+    }
   }
-
-  console.log('[Search] Query:', query, '| Checked:', checked, '| Filtered:', filtered, '| Matched:', scored.length);
 
   scored.sort((a, b) => {
     if (b.score !== a.score) return b.score - a.score;
@@ -986,8 +986,7 @@ export function searchIndividuals(
       (a.person.givenName ?? '').localeCompare(b.person.givenName ?? '');
   });
 
-  const trimmed = scored.length > MAX_SEARCH_RESULTS ? scored.slice(0, MAX_SEARCH_RESULTS) : scored;
-  return trimmed.map((s) => s.person);
+  return scored.map((s) => s.person);
 }
 
 export function findRelationshipPath(
