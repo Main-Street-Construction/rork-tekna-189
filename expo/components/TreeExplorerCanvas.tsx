@@ -6,6 +6,7 @@ import {
   Animated,
   Dimensions,
   TouchableOpacity,
+  Pressable,
   Platform,
 } from 'react-native';
 import {
@@ -17,7 +18,7 @@ import {
   type PinchGestureHandlerGestureEvent,
   type PinchGestureHandlerStateChangeEvent,
 } from 'react-native-gesture-handler';
-import Svg, { Line, Path } from 'react-native-svg';
+import Svg, { Path } from 'react-native-svg';
 import { Plus, Minus, Crosshair, Expand } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import Colors from '@/constants/colors';
@@ -26,7 +27,9 @@ import {
   TREE_MAX_NODES,
   TREE_NODE_HEIGHT,
   TREE_NODE_WIDTH,
-  cullEdgesForNodes,
+  TREE_VIEWPORT_PAD,
+  buildEdgePathData,
+  cullEdgesToViewport,
   cullNodesToViewport,
   expandPersonNeighborhood,
   layoutTreeCanvas,
@@ -81,12 +84,6 @@ export default function TreeExplorerCanvas({
     setViewportTick((t) => t + 1);
   }, []);
 
-  // Light periodic cull refresh while gestures move transform without React state.
-  useEffect(() => {
-    const id = setInterval(bumpViewport, 180);
-    return () => clearInterval(id);
-  }, [bumpViewport]);
-
   // Reset neighborhood/camera when the focus person changes — not on every tree sync,
   // so background refreshes don't wipe an in-progress exploration.
   useEffect(() => {
@@ -121,20 +118,27 @@ export default function TreeExplorerCanvas({
   }, [viewportTick, canvasSize]);
 
   const visibleNodes = useMemo(
-    () => cullNodesToViewport(layout.nodes, resolvedViewport, TREE_MAX_NODES),
+    () => cullNodesToViewport(layout.nodes, resolvedViewport, 96),
     [layout.nodes, resolvedViewport]
-  );
-  const visibleIds = useMemo(() => new Set(visibleNodes.map((n) => n.id)), [visibleNodes]);
-  const visibleEdges = useMemo(
-    () => cullEdgesForNodes(layout.edges, visibleIds),
-    [layout.edges, visibleIds]
   );
 
   const posById = useMemo(() => {
-    const m = new Map<string, TreeCanvasNode>();
+    const m = new Map<string, { x: number; y: number }>();
     for (const n of layout.nodes) m.set(n.id, n);
     return m;
   }, [layout.nodes]);
+
+  // Viewport-local SVG — avoids RN dropping paths on huge full-tree canvases.
+  const edgeLayer = useMemo(() => {
+    const pad = TREE_VIEWPORT_PAD;
+    const minX = resolvedViewport.left - pad;
+    const minY = resolvedViewport.top - pad;
+    const width = Math.max(1, resolvedViewport.right - resolvedViewport.left + pad * 2);
+    const height = Math.max(1, resolvedViewport.bottom - resolvedViewport.top + pad * 2);
+    const edges = cullEdgesToViewport(layout.edges, posById, resolvedViewport, pad);
+    const paths = buildEdgePathData(edges, posById, minX, minY);
+    return { minX, minY, width, height, paths };
+  }, [layout.edges, posById, resolvedViewport]);
 
   const centerOnFocus = useCallback(() => {
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -163,6 +167,19 @@ export default function TreeExplorerCanvas({
     [scale, bumpViewport]
   );
 
+  const cullRaf = useRef<number | null>(null);
+  const lastCullAt = useRef(0);
+  const scheduleCull = useCallback(() => {
+    const now = Date.now();
+    if (now - lastCullAt.current < 90) return;
+    if (cullRaf.current != null) return;
+    cullRaf.current = requestAnimationFrame(() => {
+      cullRaf.current = null;
+      lastCullAt.current = Date.now();
+      bumpViewport();
+    });
+  }, [bumpViewport]);
+
   const handlePanEvent = useCallback(
     (e: PanGestureHandlerGestureEvent) => {
       const { translationX: tx, translationY: ty } = e.nativeEvent;
@@ -172,8 +189,9 @@ export default function TreeExplorerCanvas({
       translateY.setValue(ny);
       transformRef.current.x = nx;
       transformRef.current.y = ny;
+      scheduleCull();
     },
-    [translateX, translateY]
+    [translateX, translateY, scheduleCull]
   );
 
   const handlePanStateChange = useCallback(
@@ -197,8 +215,9 @@ export default function TreeExplorerCanvas({
       );
       scale.setValue(next);
       transformRef.current.scale = next;
+      scheduleCull();
     },
-    [scale]
+    [scale, scheduleCull]
   );
 
   const handlePinchStateChange = useCallback(
@@ -245,11 +264,10 @@ export default function TreeExplorerCanvas({
     [expandNode, onOpenPerson]
   );
 
-  const svgMinX = layout.bounds.minX - 40;
-  const svgMinY = layout.bounds.minY - 40;
-  const svgW = Math.max(1, layout.bounds.maxX - layout.bounds.minX + 80);
-  const svgH = Math.max(1, layout.bounds.maxY - layout.bounds.minY + 80);
-  const expandableCount = layout.nodes.reduce((n, node) => n + (node.canExpand ? 1 : 0), 0);
+  const expandableCount = useMemo(
+    () => layout.nodes.reduce((n, node) => n + (node.canExpand ? 1 : 0), 0),
+    [layout.nodes]
+  );
 
   return (
     <View
@@ -291,73 +309,35 @@ export default function TreeExplorerCanvas({
                 ]}
               >
                 <Svg
-                  width={svgW}
-                  height={svgH}
+                  width={edgeLayer.width}
+                  height={edgeLayer.height}
                   style={{
                     position: 'absolute',
-                    left: svgMinX,
-                    top: svgMinY,
+                    left: edgeLayer.minX,
+                    top: edgeLayer.minY,
                   }}
                   pointerEvents="none"
                 >
-                  {visibleEdges.map((edge) => {
-                    if (edge.kind === 'spouse') {
-                      const a = posById.get(edge.fromId);
-                      const b = posById.get(edge.toId);
-                      if (!a || !b) return null;
-                      return (
-                        <Line
-                          key={edge.id}
-                          x1={a.x - svgMinX}
-                          y1={a.y - svgMinY}
-                          x2={b.x - svgMinX}
-                          y2={b.y - svgMinY}
-                          stroke={Colors.accentLight}
-                          strokeWidth={2}
-                          strokeLinecap="round"
-                        />
-                      );
-                    }
-
-                    // Descent: drop from couple midpoint → horizontal bus → each child
-                    const parents = (edge.parentIds ?? [])
-                      .map((id) => posById.get(id))
-                      .filter((n): n is NonNullable<typeof n> => !!n);
-                    const kids = (edge.childIds ?? [])
-                      .map((id) => posById.get(id))
-                      .filter((n): n is NonNullable<typeof n> => !!n);
-                    if (parents.length === 0 || kids.length === 0) return null;
-
-                    const parentMidX =
-                      parents.reduce((sum, p) => sum + p.x, 0) / parents.length - svgMinX;
-                    const parentY = parents[0].y - svgMinY + 30;
-                    const childY = kids[0].y - svgMinY - 30;
-                    const busY = (parentY + childY) / 2;
-                    const kidXs = kids.map((k) => k.x - svgMinX);
-                    const busLeft = Math.min(parentMidX, ...kidXs);
-                    const busRight = Math.max(parentMidX, ...kidXs);
-
-                    const parts = [
-                      `M ${parentMidX} ${parentY} V ${busY}`,
-                      `M ${busLeft} ${busY} H ${busRight}`,
-                      ...kids.map((k) => {
-                        const kx = k.x - svgMinX;
-                        return `M ${kx} ${busY} V ${childY}`;
-                      }),
-                    ];
-
-                    return (
-                      <Path
-                        key={edge.id}
-                        d={parts.join(' ')}
-                        stroke={Colors.cardBorder}
-                        strokeWidth={1.5}
-                        fill="none"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                      />
-                    );
-                  })}
+                  {!!edgeLayer.paths.spouse && (
+                    <Path
+                      d={edgeLayer.paths.spouse}
+                      stroke={Colors.accentLight}
+                      strokeWidth={2}
+                      fill="none"
+                      strokeLinecap="round"
+                    />
+                  )}
+                  {!!edgeLayer.paths.descent && (
+                    <Path
+                      d={edgeLayer.paths.descent}
+                      stroke={Colors.primaryLight}
+                      strokeWidth={2}
+                      fill="none"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      opacity={0.85}
+                    />
+                  )}
                 </Svg>
 
                 {visibleNodes.map((node) => (
@@ -372,7 +352,7 @@ export default function TreeExplorerCanvas({
       <View style={styles.hud} pointerEvents="box-none">
         <View style={styles.hintPill}>
           <Text style={styles.hintText}>
-            Ancestors above · descendants below · tap gold dot to expand · double-tap opens profile
+            Direct line only at first · tap gold dots for siblings/uncles · double-tap opens profile
           </Text>
         </View>
 
@@ -424,8 +404,7 @@ const TreeNodeView = React.memo(function TreeNodeView({
 }) {
   const color = sexColor(node.person.sex);
   return (
-    <TouchableOpacity
-      activeOpacity={0.85}
+    <Pressable
       onPress={() => onPress(node)}
       style={[
         styles.node,
@@ -460,9 +439,16 @@ const TreeNodeView = React.memo(function TreeNodeView({
           {node.person.surname}
         </Text>
       )}
-    </TouchableOpacity>
+    </Pressable>
   );
-});
+}, (prev, next) =>
+  prev.node.id === next.node.id &&
+  prev.node.x === next.node.x &&
+  prev.node.y === next.node.y &&
+  prev.node.isFocus === next.node.isFocus &&
+  prev.node.canExpand === next.node.canExpand &&
+  prev.onPress === next.onPress
+);
 
 const styles = StyleSheet.create({
   root: {
@@ -474,7 +460,7 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   world: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
   },
   node: {
     position: 'absolute',
@@ -493,16 +479,6 @@ const styles = StyleSheet.create({
     marginBottom: 4,
     borderWidth: 2,
     borderColor: Colors.white,
-    ...Platform.select({
-      ios: {
-        shadowColor: '#000',
-        shadowOpacity: 0.12,
-        shadowRadius: 3,
-        shadowOffset: { width: 0, height: 1 },
-      },
-      android: { elevation: 2 },
-      default: {},
-    }),
   },
   avatarText: {
     color: Colors.white,
@@ -540,7 +516,7 @@ const styles = StyleSheet.create({
     marginTop: 1,
   },
   hud: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     justifyContent: 'space-between',
     paddingTop: 8,
     paddingBottom: 16,

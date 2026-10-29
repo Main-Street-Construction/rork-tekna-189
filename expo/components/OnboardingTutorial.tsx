@@ -216,7 +216,7 @@ export default function OnboardingTutorial({ onComplete }: OnboardingTutorialPro
 
 const styles = StyleSheet.create({
   overlay: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     backgroundColor: 'rgba(26, 24, 22, 0.92)',
     zIndex: 1000,
   },

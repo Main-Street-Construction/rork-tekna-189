@@ -4,9 +4,9 @@
  * EAS remote autoIncrement only bumps ios.buildNumber / android.versionCode.
  * App Store rejects reusing a closed CFBundleShortVersionString (e.g. 1.7.0),
  * so every EAS production/preview build gets a higher marketing version patch.
+ *
+ * Static fields live in app.json; Expo passes them here as `config`.
  */
-const appJson = require('./app.json');
-
 function resolveMarketingVersion(baseVersion, profile) {
   const parts = String(baseVersion || '1.0.0').split('.');
   const major = parts[0] || '1';
@@ -29,12 +29,10 @@ function resolveMarketingVersion(baseVersion, profile) {
   return resolved;
 }
 
-module.exports = () => {
-  const expo = appJson.expo;
+module.exports = ({ config }) => {
   const profile = process.env.EAS_BUILD_PROFILE;
-
   return {
-    ...expo,
-    version: resolveMarketingVersion(expo.version, profile),
+    ...config,
+    version: resolveMarketingVersion(config.version, profile),
   };
 };
