@@ -16,7 +16,7 @@ import {
 import { useRouter, Stack, useLocalSearchParams } from 'expo-router';
 import { Heart, X, Search, User, Check } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
-import Colors from '@/constants/colors';
+import { useColors, type ColorPalette } from '@/contexts/ThemeContext';
 import { useFamilyTree } from '@/contexts/FamilyTreeContext';
 import { GedcomIndividual } from '@/types/genealogy';
 import { modalScreenOptions } from '@/utils/navigation';
@@ -25,6 +25,9 @@ import ModalCloseButton from '@/components/ModalCloseButton';
 type SelectionStep = 'person1' | 'person2' | 'details';
 
 export default function LinkSpousesScreen() {
+  const Colors = useColors();
+  const styles = useMemo(() => createStyles(Colors), [Colors]);
+
   const router = useRouter();
   const { prefill } = useLocalSearchParams<{ prefill?: string }>();
   const { search, getPerson, isAdmin, submitEdit, linkExistingSpouses } = useFamilyTree();
@@ -125,8 +128,12 @@ export default function LinkSpousesScreen() {
         const editData: Record<string, unknown> = {
           person1Id: person1.id,
           person1Name: person1.name,
+          person1BirthDate: person1.birthDate,
+          person1Sex: person1.sex,
           person2Id: person2.id,
           person2Name: person2.name,
+          person2BirthDate: person2.birthDate,
+          person2Sex: person2.sex,
           marriageDate: marriageDate.trim() || undefined,
           marriagePlace: marriagePlace.trim() || undefined,
         };
@@ -350,7 +357,8 @@ export default function LinkSpousesScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(Colors: ColorPalette) {
+  return StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: Colors.background,
@@ -552,3 +560,4 @@ const styles = StyleSheet.create({
     fontWeight: '600' as const,
   },
 });
+}

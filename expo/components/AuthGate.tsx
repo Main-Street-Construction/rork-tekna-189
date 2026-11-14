@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useRef, useEffect } from 'react';
+import React, {useState, useCallback, useRef, useEffect, useMemo} from 'react';
 import {
   View,
   Text,
@@ -15,7 +15,7 @@ import {
   ChevronRight, ChevronLeft, Link, ClipboardList, Database,
 } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
-import Colors from '@/constants/colors';
+import { useColors, type ColorPalette } from '@/contexts/ThemeContext';
 import { useAuth } from '@/contexts/AuthContext';
 
 interface AuthGateProps {
@@ -23,6 +23,8 @@ interface AuthGateProps {
 }
 
 export default function AuthGate({ children }: AuthGateProps) {
+  const Colors = useColors();
+  const styles = useMemo(() => createStyles(Colors), [Colors]);
   const { isSignedIn, isEnabled, sessionLoading, profileLoading, refreshProfile, signOut, signOutPending, user } = useAuth();
 
   if (sessionLoading) {
@@ -65,6 +67,8 @@ export default function AuthGate({ children }: AuthGateProps) {
 }
 
 function SignInPrompt() {
+  const Colors = useColors();
+  const styles = useMemo(() => createStyles(Colors), [Colors]);
   const router = useRouter();
 
   return (
@@ -99,56 +103,58 @@ interface TutorialTip {
   color: string;
 }
 
-const TIPS: TutorialTip[] = [
-  {
-    icon: <TreePine size={24} color={Colors.accent} />,
-    title: 'Your Family Tree',
-    description: 'Explore ancestors, view family connections, notes, and an expandable tree on each person\'s page.',
-    color: Colors.accent,
-  },
-  {
-    icon: <Search size={24} color={Colors.male} />,
-    title: 'Search & Explore',
-    description: 'Find anyone by name. If data is still loading, a banner appears and you can search the full database.',
-    color: Colors.male,
-  },
-  {
-    icon: <GitFork size={24} color={Colors.success} />,
-    title: 'Discover Relationships',
-    description: 'Pick any two people to find how they\'re connected. Claim your identity to see relationships to you automatically.',
-    color: Colors.success,
-  },
-  {
-    icon: <Heart size={24} color={Colors.female} />,
-    title: 'Add & Link Family',
-    description: 'Create or link children and spouses from a person\'s page. Link existing people into marriages and pick co-parents when needed.',
-    color: Colors.female,
-  },
-  {
-    icon: <Link size={24} color={'#8B7AA8'} />,
-    title: 'Manage Connections',
-    description: 'Edit marriage details, tap ⋯ to remove a marriage link, or long-press a child to remove them from a family.',
-    color: '#8B7AA8',
-  },
-  {
-    icon: <Edit3 size={24} color={Colors.accent} />,
-    title: 'Suggest Edits',
-    description: 'Propose changes to names, dates, and notes. Admins review edits before they go live.',
-    color: Colors.accent,
-  },
-  {
-    icon: <ClipboardList size={24} color={'#6B8E9B'} />,
-    title: 'Track Your Edits',
-    description: 'Check My Edits in Profile to see what you have submitted and whether it is still pending.',
-    color: '#6B8E9B',
-  },
-  {
-    icon: <Database size={24} color={'#7A9E7E'} />,
-    title: 'Admin & Data Tools',
-    description: 'Admins can approve edits, merge duplicates, and import GEDCOM files. Everyone can send feedback from Profile.',
-    color: '#7A9E7E',
-  },
-];
+function buildTips(Colors: ColorPalette): TutorialTip[] {
+  return [
+    {
+      icon: <TreePine size={24} color={Colors.accent} />,
+      title: 'Your Family Tree',
+      description: 'Explore ancestors, view family connections, notes, and an expandable tree on each person\'s page.',
+      color: Colors.accent,
+    },
+    {
+      icon: <Search size={24} color={Colors.male} />,
+      title: 'Search & Explore',
+      description: 'Find anyone by name. If data is still loading, a banner appears and you can search the full database.',
+      color: Colors.male,
+    },
+    {
+      icon: <GitFork size={24} color={Colors.success} />,
+      title: 'Discover Relationships',
+      description: 'Pick any two people to find how they\'re connected. Claim your identity to see relationships to you automatically.',
+      color: Colors.success,
+    },
+    {
+      icon: <Heart size={24} color={Colors.female} />,
+      title: 'Add & Link Family',
+      description: 'Create or link children and spouses from a person\'s page. Link existing people into marriages and pick co-parents when needed.',
+      color: Colors.female,
+    },
+    {
+      icon: <Link size={24} color={'#8B7AA8'} />,
+      title: 'Manage Connections',
+      description: 'Edit marriage details, tap ⋯ to remove a marriage link, or long-press a child to remove them from a family.',
+      color: '#8B7AA8',
+    },
+    {
+      icon: <Edit3 size={24} color={Colors.accent} />,
+      title: 'Suggest Edits',
+      description: 'Propose changes to names, dates, and notes. Admins review edits before they go live.',
+      color: Colors.accent,
+    },
+    {
+      icon: <ClipboardList size={24} color={'#6B8E9B'} />,
+      title: 'Track Your Edits',
+      description: 'Check My Edits in Profile to see what you have submitted and whether it is still pending.',
+      color: '#6B8E9B',
+    },
+    {
+      icon: <Database size={24} color={'#7A9E7E'} />,
+      title: 'Admin & Data Tools',
+      description: 'Admins can approve edits, merge duplicates, and import GEDCOM files. Everyone can send feedback from Profile.',
+      color: '#7A9E7E',
+    },
+  ];
+}
 
 interface PendingApprovalProps {
   email?: string;
@@ -158,6 +164,9 @@ interface PendingApprovalProps {
 }
 
 function PendingApproval({ email, onRefresh, onSignOut, signOutPending }: PendingApprovalProps) {
+  const Colors = useColors();
+  const styles = useMemo(() => createStyles(Colors), [Colors]);
+  const TIPS = useMemo(() => buildTips(Colors), [Colors]);
   const [checking, setChecking] = useState<boolean>(false);
   const [currentTip, setCurrentTip] = useState<number>(0);
   const fadeAnim = useRef(new Animated.Value(1)).current;
@@ -304,7 +313,8 @@ function PendingApproval({ email, onRefresh, onSignOut, signOutPending }: Pendin
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(Colors: ColorPalette) {
+  return StyleSheet.create({
   center: {
     flex: 1,
     justifyContent: 'center',
@@ -532,3 +542,4 @@ const styles = StyleSheet.create({
     fontWeight: '500' as const,
   },
 });
+}

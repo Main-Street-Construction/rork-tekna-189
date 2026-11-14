@@ -1,4 +1,4 @@
-import React, { useState, useRef, useCallback } from 'react';
+import React, {useState, useRef, useCallback, useMemo} from 'react';
 import {
   View,
   Text,
@@ -11,7 +11,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Search, GitFork, TreePine, ChevronRight, UserPlus, Shield, Edit3, ShieldCheck, Link, ClipboardList, Database } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
-import Colors from '@/constants/colors';
+import { useColors, type ColorPalette } from '@/contexts/ThemeContext';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -22,77 +22,82 @@ interface TutorialStep {
   accent: string;
 }
 
-const STEPS: TutorialStep[] = [
-  {
-    icon: <TreePine size={36} color={Colors.accent} />,
-    title: 'Welcome to Your Family Tree',
-    description:
-      'Explore your genealogy data, discover ancestors, and uncover the connections between family members across generations.',
-    accent: Colors.accent,
-  },
-  {
-    icon: <Search size={36} color={Colors.male} />,
-    title: 'Search & Explore',
-    description:
-      'Use the Search tab to find anyone in your family tree. Tap a person to view their details, family connections, notes, and expandable tree view. Use the Home button to jump back quickly. If the tree is still loading, you will see a banner and can search the full database.',
-    accent: Colors.male,
-  },
-  {
-    icon: <GitFork size={36} color={Colors.success} />,
-    title: 'Calculate Relationships',
-    description:
-      'The Relations tab lets you pick any two people and discover every path that connects them. Once you claim your identity, search results will also show how each person is related to you.',
-    accent: Colors.success,
-  },
-  {
-    icon: <Shield size={36} color={Colors.female} />,
-    title: 'Claim Your Identity',
-    description:
-      'In the Profile tab, link yourself to a person in the database. This is a one-time setup — choose carefully! It powers auto-fill in relationship searches and shows your relation to others.',
-    accent: Colors.female,
-  },
-  {
-    icon: <UserPlus size={36} color={'#5B8FA8'} />,
-    title: 'Add & Link Family',
-    description:
-      'From any person\'s detail page, add children or spouses — create new people or link someone already in the tree. Link existing spouses into a marriage, pick a co-parent when needed, and get warned about possible duplicates.',
-    accent: '#5B8FA8',
-  },
-  {
-    icon: <Link size={36} color={'#8B7AA8'} />,
-    title: 'Manage Connections',
-    description:
-      'Edit marriage details from the family view, or tap the ⋯ beside a marriage to remove that link. Long-press a child card to remove them from a family — the person stays in the tree.',
-    accent: '#8B7AA8',
-  },
-  {
-    icon: <Edit3 size={36} color={'#C49A6C'} />,
-    title: 'Edit People & Marriages',
-    description:
-      'Tap the edit button on any person to update their name, dates, and notes. Marriage details like date and place can also be edited from the family view.',
-    accent: '#C49A6C',
-  },
-  {
-    icon: <ClipboardList size={36} color={'#6B8E9B'} />,
-    title: 'Suggest Edits & Track Progress',
-    description:
-      'Non-admin changes are submitted for admin review before they go live. Check the My Edits section in Profile to see what you have submitted and its status.',
-    accent: '#6B8E9B',
-  },
-  {
-    icon: <ShieldCheck size={36} color={'#7A9E7E'} />,
-    title: 'Admin & Data Tools',
-    description:
-      'Admins can approve or reject pending edits from Profile. The admin console includes merge-duplicates, GEDCOM import, and data management. Everyone can use Feedback to report bugs or suggest features.',
-    accent: '#7A9E7E',
-  },
-];
+function buildSteps(Colors: ColorPalette): TutorialStep[] {
+  return [
+    {
+      icon: <TreePine size={36} color={Colors.accent} />,
+      title: 'Welcome to Your Family Tree',
+      description:
+        'Explore your genealogy data, discover ancestors, and uncover the connections between family members across generations.',
+      accent: Colors.accent,
+    },
+    {
+      icon: <Search size={36} color={Colors.male} />,
+      title: 'Search & Explore',
+      description:
+        'Use the Search tab to find anyone in your family tree. Tap a person to view their details, family connections, notes, and expandable tree view. Use the Home button to jump back quickly. If the tree is still loading, you will see a banner and can search the full database.',
+      accent: Colors.male,
+    },
+    {
+      icon: <GitFork size={36} color={Colors.success} />,
+      title: 'Calculate Relationships',
+      description:
+        'The Relations tab lets you pick any two people and discover every path that connects them. Once you claim your identity, search results will also show how each person is related to you.',
+      accent: Colors.success,
+    },
+    {
+      icon: <Shield size={36} color={Colors.female} />,
+      title: 'Claim Your Identity',
+      description:
+        'In the Profile tab, link yourself to a person in the database. This is a one-time setup — choose carefully! It powers auto-fill in relationship searches and shows your relation to others.',
+      accent: Colors.female,
+    },
+    {
+      icon: <UserPlus size={36} color={'#5B8FA8'} />,
+      title: 'Add & Link Family',
+      description:
+        'From any person\'s detail page, add children or spouses — create new people or link someone already in the tree. Link existing spouses into a marriage, pick a co-parent when needed, and get warned about possible duplicates.',
+      accent: '#5B8FA8',
+    },
+    {
+      icon: <Link size={36} color={'#8B7AA8'} />,
+      title: 'Manage Connections',
+      description:
+        'Edit marriage details from the family view, or tap the ⋯ beside a marriage to remove that link. Long-press a child card to remove them from a family — the person stays in the tree.',
+      accent: '#8B7AA8',
+    },
+    {
+      icon: <Edit3 size={36} color={'#C49A6C'} />,
+      title: 'Edit People & Marriages',
+      description:
+        'Tap the edit button on any person to update their name, dates, and notes. Marriage details like date and place can also be edited from the family view.',
+      accent: '#C49A6C',
+    },
+    {
+      icon: <ClipboardList size={36} color={'#6B8E9B'} />,
+      title: 'Suggest Edits & Track Progress',
+      description:
+        'Non-admin changes are submitted for admin review before they go live. Check the My Edits section in Profile to see what you have submitted and its status.',
+      accent: '#6B8E9B',
+    },
+    {
+      icon: <ShieldCheck size={36} color={'#7A9E7E'} />,
+      title: 'Admin & Data Tools',
+      description:
+        'Admins can approve or reject pending edits from Profile. The admin console includes merge-duplicates, GEDCOM import, and data management. Everyone can use Feedback to report bugs or suggest features.',
+      accent: '#7A9E7E',
+    },
+  ];
+}
 
 interface OnboardingTutorialProps {
   onComplete: () => void;
 }
 
 export default function OnboardingTutorial({ onComplete }: OnboardingTutorialProps) {
+  const Colors = useColors();
+  const styles = useMemo(() => createStyles(Colors), [Colors]);
+  const STEPS = useMemo(() => buildSteps(Colors), [Colors]);
   const insets = useSafeAreaInsets();
   const [currentStep, setCurrentStep] = useState<number>(0);
   const fadeAnim = useRef(new Animated.Value(1)).current;
@@ -214,7 +219,8 @@ export default function OnboardingTutorial({ onComplete }: OnboardingTutorialPro
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(Colors: ColorPalette) {
+  return StyleSheet.create({
   overlay: {
     ...StyleSheet.absoluteFill,
     backgroundColor: 'rgba(26, 24, 22, 0.92)',
@@ -313,3 +319,4 @@ const styles = StyleSheet.create({
     color: Colors.white,
   },
 });
+}

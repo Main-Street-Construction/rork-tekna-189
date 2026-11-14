@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useRef, useEffect } from 'react';
+import React, {useState, useCallback, useRef, useEffect, useMemo} from 'react';
 import {
   View,
   Text,
@@ -14,7 +14,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Search, TreePine, X, Users, AlertCircle } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
-import Colors from '@/constants/colors';
+import { useColors, type ColorPalette } from '@/contexts/ThemeContext';
 import { useFamilyTree } from '@/contexts/FamilyTreeContext';
 import { useProfile } from '@/contexts/ProfileContext';
 import { useSearchHistory } from '@/contexts/SearchHistoryContext';
@@ -35,6 +35,8 @@ export default function SearchScreen() {
 }
 
 function SearchScreenContent() {
+  const Colors = useColors();
+  const styles = useMemo(() => createStyles(Colors), [Colors]);
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { hasData, search, individualCount, familyCount, isReady, treeData, isBackgroundSyncing, isLoadingFromCloud, loadProgress, cloudError, isDataIncomplete, lastSyncResult, refreshFromCloud } = useFamilyTree();
@@ -335,7 +337,8 @@ function SearchScreenContent() {
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(Colors: ColorPalette) {
+  return StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: Colors.background,
@@ -571,3 +574,4 @@ const styles = StyleSheet.create({
     flex: 1,
   },
 });
+}

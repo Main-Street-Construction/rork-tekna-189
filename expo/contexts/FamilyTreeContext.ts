@@ -29,7 +29,7 @@ import {
   fetchMyPendingEdits,
   LoadProgress,
 } from '@/lib/supabase-db';
-import { PendingEdit } from '@/types/genealogy';
+import { PendingEdit, PendingEditType } from '@/types/genealogy';
 
 function collectEditDependencyIds(edit: PendingEdit): { personIds: string[]; familyIds: string[] } {
   const data = edit.data as Record<string, unknown>;
@@ -74,6 +74,13 @@ function collectEditDependencyIds(edit: PendingEdit): { personIds: string[]; fam
       addPerson(data.childId);
       addFamily(data.familyId);
       break;
+    case 'delete_person':
+      addPerson(data.personId ?? edit.target_id);
+      break;
+    case 'merge_people':
+      addPerson(data.keepId);
+      addPerson(data.mergeId);
+      break;
     default:
       break;
   }
@@ -85,9 +92,14 @@ import {
   adminMergeIndividuals,
   adminMergeFamilies,
   adminDeleteFamily,
+  adminDeleteIndividual,
   getNextGedcomId,
 } from '@/lib/supabase-rpc';
-import { consolidateDuplicateFamilies, findDuplicateFamilyGroups } from '@/utils/family-admin';
+import {
+  consolidateDuplicateFamilies,
+  findDuplicateFamilyGroups,
+  findFamilyForParents,
+} from '@/utils/family-admin';
 
 const STORAGE_KEY = 'family_tree_data';
 const RAW_GEDCOM_KEY = 'raw_gedcom';
@@ -960,17 +972,7 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
 
   const submitEdit = useCallback(
     async (
-      editType:
-        | 'update_person'
-        | 'add_person'
-        | 'add_child'
-        | 'add_spouse'
-        | 'link_spouses'
-        | 'edit_marriage'
-        | 'link_child'
-        | 'edit_parent'
-        | 'remove_child'
-        | 'unlink_spouses',
+      editType: PendingEditType,
       targetId: string,
       data: Record<string, unknown>
     ): Promise<{ success: boolean; error?: string }> => {
@@ -1107,16 +1109,24 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
       const current = treeDataRef.current;
       if (!current) return { success: false, error: 'No tree data loaded' };
 
-      const newFamilyId = await allocateGedcomId('F');
-      console.log('[FamilyTree] Creating new family', newFamilyId, 'for child', childIndividual.id);
-
       const parent1 = current.individuals.get(parent1Id);
-      const parent2 = parent2Id ? current.individuals.get(parent2Id) : undefined;
-
       if (!parent1) {
         console.error('[FamilyTree] Parent1 not found:', parent1Id);
         return { success: false, error: 'Parent not found: ' + parent1Id };
       }
+
+      // Reuse an existing family for this parent pair instead of minting a parallel one.
+      const existing = findFamilyForParents(current, parent1Id, parent2Id);
+      if (existing) {
+        console.log('[FamilyTree] Reusing existing family', existing.id, 'for child', childIndividual.id);
+        const result = await addChildToFamily(childIndividual, existing.id);
+        return { ...result, familyId: existing.id };
+      }
+
+      const newFamilyId = await allocateGedcomId('F');
+      console.log('[FamilyTree] Creating new family', newFamilyId, 'for child', childIndividual.id);
+
+      const parent2 = parent2Id ? current.individuals.get(parent2Id) : undefined;
 
       let husbandId: string | undefined;
       let wifeId: string | undefined;
@@ -1198,7 +1208,7 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
 
       return { success: true, familyId: newFamilyId };
     },
-    [allocateGedcomId, persistTreeData]
+    [allocateGedcomId, persistTreeData, addChildToFamily]
   );
 
   const addSpouse = useCallback(
@@ -1438,6 +1448,30 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
       const parent1 = treeData.individuals.get(parent1Id);
       const parent2 = parent2Id ? treeData.individuals.get(parent2Id) : undefined;
       if (!parent1) return { success: false, error: 'Parent not found: ' + parent1Id };
+
+      const existing = findFamilyForParents(treeData, parent1Id, parent2Id);
+      if (existing) {
+        // Optionally fill in marriage details on the existing family if blank.
+        if (
+          (marriageDate && !existing.marriageDate) ||
+          (marriagePlace && !existing.marriagePlace)
+        ) {
+          const patched: GedcomFamily = {
+            ...existing,
+            marriageDate: existing.marriageDate || marriageDate,
+            marriagePlace: existing.marriagePlace || marriagePlace,
+          };
+          const updatedFamilies = new Map(treeData.families);
+          updatedFamilies.set(patched.id, patched);
+          await persistTreeData({ individuals: treeData.individuals, families: updatedFamilies });
+          const famResult = await upsertFamilyInSupabase(patched);
+          if (!famResult.success) {
+            return { success: false, familyId: patched.id, error: famResult.error };
+          }
+        }
+        console.log('[FamilyTree] Reusing existing family', existing.id, 'for parents', parent1Id, parent2Id);
+        return { success: true, familyId: existing.id };
+      }
 
       const newFamilyId = await allocateGedcomId('F');
       let husbandId: string | undefined;
@@ -1728,6 +1762,46 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
     return result.edits;
   }, []);
 
+  const deleteIndividualFromTree = useCallback(
+    async (personId: string): Promise<{ success: boolean; error?: string }> => {
+      const treeData = treeDataRef.current;
+      if (!treeData) return { success: false, error: 'No tree data loaded' };
+      const person = treeData.individuals.get(personId);
+      if (!person) return { success: false, error: 'Person not found in local tree' };
+
+      const rpcResult = await adminDeleteIndividual(personId);
+      if (!rpcResult.success) return rpcResult;
+
+      const updatedIndividuals = new Map(treeData.individuals);
+      const updatedFamilies = new Map(treeData.families);
+
+      updatedFamilies.forEach((family, familyId) => {
+        const nextFamily = { ...family };
+        if (nextFamily.husbandId === personId) nextFamily.husbandId = undefined;
+        if (nextFamily.wifeId === personId) nextFamily.wifeId = undefined;
+        nextFamily.childrenIds = nextFamily.childrenIds.filter((id) => id !== personId);
+        updatedFamilies.set(familyId, nextFamily);
+      });
+
+      updatedIndividuals.forEach((other, otherId) => {
+        if (otherId === personId) return;
+        let next = other;
+        if (other.familyAsChild) {
+          const fam = updatedFamilies.get(other.familyAsChild);
+          if (!fam) {
+            next = { ...next, familyAsChild: undefined };
+          }
+        }
+        if (next !== other) updatedIndividuals.set(otherId, next);
+      });
+
+      updatedIndividuals.delete(personId);
+      await persistTreeData({ individuals: updatedIndividuals, families: updatedFamilies });
+      return { success: true };
+    },
+    [persistTreeData]
+  );
+
   const mergeIndividualsInTree = useCallback(
     async (keepId: string, mergeId: string): Promise<{ success: boolean; error?: string }> => {
       const treeData = treeDataRef.current;
@@ -1969,6 +2043,7 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
     unlinkSpouses,
     updateFamily,
     mergeIndividualsInTree,
+    deleteIndividualFromTree,
     mergeFamiliesInTree,
     deleteFamilyFromTree,
     consolidateParallelFamilies,
@@ -1988,7 +2063,7 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
     loadPendingEdits, loadMyEdits, reviewPendingEdit, refreshPendingCount, generateNewId, allocateGedcomId,
     addPerson, updatePerson, addChildToFamily, createFamilyAndAddChild, createFamilyWithParents,
     addSpouse, linkExistingSpouses, linkChildToFamily, removeChildFromFamily, editParentFamily, unlinkSpouses,
-    updateFamily, mergeIndividualsInTree, mergeFamiliesInTree, deleteFamilyFromTree, consolidateParallelFamilies,
+    updateFamily, mergeIndividualsInTree, deleteIndividualFromTree, mergeFamiliesInTree, deleteFamilyFromTree, consolidateParallelFamilies,
     isLoadingFromCloud,
     isBackgroundSyncing, cloudError, loadProgress, lastSyncResult, isDataIncomplete, refreshFromCloud,
     ensureEditDependencies, getTreeSnapshot,

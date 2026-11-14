@@ -8,7 +8,7 @@ import {
 } from 'react-native';
 import { Heart, Maximize2, Minimize2, Network } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
-import Colors from '@/constants/colors';
+import { useColors, type ColorPalette } from '@/contexts/ThemeContext';
 import SectionHeader from '@/components/SectionHeader';
 import type { GedcomIndividual } from '@/types/genealogy';
 
@@ -82,7 +82,7 @@ function initialsOf(person: GedcomIndividual): string {
   return `${person.givenName?.[0] ?? ''}${person.surname?.[0] ?? ''}`;
 }
 
-function sexColor(sex: GedcomIndividual['sex']): string {
+function sexColor(sex: GedcomIndividual['sex'], Colors: ColorPalette): string {
   if (sex === 'F') return Colors.female;
   if (sex === 'M') return Colors.male;
   return Colors.textSecondary;
@@ -93,6 +93,8 @@ function GenerationRow({
 }: {
   children: React.ReactNode;
 }) {
+  const Colors = useColors();
+  const styles = useMemo(() => createStyles(Colors), [Colors]);
   return (
     <ScrollView
       horizontal
@@ -106,6 +108,8 @@ function GenerationRow({
 }
 
 function Connector() {
+  const Colors = useColors();
+  const styles = useMemo(() => createStyles(Colors), [Colors]);
   return (
     <View style={styles.connector} accessibilityElementsHidden>
       <View style={styles.connectorLine} />
@@ -124,7 +128,9 @@ function TreePersonNode({
   onPress: (person: GedcomIndividual) => void;
   compact?: boolean;
 }) {
-  const color = sexColor(person.sex);
+  const Colors = useColors();
+  const styles = useMemo(() => createStyles(Colors), [Colors]);
+  const color = sexColor(person.sex, Colors);
   return (
     <TouchableOpacity
       style={[styles.node, compact && styles.nodeCompact]}
@@ -149,6 +155,8 @@ function TreePersonNode({
 }
 
 function MoreNode({ count, onPress }: { count: number; onPress?: () => void }) {
+  const Colors = useColors();
+  const styles = useMemo(() => createStyles(Colors), [Colors]);
   return (
     <TouchableOpacity
       style={styles.moreNode}
@@ -192,6 +200,9 @@ export default function FamilyTreePreview({
   onPersonPress,
   onExploreTree,
 }: FamilyTreePreviewProps) {
+  const Colors = useColors();
+  const styles = useMemo(() => createStyles(Colors), [Colors]);
+  const genderColor = sexColor(person.sex, Colors);
   const [expanded, setExpanded] = useState(false);
 
   const hasTreeData =
@@ -219,8 +230,6 @@ export default function FamilyTreePreview({
   const visibleGrandchildren = expanded ? grandchildren.slice(0, ROW_NODE_LIMIT) : [];
 
   if (!hasTreeData) return null;
-
-  const genderColor = sexColor(person.sex);
 
   return (
     <View style={styles.section}>
@@ -407,7 +416,8 @@ export default function FamilyTreePreview({
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(Colors: ColorPalette) {
+  return StyleSheet.create({
   section: {
     marginTop: 16,
   },
@@ -596,3 +606,4 @@ const styles = StyleSheet.create({
     color: Colors.white,
   },
 });
+}

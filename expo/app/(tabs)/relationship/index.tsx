@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useRef, useEffect } from 'react';
+import React, {useState, useCallback, useRef, useEffect, useMemo} from 'react';
 import {
   View,
   Text,
@@ -33,7 +33,7 @@ import * as Haptics from 'expo-haptics';
 import * as Sharing from 'expo-sharing';
 import { captureRef } from 'react-native-view-shot';
 
-import Colors from '@/constants/colors';
+import { useColors, type ColorPalette } from '@/contexts/ThemeContext';
 import { useFamilyTree } from '@/contexts/FamilyTreeContext';
 import { useProfile } from '@/contexts/ProfileContext';
 import { useSearchHistory } from '@/contexts/SearchHistoryContext';
@@ -66,6 +66,8 @@ export default function RelationshipScreen() {
 }
 
 function RelationshipScreenContent() {
+  const Colors = useColors();
+  const styles = useMemo(() => createStyles(Colors), [Colors]);
   const router = useRouter();
   const { hasData, search, treeData, isReady, resolveClaimedPerson } = useFamilyTree();
   const { profile, hasClaimed } = useProfile();
@@ -785,6 +787,8 @@ const RelationshipEntryCard = React.memo(function RelationshipEntryCard({
   onPersonPress,
   isClosest,
 }: RelationshipEntryCardProps) {
+  const Colors = useColors();
+  const styles = useMemo(() => createStyles(Colors), [Colors]);
   const [isSharing, setIsSharing] = useState<boolean>(false);
   const pathViewRef = useRef<View>(null);
 
@@ -926,7 +930,8 @@ const RelationshipEntryCard = React.memo(function RelationshipEntryCard({
   );
 });
 
-const styles = StyleSheet.create({
+function createStyles(Colors: ColorPalette) {
+  return StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: Colors.background,
@@ -1487,3 +1492,4 @@ const styles = StyleSheet.create({
     color: Colors.white,
   },
 });
+}

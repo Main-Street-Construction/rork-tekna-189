@@ -1,7 +1,7 @@
-import React, { useCallback } from 'react';
+import React, { useCallback, useMemo } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { ChevronDown, Crown } from 'lucide-react-native';
-import Colors from '@/constants/colors';
+import { useColors, type ColorPalette } from '@/contexts/ThemeContext';
 import { GedcomIndividual, FamilyTreeData } from '@/types/genealogy';
 
 interface AncestryPathProps {
@@ -19,6 +19,8 @@ export default React.memo(function AncestryPath({
   ancestorId,
   onPersonPress,
 }: AncestryPathProps) {
+  const Colors = useColors();
+  const styles = useMemo(() => createStyles(Colors), [Colors]);
   const handlePress = useCallback(
     (personId: string) => {
       const person = data.individuals.get(personId);
@@ -100,7 +102,8 @@ export default React.memo(function AncestryPath({
   );
 });
 
-const styles = StyleSheet.create({
+function createStyles(Colors: ColorPalette) {
+  return StyleSheet.create({
   container: {
     alignItems: 'center',
     paddingVertical: 8,
@@ -174,3 +177,4 @@ const styles = StyleSheet.create({
     marginTop: 1,
   },
 });
+}

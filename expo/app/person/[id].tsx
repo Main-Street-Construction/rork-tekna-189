@@ -28,9 +28,11 @@ import {
   Home,
   MoreHorizontal,
   Link2Off,
+  Trash2,
+  GitMerge,
 } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
-import Colors from '@/constants/colors';
+import { useColors, type ColorPalette } from '@/contexts/ThemeContext';
 import { useFamilyTree } from '@/contexts/FamilyTreeContext';
 import { useProfile } from '@/contexts/ProfileContext';
 import {
@@ -47,9 +49,20 @@ import { GedcomIndividual, GedcomFamily } from '@/types/genealogy';
 import { navigateBack } from '@/utils/navigation';
 
 export default function PersonDetailScreen() {
+  const Colors = useColors();
+  const styles = useMemo(() => createStyles(Colors), [Colors]);
+
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
-  const { treeData, getPerson, isAdmin, submitEdit, removeChildFromFamily, unlinkSpouses } = useFamilyTree();
+  const {
+    treeData,
+    getPerson,
+    isAdmin,
+    submitEdit,
+    removeChildFromFamily,
+    unlinkSpouses,
+    deleteIndividualFromTree,
+  } = useFamilyTree();
   const { profile } = useProfile();
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const [spouseMenuVisible, setSpouseMenuVisible] = useState<boolean>(false);
@@ -208,6 +221,9 @@ export default function PersonDetailScreen() {
   }, [router, id]);
 
   const handleUnlinkSpouse = useCallback((familyId: string) => {
+    const family = treeData?.families.get(familyId);
+    const husband = family?.husbandId ? getPerson(family.husbandId) : undefined;
+    const wife = family?.wifeId ? getPerson(family.wifeId) : undefined;
     Alert.alert('Unlink Spouses', 'Remove this marriage link? Both people will be kept.', [
       { text: 'Cancel', style: 'cancel' },
       {
@@ -218,7 +234,16 @@ export default function PersonDetailScreen() {
             const result = await unlinkSpouses(familyId);
             if (!result.success) Alert.alert('Error', result.error ?? 'Failed to unlink.');
           } else {
-            const result = await submitEdit('unlink_spouses', familyId, { familyId });
+            const result = await submitEdit('unlink_spouses', familyId, {
+              familyId,
+              person1Id: family?.husbandId,
+              person2Id: family?.wifeId,
+              person1Name: husband?.name,
+              person2Name: wife?.name,
+              marriageDate: family?.marriageDate,
+              marriagePlace: family?.marriagePlace,
+              childCount: family?.childrenIds?.length ?? 0,
+            });
             if (result.success) {
               Alert.alert('Submitted', 'Unlink request sent for admin review.');
             } else {
@@ -228,9 +253,13 @@ export default function PersonDetailScreen() {
         },
       },
     ]);
-  }, [isAdmin, unlinkSpouses, submitEdit]);
+  }, [isAdmin, unlinkSpouses, submitEdit, treeData, getPerson]);
 
   const handleRemoveChild = useCallback((childId: string, familyId: string) => {
+    const child = getPerson(childId);
+    const family = treeData?.families.get(familyId);
+    const husband = family?.husbandId ? getPerson(family.husbandId) : undefined;
+    const wife = family?.wifeId ? getPerson(family.wifeId) : undefined;
     Alert.alert('Remove Child Link', 'Remove this parent-child relationship?', [
       { text: 'Cancel', style: 'cancel' },
       {
@@ -241,7 +270,14 @@ export default function PersonDetailScreen() {
             const result = await removeChildFromFamily(childId, familyId);
             if (!result.success) Alert.alert('Error', result.error ?? 'Failed to remove.');
           } else {
-            const result = await submitEdit('remove_child', childId, { childId, familyId });
+            const result = await submitEdit('remove_child', childId, {
+              childId,
+              childName: child?.name,
+              familyId,
+              parentNames: [husband?.name, wife?.name].filter(Boolean),
+              husbandName: husband?.name,
+              wifeName: wife?.name,
+            });
             if (result.success) {
               Alert.alert('Submitted', 'Removal request sent for admin review.');
             } else {
@@ -251,7 +287,70 @@ export default function PersonDetailScreen() {
         },
       },
     ]);
-  }, [isAdmin, removeChildFromFamily, submitEdit]);
+  }, [isAdmin, removeChildFromFamily, submitEdit, getPerson, treeData]);
+
+  const handleDeletePerson = useCallback(() => {
+    if (!id || !person) return;
+    const parentNames = parents.map((p) => p.name);
+    const spouseNames = spouses.map((s) => s.name);
+    const childNames = children.map((c) => c.name);
+    const title = isAdmin ? 'Delete Person' : 'Request Delete';
+    const message = isAdmin
+      ? `Permanently delete ${person.name}? This cannot be undone.`
+      : `Submit a request to delete ${person.name}? An admin must approve before it happens.`;
+
+    Alert.alert(title, message, [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: isAdmin ? 'Delete' : 'Submit request',
+        style: 'destructive',
+        onPress: async () => {
+          if (isAdmin) {
+            const result = await deleteIndividualFromTree(id);
+            if (!result.success) {
+              Alert.alert('Error', result.error ?? 'Failed to delete.');
+              return;
+            }
+            void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+            Alert.alert('Deleted', `${person.name} was removed.`, [
+              { text: 'OK', onPress: () => router.replace('/(tabs)/(search)') },
+            ]);
+          } else {
+            const result = await submitEdit('delete_person', id, {
+              personId: id,
+              person: {
+                id: person.id,
+                name: person.name,
+                givenName: person.givenName,
+                surname: person.surname,
+                sex: person.sex,
+                birthDate: person.birthDate,
+                birthPlace: person.birthPlace,
+                deathDate: person.deathDate,
+                deathPlace: person.deathPlace,
+                occupation: person.occupation,
+                note: person.note,
+              },
+              parentNames,
+              spouseNames,
+              childNames,
+            });
+            if (result.success) {
+              Alert.alert('Submitted', 'Delete request sent for admin review.');
+            } else {
+              Alert.alert('Error', result.error ?? 'Failed to submit.');
+            }
+          }
+        },
+      },
+    ]);
+  }, [id, person, parents, spouses, children, isAdmin, deleteIndividualFromTree, submitEdit, router]);
+
+  const handleMergePerson = useCallback(() => {
+    if (!id) return;
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    router.push(`/merge-person/${id}` as Href);
+  }, [id, router]);
 
   const spouseFamilies = useMemo(() => {
     if (!id || !treeData) return [];
@@ -557,10 +656,22 @@ export default function PersonDetailScreen() {
               <Text style={styles.addChildBtnText}>Spouse</Text>
             </TouchableOpacity>
           </View>
+          <View style={styles.dangerActions}>
+            <TouchableOpacity style={styles.dangerBtn} onPress={handleMergePerson} activeOpacity={0.7}>
+              <GitMerge size={16} color={Colors.accent} />
+              <Text style={styles.dangerBtnText}>{isAdmin ? 'Merge' : 'Suggest merge'}</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.dangerBtn} onPress={handleDeletePerson} activeOpacity={0.7}>
+              <Trash2 size={16} color={Colors.danger} />
+              <Text style={[styles.dangerBtnText, { color: Colors.danger }]}>
+                {isAdmin ? 'Delete' : 'Request delete'}
+              </Text>
+            </TouchableOpacity>
+          </View>
           <Text style={styles.actionHint}>
             {isAdmin
-              ? 'Edit names, add children, or link another spouse (including a previous marriage).'
-              : 'Suggest name fixes, add a child, or link a spouse — including a previous marriage. Changes go to admins for approval; track them under Profile → My Edits.'}
+              ? 'Edit names, add children, link spouses, or merge/delete duplicates.'
+              : 'Suggest edits, merges, or deletes — changes go to admins for approval; track them under Profile → My Edits.'}
           </Text>
 
           <Modal
@@ -725,7 +836,8 @@ export default function PersonDetailScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(Colors: ColorPalette) {
+  return StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: Colors.background,
@@ -885,6 +997,29 @@ const styles = StyleSheet.create({
     lineHeight: 17,
     color: Colors.textSecondary,
   },
+  dangerActions: {
+    flexDirection: 'row',
+    paddingHorizontal: 16,
+    marginTop: 12,
+    gap: 12,
+  },
+  dangerBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: Colors.card,
+    borderWidth: 1,
+    borderColor: Colors.cardBorder,
+    paddingVertical: 12,
+    borderRadius: 14,
+    gap: 8,
+  },
+  dangerBtnText: {
+    fontSize: 13,
+    fontWeight: '600' as const,
+    color: Colors.accent,
+  },
   actionBtn: {
     flex: 1,
     flexDirection: 'row',
@@ -1020,3 +1155,4 @@ const styles = StyleSheet.create({
     color: Colors.textSecondary,
   },
 });
+}

@@ -15,10 +15,11 @@ import {
 import { useRouter, Stack, useLocalSearchParams } from 'expo-router';
 import { X, Search, Check, Users } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
-import Colors from '@/constants/colors';
+import { useColors, type ColorPalette } from '@/contexts/ThemeContext';
 import { useFamilyTree } from '@/contexts/FamilyTreeContext';
 import { GedcomIndividual } from '@/types/genealogy';
 import { getSpouses } from '@/utils/gedcom-parser';
+import { findFamilyForParents } from '@/utils/family-admin';
 import { modalScreenOptions } from '@/utils/navigation';
 import ModalCloseButton from '@/components/ModalCloseButton';
 
@@ -27,6 +28,9 @@ function safeFamiliesAsSpouse(arr: string[] | undefined | null): string[] {
 }
 
 export default function LinkChildScreen() {
+  const Colors = useColors();
+  const styles = useMemo(() => createStyles(Colors), [Colors]);
+
   const router = useRouter();
   const { parentId } = useLocalSearchParams<{ parentId: string }>();
   const {
@@ -48,6 +52,7 @@ export default function LinkChildScreen() {
   const [searchResults, setSearchResults] = useState<GedcomIndividual[]>([]);
   const [selectedFamilyId, setSelectedFamilyId] = useState<string | null>(null);
   const [selectedSpouseId, setSelectedSpouseId] = useState<string | null>(null);
+  const [familyInitialized, setFamilyInitialized] = useState(false);
   const [isSaving, setIsSaving] = useState<boolean>(false);
   const [isResolving, setIsResolving] = useState<boolean>(false);
   const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -81,6 +86,25 @@ export default function LinkChildScreen() {
       .filter((f): f is NonNullable<typeof f> => f != null);
   }, [parent, treeData]);
 
+  useEffect(() => {
+    if (!parentId || !treeData || familyInitialized) return;
+    if (existingFamilies.length === 1) {
+      setSelectedFamilyId(existingFamilies[0].id);
+      setFamilyInitialized(true);
+      return;
+    }
+    if (spouses.length === 1) {
+      const match = findFamilyForParents(treeData, parentId, spouses[0].id);
+      setSelectedSpouseId(spouses[0].id);
+      if (match) setSelectedFamilyId(match.id);
+      setFamilyInitialized(true);
+      return;
+    }
+    if (existingFamilies.length === 0 && spouses.length === 0) {
+      setFamilyInitialized(true);
+    }
+  }, [parentId, treeData, existingFamilies, spouses, familyInitialized]);
+
   const handleSearch = useCallback(
     (text: string) => {
       setSearchQuery(text);
@@ -104,10 +128,19 @@ export default function LinkChildScreen() {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
 
     try {
+      let resolvedFamilyId = selectedFamilyId;
+      if (!resolvedFamilyId && treeData) {
+        const match = findFamilyForParents(treeData, parentId, selectedSpouseId);
+        if (match) resolvedFamilyId = match.id;
+      }
+
+      const parentName = parent.name;
+      const spouseName = selectedSpouseId ? getPerson(selectedSpouseId)?.name : undefined;
+
       if (isAdmin) {
         let result: { success: boolean; error?: string };
-        if (selectedFamilyId) {
-          result = await linkChildToFamily(child.id, selectedFamilyId);
+        if (resolvedFamilyId) {
+          result = await linkChildToFamily(child.id, resolvedFamilyId);
         } else {
           const created = await createFamilyWithParents(parentId, selectedSpouseId ?? undefined);
           if (!created.success || !created.familyId) {
@@ -125,9 +158,15 @@ export default function LinkChildScreen() {
         const result = await submitEdit('link_child', child.id, {
           childId: child.id,
           childName: child.name,
+          childBirthDate: child.birthDate,
+          childBirthPlace: child.birthPlace,
+          childSex: child.sex,
           parentId,
-          familyId: selectedFamilyId ?? undefined,
+          parentName,
+          familyId: resolvedFamilyId ?? undefined,
           spouseId: selectedSpouseId ?? undefined,
+          spouseName,
+          createNewFamily: !resolvedFamilyId,
         });
         if (result.success) {
           Alert.alert('Edit Submitted', 'Your link request has been submitted for admin review.', [
@@ -142,7 +181,7 @@ export default function LinkChildScreen() {
     } finally {
       setIsSaving(false);
     }
-  }, [parent, child, parentId, selectedFamilyId, selectedSpouseId, isAdmin, linkChildToFamily, createFamilyWithParents, submitEdit, router]);
+  }, [parent, child, parentId, treeData, selectedFamilyId, selectedSpouseId, isAdmin, linkChildToFamily, createFamilyWithParents, submitEdit, router, getPerson]);
 
   if ((!isReady || isLoadingFromCloud || isResolving) && !parent) {
     return (
@@ -287,7 +326,8 @@ export default function LinkChildScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(Colors: ColorPalette) {
+  return StyleSheet.create({
   container: { flex: 1, backgroundColor: Colors.background },
   center: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   saveBtn: {
@@ -349,3 +389,4 @@ const styles = StyleSheet.create({
   familyOptionSelected: { borderColor: Colors.accent, backgroundColor: 'rgba(200, 149, 108, 0.08)' },
   familyOptionText: { fontSize: 14, color: Colors.text },
 });
+}

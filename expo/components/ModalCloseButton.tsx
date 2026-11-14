@@ -1,12 +1,15 @@
-import React, { useCallback } from 'react';
+import React, {useCallback, useMemo} from 'react';
 import { TouchableOpacity, StyleSheet, Platform } from 'react-native';
 import { useRouter } from 'expo-router';
 import { X } from 'lucide-react-native';
-import Colors from '@/constants/colors';
+import { useColors, type ColorPalette } from '@/contexts/ThemeContext';
 import { navigateBack } from '@/utils/navigation';
 
 /** Reliable close control for modal slides (dismiss-first navigation). */
 export default function ModalCloseButton() {
+  const Colors = useColors();
+  const styles = useMemo(() => createStyles(Colors), [Colors]);
+
   const router = useRouter();
 
   const onPress = useCallback(() => {
@@ -27,7 +30,8 @@ export default function ModalCloseButton() {
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(Colors: ColorPalette) {
+  return StyleSheet.create({
   btn: {
     paddingVertical: 8,
     paddingHorizontal: 10,
@@ -38,3 +42,4 @@ const styles = StyleSheet.create({
     minHeight: 40,
   },
 });
+}

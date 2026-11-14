@@ -1,6 +1,6 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
-import Colors from '@/constants/colors';
+import { useColors, type ColorPalette } from '@/contexts/ThemeContext';
 
 interface SectionHeaderProps {
   title: string;
@@ -15,6 +15,9 @@ export default function SectionHeader({
   actionLabel,
   onAction,
 }: SectionHeaderProps) {
+  const Colors = useColors();
+  const styles = useMemo(() => createStyles(Colors), [Colors]);
+
   return (
     <View style={styles.container}>
       <View style={styles.left}>
@@ -34,7 +37,8 @@ export default function SectionHeader({
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(Colors: ColorPalette) {
+  return StyleSheet.create({
   container: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -72,3 +76,4 @@ const styles = StyleSheet.create({
     fontWeight: '600' as const,
   },
 });
+}

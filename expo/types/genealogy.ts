@@ -69,7 +69,9 @@ export type PendingEditType =
   | 'link_child'
   | 'edit_parent'
   | 'remove_child'
-  | 'unlink_spouses';
+  | 'unlink_spouses'
+  | 'delete_person'
+  | 'merge_people';
 export type PendingEditStatus = 'pending' | 'approved' | 'rejected';
 
 export interface PendingEdit {

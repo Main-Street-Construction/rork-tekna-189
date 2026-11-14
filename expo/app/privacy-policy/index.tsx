@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import {
   View,
   Text,
@@ -7,11 +7,14 @@ import {
 } from 'react-native';
 import { Stack } from 'expo-router';
 import { Shield } from 'lucide-react-native';
-import Colors from '@/constants/colors';
+import { useColors, type ColorPalette } from '@/contexts/ThemeContext';
 
 const LAST_UPDATED = 'October 3, 2026';
 
 export default function PrivacyPolicyScreen() {
+  const Colors = useColors();
+  const styles = useMemo(() => createStyles(Colors), [Colors]);
+
   return (
     <View style={styles.container}>
       <Stack.Screen
@@ -126,6 +129,8 @@ export default function PrivacyPolicyScreen() {
 }
 
 function Section({ title, intro, children }: { title: string; intro?: string; children: React.ReactNode }) {
+  const Colors = useColors();
+  const styles = useMemo(() => createStyles(Colors), [Colors]);
   return (
     <View style={styles.section}>
       <Text style={styles.sectionTitle}>{title}</Text>
@@ -142,6 +147,8 @@ function Section({ title, intro, children }: { title: string; intro?: string; ch
 }
 
 function BulletPoint({ text }: { text: string }) {
+  const Colors = useColors();
+  const styles = useMemo(() => createStyles(Colors), [Colors]);
   return (
     <View style={styles.bulletRow}>
       <View style={styles.bullet} />
@@ -150,7 +157,8 @@ function BulletPoint({ text }: { text: string }) {
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(Colors: ColorPalette) {
+  return StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: Colors.background,
@@ -229,3 +237,4 @@ const styles = StyleSheet.create({
     color: Colors.textLight,
   },
 });
+}

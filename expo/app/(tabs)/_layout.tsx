@@ -1,10 +1,12 @@
 import { Tabs } from 'expo-router';
 import { Search, Clock, User, GitFork } from 'lucide-react-native';
-import React from 'react';
-import Colors from '@/constants/colors';
+import React, { useMemo } from 'react';
+import { useColors, type ColorPalette } from '@/contexts/ThemeContext';
 import { useFamilyTree } from '@/contexts/FamilyTreeContext';
 
 export default function TabLayout() {
+  const Colors = useColors();
+
   const { isAdmin, pendingEditCount } = useFamilyTree();
   const badgeCount = isAdmin && pendingEditCount > 0 ? pendingEditCount.toString() : undefined;
 

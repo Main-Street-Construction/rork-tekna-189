@@ -7,6 +7,44 @@ export function parentKey(family: Pick<GedcomFamily, 'husbandId' | 'wifeId'>): s
   return `${husband}|${wife}`;
 }
 
+/** Find an existing family for a parent pair (order-independent). Prefer the one with the most children. */
+export function findFamilyForParents(
+  data: FamilyTreeData,
+  parent1Id: string,
+  parent2Id?: string | null
+): GedcomFamily | undefined {
+  const p1 = parent1Id?.trim();
+  if (!p1) return undefined;
+  const p2 = parent2Id?.trim() || '';
+
+  const matches: GedcomFamily[] = [];
+  data.families.forEach((family) => {
+    const husband = family.husbandId?.trim() || '';
+    const wife = family.wifeId?.trim() || '';
+    const parents = new Set([husband, wife].filter(Boolean));
+
+    if (p2) {
+      if (parents.has(p1) && parents.has(p2) && parents.size === 2) {
+        matches.push(family);
+      }
+      return;
+    }
+
+    // Single parent: reuse a family that already has only this parent.
+    if (parents.has(p1) && parents.size === 1) {
+      matches.push(family);
+    }
+  });
+
+  if (matches.length === 0) return undefined;
+  matches.sort((a, b) => {
+    const childDiff = (b.childrenIds?.length ?? 0) - (a.childrenIds?.length ?? 0);
+    if (childDiff !== 0) return childDiff;
+    return a.id.localeCompare(b.id);
+  });
+  return matches[0];
+}
+
 export function findDuplicateFamilyGroups(data: FamilyTreeData): GedcomFamily[][] {
   const groups = new Map<string, GedcomFamily[]>();
   data.families.forEach((family) => {

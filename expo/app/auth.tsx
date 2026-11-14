@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, {useState, useCallback, useMemo} from 'react';
 import {
   View,
   Text,
@@ -14,7 +14,7 @@ import { Stack, useRouter } from 'expo-router';
 import { Mail, Lock, LogIn, UserPlus, ArrowLeft, Eye, EyeOff, CheckCircle, Send, User } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import Colors from '@/constants/colors';
+import { useColors, type ColorPalette } from '@/contexts/ThemeContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { useAndroidKeyboardScroll } from '@/lib/keyboard-scroll';
 import { validateEmailAddress } from '@/utils/email';
@@ -25,6 +25,9 @@ const PENDING_FULL_NAME_KEY = 'pending_signup_full_name';
 type AuthMode = 'signup' | 'signin' | 'reset' | 'confirm_email';
 
 export default function AuthScreen() {
+  const Colors = useColors();
+  const styles = useMemo(() => createStyles(Colors), [Colors]);
+
   const router = useRouter();
   const {
     signIn, signUp, resetPassword, resendConfirmation,
@@ -494,7 +497,8 @@ export default function AuthScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(Colors: ColorPalette) {
+  return StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: Colors.background,
@@ -756,3 +760,4 @@ const styles = StyleSheet.create({
     color: Colors.accent,
   },
 });
+}

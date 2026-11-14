@@ -15,7 +15,7 @@ import {
 import { useLocalSearchParams, useRouter, Stack } from 'expo-router';
 import { Heart, User, Calendar, MapPin } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
-import Colors from '@/constants/colors';
+import { useColors, type ColorPalette } from '@/contexts/ThemeContext';
 import { useFamilyTree } from '@/contexts/FamilyTreeContext';
 import { GedcomIndividual } from '@/types/genealogy';
 import { findSimilarIndividuals } from '@/utils/name-utils';
@@ -25,6 +25,9 @@ import ModalCloseButton from '@/components/ModalCloseButton';
 type SexType = 'M' | 'F' | 'U';
 
 export default function AddSpouseScreen() {
+  const Colors = useColors();
+  const styles = useMemo(() => createStyles(Colors), [Colors]);
+
   const { personId } = useLocalSearchParams<{ personId: string }>();
   const router = useRouter();
   const {
@@ -118,6 +121,7 @@ export default function AddSpouseScreen() {
         const editData: Record<string, unknown> = {
           spouse: newSpouse,
           personId,
+          personName: person?.name,
           marriageDate: marriageDate.trim() || undefined,
           marriagePlace: marriagePlace.trim() || undefined,
         };
@@ -393,7 +397,8 @@ export default function AddSpouseScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(Colors: ColorPalette) {
+  return StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: Colors.background,
@@ -559,3 +564,4 @@ const styles = StyleSheet.create({
     borderColor: Colors.cardBorder,
   },
 });
+}

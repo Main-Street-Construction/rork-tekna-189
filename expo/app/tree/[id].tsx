@@ -4,13 +4,16 @@ import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { ArrowLeft, User } from 'lucide-react-native';
-import Colors from '@/constants/colors';
+import { useColors, type ColorPalette } from '@/contexts/ThemeContext';
 import { useFamilyTree } from '@/contexts/FamilyTreeContext';
 import TreeExplorerCanvas from '@/components/TreeExplorerCanvas';
 import { navigateBack } from '@/utils/navigation';
 import type { GedcomIndividual } from '@/types/genealogy';
 
 export default function TreeExplorerScreen() {
+  const Colors = useColors();
+  const styles = useMemo(() => createStyles(Colors), [Colors]);
+
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
   const insets = useSafeAreaInsets();
@@ -95,7 +98,8 @@ export default function TreeExplorerScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(Colors: ColorPalette) {
+  return StyleSheet.create({
   root: {
     flex: 1,
     backgroundColor: Colors.background,
@@ -155,3 +159,4 @@ const styles = StyleSheet.create({
     fontSize: 15,
   },
 });
+}

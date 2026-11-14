@@ -1,8 +1,10 @@
 import { Stack } from 'expo-router';
-import React from 'react';
-import Colors from '@/constants/colors';
+import React, { useMemo } from 'react';
+import { useColors, type ColorPalette } from '@/contexts/ThemeContext';
 
 export default function ProfileLayout() {
+  const Colors = useColors();
+
   return (
     <Stack
       screenOptions={{

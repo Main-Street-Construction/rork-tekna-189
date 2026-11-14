@@ -1,4 +1,4 @@
-import React, { useRef } from 'react';
+import React, { useMemo, useRef } from 'react';
 import {
   View,
   Text,
@@ -8,7 +8,7 @@ import {
 } from 'react-native';
 import { MapPin, Calendar, ChevronRight } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
-import Colors from '@/constants/colors';
+import { useColors, type ColorPalette } from '@/contexts/ThemeContext';
 import { GedcomIndividual } from '@/types/genealogy';
 
 interface PersonCardProps {
@@ -26,6 +26,8 @@ export default React.memo(function PersonCard({
   subtitle,
   compact = false,
 }: PersonCardProps) {
+  const Colors = useColors();
+  const styles = useMemo(() => createStyles(Colors), [Colors]);
   const scaleAnim = useRef(new Animated.Value(1)).current;
 
   const handlePressIn = () => {
@@ -142,7 +144,8 @@ export default React.memo(function PersonCard({
   );
 });
 
-const styles = StyleSheet.create({
+function createStyles(Colors: ColorPalette) {
+  return StyleSheet.create({
   card: {
     backgroundColor: Colors.card,
     borderRadius: 14,
@@ -238,3 +241,4 @@ const styles = StyleSheet.create({
     marginTop: 1,
   },
 });
+}

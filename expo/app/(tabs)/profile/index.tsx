@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect } from 'react';
+import React, {useState, useCallback, useEffect, useMemo} from 'react';
 import { useMutation } from '@tanstack/react-query';
 import {
   View,
@@ -34,16 +34,18 @@ import {
   LogOut,
   FileText,
   BookOpen,
+  Moon,
 } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import { submitFeedback } from '@/lib/supabase-db';
-import Colors from '@/constants/colors';
+import { useColors, useTheme, type ColorPalette, type ThemePreference } from '@/contexts/ThemeContext';
 import { useProfile } from '@/contexts/ProfileContext';
 import { useFamilyTree } from '@/contexts/FamilyTreeContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { useOnboarding } from '@/contexts/OnboardingContext';
 import { useRouter } from 'expo-router';
 import { GedcomIndividual, PendingEdit } from '@/types/genealogy';
+import { pendingEditSummary, pendingEditTypeLabel } from '@/utils/pending-edit-display';
 
 const EMAIL_TLD_TYPOS: Record<string, string> = {
   '.ney': '.net',
@@ -85,7 +87,11 @@ function editStatusLabel(status: string): string {
 }
 
 export default function ProfileScreen() {
+  const Colors = useColors();
+  const styles = useMemo(() => createStyles(Colors), [Colors]);
+
   const router = useRouter();
+  const { preference, setPreference } = useTheme();
   const { profile, hasProfile, hasClaimed, isClaimed, saveProfile, claimIdentity, resetClaim, isSaving, claimRepairNotice, dismissClaimRepairNotice, isValidatingClaim } = useProfile();
   const {
     hasData, individualCount, familyCount, clearData, search, resolveClaimedPerson,
@@ -668,7 +674,39 @@ export default function ProfileScreen() {
         </View>
 
         <View style={styles.accountSection}>
-          <Text style={styles.sectionTitle}>Account</Text>
+          <Text style={styles.sectionTitle}>Appearance</Text>
+          <View style={styles.appearanceCard}>
+            <View style={styles.appearanceHeader}>
+              <Moon size={16} color={Colors.accent} />
+              <Text style={styles.appearanceLabel}>Theme</Text>
+            </View>
+            <View style={styles.appearanceRow}>
+              {([
+                { key: 'system' as ThemePreference, label: 'System' },
+                { key: 'light' as ThemePreference, label: 'Light' },
+                { key: 'dark' as ThemePreference, label: 'Dark' },
+              ]).map((opt) => {
+                const active = preference === opt.key;
+                return (
+                  <TouchableOpacity
+                    key={opt.key}
+                    style={[styles.appearanceChip, active && styles.appearanceChipActive]}
+                    onPress={() => {
+                      setPreference(opt.key);
+                      void Haptics.selectionAsync();
+                    }}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={[styles.appearanceChipText, active && styles.appearanceChipTextActive]}>
+                      {opt.label}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          </View>
+
+          <Text style={[styles.sectionTitle, { marginTop: 20 }]}>Account</Text>
 
           {isSignedIn ? (
             <View style={styles.accountCard}>
@@ -816,16 +854,19 @@ export default function ProfileScreen() {
           <View style={styles.feedbackSection}>
             <Text style={styles.sectionTitle}>My Edits</Text>
             <Text style={styles.feedbackDesc}>
-              Track name fixes, new children, and other suggestions. Approved changes appear on the tree after sync (this screen refreshes automatically).
+              Track name fixes, children, spouses, merges, and deletes. Approved changes appear on the tree after sync.
             </Text>
             {loadingMyEdits ? (
               <ActivityIndicator color={Colors.accent} />
             ) : myEdits.length === 0 ? (
-              <Text style={styles.feedbackDesc}>No submitted edits yet. Open a person and tap Suggest edit, Child, or Spouse.</Text>
+              <Text style={styles.feedbackDesc}>No submitted edits yet. Open a person and tap Suggest edit, Child, Spouse, Merge, or Request delete.</Text>
             ) : (
-              myEdits.slice(0, 5).map((edit) => (
+              myEdits.slice(0, 8).map((edit) => (
                 <View key={edit.id} style={styles.myEditRow}>
-                  <Text style={styles.myEditType}>{edit.edit_type.replace(/_/g, ' ')}</Text>
+                  <Text style={styles.myEditType}>{pendingEditTypeLabel(edit.edit_type)}</Text>
+                  <Text style={styles.myEditSummary} numberOfLines={2}>
+                    {pendingEditSummary(edit)}
+                  </Text>
                   <Text
                     style={[
                       styles.myEditStatus,
@@ -951,7 +992,8 @@ export default function ProfileScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(Colors: ColorPalette) {
+  return StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: Colors.background,
@@ -1581,7 +1623,12 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '600' as const,
     color: Colors.text,
-    textTransform: 'capitalize' as const,
+  },
+  myEditSummary: {
+    fontSize: 13,
+    color: Colors.textSecondary,
+    marginTop: 2,
+    lineHeight: 18,
   },
   myEditStatus: {
     fontSize: 12,
@@ -1749,4 +1796,50 @@ const styles = StyleSheet.create({
   legalSection: {
     paddingTop: 24,
   },
+  appearanceCard: {
+    marginHorizontal: 16,
+    marginTop: 8,
+    backgroundColor: Colors.card,
+    borderRadius: 14,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: Colors.cardBorder,
+    gap: 12,
+  },
+  appearanceHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  appearanceLabel: {
+    fontSize: 15,
+    fontWeight: '600' as const,
+    color: Colors.text,
+  },
+  appearanceRow: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  appearanceChip: {
+    flex: 1,
+    paddingVertical: 10,
+    borderRadius: 10,
+    backgroundColor: Colors.background,
+    borderWidth: 1,
+    borderColor: Colors.cardBorder,
+    alignItems: 'center',
+  },
+  appearanceChipActive: {
+    backgroundColor: Colors.accent,
+    borderColor: Colors.accent,
+  },
+  appearanceChipText: {
+    fontSize: 13,
+    fontWeight: '600' as const,
+    color: Colors.textSecondary,
+  },
+  appearanceChipTextActive: {
+    color: Colors.white,
+  },
 });
+}

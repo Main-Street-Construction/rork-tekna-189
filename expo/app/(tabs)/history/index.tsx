@@ -1,4 +1,4 @@
-import React, { useCallback } from 'react';
+import React, {useCallback, useMemo} from 'react';
 import {
   View,
   Text,
@@ -10,7 +10,7 @@ import {
 import { useRouter } from 'expo-router';
 import { Clock, Search, Trash2, ArrowRight, User, GitFork } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
-import Colors from '@/constants/colors';
+import { useColors, type ColorPalette } from '@/contexts/ThemeContext';
 import { useSearchHistory } from '@/contexts/SearchHistoryContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { SearchHistoryItem } from '@/types/genealogy';
@@ -34,13 +34,15 @@ export default function HistoryScreen() {
   const { isSignedIn, isEnabled } = useAuth();
 
   if (!isSignedIn || !isEnabled) {
-    return <AuthGate><View style={styles.container} /></AuthGate>;
+    return <AuthGate><View /></AuthGate>;
   }
 
   return <HistoryScreenContent />;
 }
 
 function HistoryScreenContent() {
+  const Colors = useColors();
+  const styles = useMemo(() => createStyles(Colors), [Colors]);
   const router = useRouter();
   const { history, clearHistory } = useSearchHistory();
 
@@ -203,7 +205,8 @@ function HistoryScreenContent() {
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(Colors: ColorPalette) {
+  return StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: Colors.background,
@@ -326,3 +329,4 @@ const styles = StyleSheet.create({
     color: Colors.textSecondary,
   },
 });
+}

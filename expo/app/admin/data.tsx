@@ -25,7 +25,7 @@ import {
   RefreshCw,
 } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
-import Colors from '@/constants/colors';
+import { useColors, type ColorPalette } from '@/contexts/ThemeContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { useFamilyTree } from '@/contexts/FamilyTreeContext';
 import {
@@ -83,6 +83,9 @@ function tokensMatchHaystack(query: string, haystack: string): boolean {
 type TabKey = 'people' | 'families' | 'issues';
 
 export default function AdminDataScreen() {
+  const Colors = useColors();
+  const styles = useMemo(() => createStyles(Colors), [Colors]);
+
   const router = useRouter();
   const { isAdmin } = useAuth();
   const {
@@ -753,7 +756,8 @@ function parentPairKey(family: GedcomFamily): string {
   return `${family.husbandId ?? ''}|${family.wifeId ?? ''}`;
 }
 
-const styles = StyleSheet.create({
+function createStyles(Colors: ColorPalette) {
+  return StyleSheet.create({
   container: { flex: 1, backgroundColor: Colors.background },
   denied: { textAlign: 'center', marginTop: 40, color: Colors.textSecondary },
   syncBanner: { margin: 16, marginBottom: 8, padding: 12, backgroundColor: Colors.card, borderRadius: 12, borderWidth: 1, borderColor: Colors.cardBorder, gap: 4 },
@@ -822,3 +826,4 @@ const styles = StyleSheet.create({
   modalSave: { flex: 1, flexDirection: 'row', gap: 8, padding: 14, alignItems: 'center', justifyContent: 'center', borderRadius: 10, backgroundColor: Colors.success },
   modalSaveText: { color: Colors.white, fontWeight: '600' as const },
 });
+}

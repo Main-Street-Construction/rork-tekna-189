@@ -32,7 +32,7 @@ import {
 } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import Colors from '@/constants/colors';
+import { useColors, type ColorPalette } from '@/contexts/ThemeContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { useFamilyTree } from '@/contexts/FamilyTreeContext';
 import { navigateBack } from '@/utils/navigation';
@@ -48,6 +48,9 @@ import {
 type AdminTab = 'requests' | 'people';
 
 export default function AdminScreen() {
+  const Colors = useColors();
+  const styles = useMemo(() => createStyles(Colors), [Colors]);
+
   const router = useRouter();
   const queryClient = useQueryClient();
   const { isAdmin, user } = useAuth();
@@ -760,7 +763,8 @@ export default function AdminScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(Colors: ColorPalette) {
+  return StyleSheet.create({
   container: { flex: 1, backgroundColor: Colors.background },
   scrollContent: { paddingBottom: 48 },
   loadingContainer: { flex: 1, justifyContent: 'center', alignItems: 'center' },
@@ -1057,3 +1061,4 @@ const styles = StyleSheet.create({
   },
   resetClaimText: { fontSize: 12, color: Colors.accent, fontWeight: '600' as const },
 });
+}

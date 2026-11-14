@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useRef } from 'react';
+import React, {useState, useCallback, useRef, useMemo} from 'react';
 import {
   View,
   Text,
@@ -14,11 +14,14 @@ import { FileText, Check, AlertCircle, FolderOpen, Upload } from 'lucide-react-n
 import * as Haptics from 'expo-haptics';
 import * as DocumentPicker from 'expo-document-picker';
 import { File } from 'expo-file-system';
-import Colors from '@/constants/colors';
+import { useColors, type ColorPalette } from '@/contexts/ThemeContext';
 import { useFamilyTree } from '@/contexts/FamilyTreeContext';
 import ModalCloseButton from '@/components/ModalCloseButton';
 
 export default function ImportDataScreen() {
+  const Colors = useColors();
+  const styles = useMemo(() => createStyles(Colors), [Colors]);
+
   const router = useRouter();
   const { importGedcom, isImporting, hasData } = useFamilyTree();
   const [selectedFile, setSelectedFile] = useState<{ name: string; uri: string; size?: number } | null>(null);
@@ -295,7 +298,8 @@ export default function ImportDataScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(Colors: ColorPalette) {
+  return StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: Colors.background,
@@ -483,3 +487,4 @@ const styles = StyleSheet.create({
     fontStyle: 'italic',
   },
 });
+}

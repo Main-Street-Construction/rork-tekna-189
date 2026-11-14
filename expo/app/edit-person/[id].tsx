@@ -15,7 +15,7 @@ import {
 import { useLocalSearchParams, useRouter, Stack } from 'expo-router';
 import { Save, User, Calendar, MapPin, Briefcase, FileText } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
-import Colors from '@/constants/colors';
+import { useColors, type ColorPalette } from '@/contexts/ThemeContext';
 import { useFamilyTree } from '@/contexts/FamilyTreeContext';
 import { GedcomIndividual } from '@/types/genealogy';
 import { findSimilarIndividuals, normalizeNamePart } from '@/utils/name-utils';
@@ -25,6 +25,9 @@ import ModalCloseButton from '@/components/ModalCloseButton';
 type SexType = 'M' | 'F' | 'U';
 
 export default function EditPersonScreen() {
+  const Colors = useColors();
+  const styles = useMemo(() => createStyles(Colors), [Colors]);
+
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
   const { getPerson, updatePerson, isAdmin, submitEdit, treeData } = useFamilyTree();
@@ -110,7 +113,26 @@ export default function EditPersonScreen() {
       const needsApproval = !isAdmin;
 
       if (needsApproval) {
-        const result = await submitEdit('update_person', updated.id, { individual: updated });
+        const previous: GedcomIndividual = {
+          id: person.id,
+          name: person.name,
+          givenName: person.givenName,
+          surname: person.surname,
+          sex: person.sex,
+          birthDate: person.birthDate,
+          birthPlace: person.birthPlace,
+          deathDate: person.deathDate,
+          deathPlace: person.deathPlace,
+          occupation: person.occupation,
+          note: person.note,
+          familiesAsSpouse: person.familiesAsSpouse ?? [],
+          familyAsChild: person.familyAsChild,
+        };
+        const result = await submitEdit('update_person', updated.id, {
+          individual: updated,
+          previous,
+          personName: updated.name,
+        });
         if (result.success) {
           Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
           Alert.alert(
@@ -352,7 +374,8 @@ export default function EditPersonScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(Colors: ColorPalette) {
+  return StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: Colors.background,
@@ -478,3 +501,4 @@ const styles = StyleSheet.create({
     paddingTop: 12,
   },
 });
+}

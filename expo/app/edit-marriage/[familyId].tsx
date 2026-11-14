@@ -15,13 +15,16 @@ import {
 import { useLocalSearchParams, useRouter, Stack } from 'expo-router';
 import { Save, Heart, Calendar, MapPin } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
-import Colors from '@/constants/colors';
+import { useColors, type ColorPalette } from '@/contexts/ThemeContext';
 import { useFamilyTree } from '@/contexts/FamilyTreeContext';
 import { GedcomFamily } from '@/types/genealogy';
 import { modalScreenOptions } from '@/utils/navigation';
 import ModalCloseButton from '@/components/ModalCloseButton';
 
 export default function EditMarriageScreen() {
+  const Colors = useColors();
+  const styles = useMemo(() => createStyles(Colors), [Colors]);
+
   const { familyId } = useLocalSearchParams<{ familyId: string }>();
   const router = useRouter();
   const { treeData, updateFamily, isAdmin, submitEdit, getPerson } = useFamilyTree();
@@ -79,8 +82,13 @@ export default function EditMarriageScreen() {
           familyId,
           marriageDate: marriageDate.trim() || undefined,
           marriagePlace: marriagePlace.trim() || undefined,
+          previousMarriageDate: family.marriageDate,
+          previousMarriagePlace: family.marriagePlace,
+          person1Id: family.husbandId,
+          person2Id: family.wifeId,
           person1Name: husband?.name ?? 'Unknown',
           person2Name: wife?.name ?? 'Unknown',
+          childCount: Array.isArray(family.childrenIds) ? family.childrenIds.length : 0,
         };
         const result = await submitEdit('edit_marriage', familyId, editData);
         if (result.success) {
@@ -220,7 +228,8 @@ export default function EditMarriageScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(Colors: ColorPalette) {
+  return StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: Colors.background,
@@ -348,3 +357,4 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
 });
+}

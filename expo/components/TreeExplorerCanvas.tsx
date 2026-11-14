@@ -21,7 +21,7 @@ import {
 import Svg, { Path } from 'react-native-svg';
 import { Plus, Minus, Crosshair, Expand } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
-import Colors from '@/constants/colors';
+import { useColors, type ColorPalette } from '@/contexts/ThemeContext';
 import type { FamilyTreeData, GedcomIndividual } from '@/types/genealogy';
 import {
   TREE_MAX_NODES,
@@ -41,7 +41,7 @@ import {
 const MIN_SCALE = 0.35;
 const MAX_SCALE = 2.4;
 
-function sexColor(sex: GedcomIndividual['sex']): string {
+function sexColor(sex: GedcomIndividual['sex'], Colors: ColorPalette): string {
   if (sex === 'F') return Colors.female;
   if (sex === 'M') return Colors.male;
   return Colors.textSecondary;
@@ -62,6 +62,8 @@ export default function TreeExplorerCanvas({
   data,
   onOpenPerson,
 }: TreeExplorerCanvasProps) {
+  const Colors = useColors();
+  const styles = useMemo(() => createStyles(Colors), [Colors]);
   const [revealed, setRevealed] = useState(() => seedRevealedIds(focusId, data));
   const [viewportTick, setViewportTick] = useState(0);
 
@@ -383,6 +385,8 @@ function HudButton({
   onPress: () => void;
   label: string;
 }) {
+  const Colors = useColors();
+  const styles = useMemo(() => createStyles(Colors), [Colors]);
   return (
     <TouchableOpacity
       style={styles.hudBtn}
@@ -402,7 +406,9 @@ const TreeNodeView = React.memo(function TreeNodeView({
   node: TreeCanvasNode;
   onPress: (node: TreeCanvasNode) => void;
 }) {
-  const color = sexColor(node.person.sex);
+  const Colors = useColors();
+  const styles = useMemo(() => createStyles(Colors), [Colors]);
+  const color = sexColor(node.person.sex, Colors);
   return (
     <Pressable
       onPress={() => onPress(node)}
@@ -450,7 +456,8 @@ const TreeNodeView = React.memo(function TreeNodeView({
   prev.onPress === next.onPress
 );
 
-const styles = StyleSheet.create({
+function createStyles(Colors: ColorPalette) {
+  return StyleSheet.create({
   root: {
     flex: 1,
     backgroundColor: Colors.background,
@@ -582,3 +589,4 @@ const styles = StyleSheet.create({
     fontWeight: '500',
   },
 });
+}

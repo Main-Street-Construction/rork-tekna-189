@@ -19,30 +19,39 @@ import {
   AlertTriangle,
 } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
-import Colors from '@/constants/colors';
+import { useColors, type ColorPalette } from '@/contexts/ThemeContext';
 import { useFamilyTree } from '@/contexts/FamilyTreeContext';
 import { PendingEdit, GedcomIndividual, GedcomFamily, FamilyTreeData } from '@/types/genealogy';
+import {
+  PENDING_EDIT_TYPE_LABELS,
+  pendingEditSummary,
+} from '@/utils/pending-edit-display';
+import { findFamilyForParents } from '@/utils/family-admin';
 
-const EDIT_TYPE_LABELS: Record<string, string> = {
-  update_person: 'Edit Person',
-  add_person: 'Add Person',
-  add_child: 'Add Child',
-  add_spouse: 'Add Spouse',
-  link_spouses: 'Link Spouses',
-  edit_marriage: 'Edit Marriage',
-  link_child: 'Link Child',
-  edit_parent: 'Edit Parent',
-  remove_child: 'Remove Child',
-  unlink_spouses: 'Unlink Spouses',
-};
+const EDIT_TYPE_LABELS = PENDING_EDIT_TYPE_LABELS;
 
-type FilterType = 'all' | 'edits' | 'adds' | 'links';
+type FilterType = 'all' | 'edits' | 'adds' | 'links' | 'danger';
 
 function getFilterCategory(editType: string): FilterType {
   if (editType === 'update_person' || editType === 'edit_marriage') return 'edits';
   if (editType === 'add_person' || editType === 'add_child' || editType === 'add_spouse') return 'adds';
   if (editType === 'link_spouses' || editType === 'link_child' || editType === 'edit_parent' || editType === 'remove_child' || editType === 'unlink_spouses') return 'links';
+  if (editType === 'delete_person' || editType === 'merge_people') return 'danger';
   return 'all';
+}
+
+function familyLabelFromIds(
+  familyId: string | undefined,
+  treeData: FamilyTreeData | null,
+  getPerson: (id: string) => GedcomIndividual | undefined
+): string | undefined {
+  if (!familyId || !treeData) return familyId;
+  const fam = treeData.families.get(familyId);
+  if (!fam) return familyId;
+  const h = fam.husbandId ? getPerson(fam.husbandId)?.name : undefined;
+  const w = fam.wifeId ? getPerson(fam.wifeId)?.name : undefined;
+  const parts = [h, w].filter(Boolean);
+  return parts.length ? `${parts.join(' & ')} (${familyId})` : familyId;
 }
 
 interface ValidationIssue {
@@ -136,12 +145,39 @@ function validateEdit(edit: PendingEdit, treeData: FamilyTreeData | null): Valid
         }
       }
 
+      if (edit.edit_type === 'delete_person') {
+        const personId = (data.personId as string | undefined) ?? edit.target_id;
+        if (personId && treeData && !treeData.individuals.has(personId)) {
+          issues.push({ blocking: true, message: `Person ${personId} not found` });
+        }
+      }
+
+      if (edit.edit_type === 'merge_people') {
+        const keepId = data.keepId as string | undefined;
+        const mergeId = data.mergeId as string | undefined;
+        if (!keepId || !mergeId) {
+          issues.push({ blocking: true, message: 'Missing keep or merge person id' });
+        } else if (keepId === mergeId) {
+          issues.push({ blocking: true, message: 'Cannot merge a person with themselves' });
+        } else if (treeData) {
+          if (!treeData.individuals.has(keepId)) {
+            issues.push({ blocking: true, message: `Keep person ${keepId} not found` });
+          }
+          if (!treeData.individuals.has(mergeId)) {
+            issues.push({ blocking: true, message: `Merge person ${mergeId} not found` });
+          }
+        }
+      }
+
       return issues;
 }
 
 type SexType = 'M' | 'F' | 'U';
 
 export default function PendingEditsScreen() {
+  const Colors = useColors();
+  const styles = useMemo(() => createStyles(Colors), [Colors]);
+
   const router = useRouter();
   const {
     loadPendingEdits,
@@ -159,6 +195,8 @@ export default function PendingEditsScreen() {
     editParentFamily,
     unlinkSpouses,
     updateFamily,
+    deleteIndividualFromTree,
+    mergeIndividualsInTree,
     treeData,
     allocateGedcomId,
     refreshFromCloud,
@@ -240,7 +278,11 @@ export default function PendingEditsScreen() {
           sex,
           familiesAsSpouse: child.familiesAsSpouse ?? [],
         };
-        if (familyId) return await addChildToFamily(freshChild, familyId);
+        let resolvedFamilyId = familyId;
+        if (!resolvedFamilyId && parentId && localTree) {
+          resolvedFamilyId = findFamilyForParents(localTree, parentId, spouseId)?.id;
+        }
+        if (resolvedFamilyId) return await addChildToFamily(freshChild, resolvedFamilyId);
         if (parentId) return await createFamilyAndAddChild(freshChild, parentId, spouseId);
         return { success: false, error: 'Missing familyId or parentId' };
       }
@@ -275,7 +317,11 @@ export default function PendingEditsScreen() {
         const parentId = data.parentId as string | undefined;
         const spouseId = data.spouseId as string | undefined;
         if (!childId || !parentId) return { success: false, error: 'Missing child or parent' };
-        if (familyId) return await linkChildToFamily(childId, familyId);
+        let resolvedFamilyId = familyId;
+        if (!resolvedFamilyId && localTree) {
+          resolvedFamilyId = findFamilyForParents(localTree, parentId, spouseId)?.id;
+        }
+        if (resolvedFamilyId) return await linkChildToFamily(childId, resolvedFamilyId);
         const child = localTree?.individuals.get(childId);
         if (!child) return { success: false, error: 'Child not in local tree' };
         const created = await createFamilyWithParents(parentId, spouseId);
@@ -301,11 +347,22 @@ export default function PendingEditsScreen() {
         if (!familyId) return { success: false, error: 'Missing family' };
         return await unlinkSpouses(familyId);
       }
+      if (edit.edit_type === 'delete_person') {
+        const personId = (data.personId as string | undefined) ?? edit.target_id;
+        if (!personId) return { success: false, error: 'Missing person id' };
+        return await deleteIndividualFromTree(personId);
+      }
+      if (edit.edit_type === 'merge_people') {
+        const keepId = data.keepId as string;
+        const mergeId = data.mergeId as string;
+        if (!keepId || !mergeId) return { success: false, error: 'Missing keep or merge id' };
+        return await mergeIndividualsInTree(keepId, mergeId);
+      }
       return { success: false, error: 'Unknown edit type' };
     } catch (e) {
       return { success: false, error: String(e) };
     }
-  }, [updatePerson, addPerson, addChildToFamily, createFamilyAndAddChild, createFamilyWithParents, addSpouse, linkExistingSpouses, linkChildToFamily, removeChildFromFamily, editParentFamily, unlinkSpouses, updateFamily, allocateGedcomId, getTreeSnapshot, getChildSex]);
+  }, [updatePerson, addPerson, addChildToFamily, createFamilyAndAddChild, createFamilyWithParents, addSpouse, linkExistingSpouses, linkChildToFamily, removeChildFromFamily, editParentFamily, unlinkSpouses, updateFamily, deleteIndividualFromTree, mergeIndividualsInTree, allocateGedcomId, getTreeSnapshot, getChildSex]);
 
   const handleApprove = useCallback(async (edit: PendingEdit) => {
     setProcessingId(edit.id);
@@ -334,10 +391,17 @@ export default function PendingEditsScreen() {
       edit.edit_type === 'add_child'
         ? `\nSex: ${sex === 'M' ? 'Male' : sex === 'F' ? 'Female' : 'Unknown'}`
         : '';
+    const summary = pendingEditSummary(edit);
+    const dangerNote =
+      edit.edit_type === 'delete_person'
+        ? '\n\nThis permanently deletes the person from the database.'
+        : edit.edit_type === 'merge_people'
+          ? '\n\nThe duplicate record will be merged away; matching parent families may collapse.'
+          : '';
 
     Alert.alert(
       'Approve Edit',
-      `Apply this ${EDIT_TYPE_LABELS[edit.edit_type] ?? edit.edit_type}?${sexNote}`,
+      `Apply this ${EDIT_TYPE_LABELS[edit.edit_type] ?? edit.edit_type}?\n${summary}${sexNote}${dangerNote}`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -404,14 +468,16 @@ export default function PendingEditsScreen() {
     setRejectNote('');
   }, []);
 
-  const renderDiffRow = (label: string, oldVal: string | undefined, newVal: string | undefined) => {
-    if (oldVal === newVal && !newVal) return null;
-    const changed = oldVal !== newVal;
+  const renderDiffRow = (label: string, oldVal: string | undefined | null, newVal: string | undefined | null) => {
+    const oldText = oldVal?.toString().trim() || undefined;
+    const newText = newVal?.toString().trim() || undefined;
+    if (!oldText && !newText) return null;
+    const changed = oldText !== newText;
     return (
       <View key={label} style={[styles.diffRow, changed && styles.diffRowChanged]}>
         <Text style={styles.diffLabel}>{label}</Text>
-        {changed && oldVal ? <Text style={styles.diffOld}>{oldVal}</Text> : null}
-        <Text style={styles.diffNew}>{newVal ?? '(empty)'}</Text>
+        {changed && oldText ? <Text style={styles.diffOld}>{oldText}</Text> : null}
+        <Text style={styles.diffNew}>{newText ?? '(empty)'}</Text>
       </View>
     );
   };
@@ -422,80 +488,208 @@ export default function PendingEditsScreen() {
 
     if (edit.edit_type === 'update_person') {
       const ind = data.individual as GedcomIndividual | undefined;
+      const previous = data.previous as GedcomIndividual | undefined;
       const current = ind ? getPerson(ind.id) : undefined;
+      const before = previous ?? current;
       if (ind) {
-        rows.push(renderDiffRow('Name', current?.name, ind.name));
-        rows.push(renderDiffRow('Birth Date', current?.birthDate, ind.birthDate));
-        rows.push(renderDiffRow('Birth Place', current?.birthPlace, ind.birthPlace));
-        rows.push(renderDiffRow('Death Date', current?.deathDate, ind.deathDate));
-        rows.push(renderDiffRow('Death Place', current?.deathPlace, ind.deathPlace));
-        rows.push(renderDiffRow('Occupation', current?.occupation, ind.occupation));
-        rows.push(renderDiffRow('Note', current?.note, ind.note));
-        rows.push(renderDiffRow('Sex', current?.sex, ind.sex));
+        rows.push(renderDiffRow('Name', before?.name, ind.name));
+        rows.push(renderDiffRow('Birth Date', before?.birthDate, ind.birthDate));
+        rows.push(renderDiffRow('Birth Place', before?.birthPlace, ind.birthPlace));
+        rows.push(renderDiffRow('Death Date', before?.deathDate, ind.deathDate));
+        rows.push(renderDiffRow('Death Place', before?.deathPlace, ind.deathPlace));
+        rows.push(renderDiffRow('Occupation', before?.occupation, ind.occupation));
+        rows.push(renderDiffRow('Note', before?.note, ind.note));
+        rows.push(renderDiffRow('Sex', before?.sex, ind.sex));
+        rows.push(renderDiffRow('ID', undefined, ind.id));
       }
     }
 
     if (edit.edit_type === 'edit_marriage') {
       const familyId = data.familyId as string;
       const family = treeData?.families.get(familyId);
-      rows.push(renderDiffRow('Marriage Date', family?.marriageDate, data.marriageDate as string));
-      rows.push(renderDiffRow('Marriage Place', family?.marriagePlace, data.marriagePlace as string));
+      const p1 = (data.person1Name as string) || (family?.husbandId ? getPerson(family.husbandId)?.name : undefined);
+      const p2 = (data.person2Name as string) || (family?.wifeId ? getPerson(family.wifeId)?.name : undefined);
+      if (p1) rows.push(renderDiffRow('Spouse 1', undefined, p1));
+      if (p2) rows.push(renderDiffRow('Spouse 2', undefined, p2));
+      rows.push(renderDiffRow('Family', undefined, familyLabelFromIds(familyId, treeData, getPerson)));
+      rows.push(renderDiffRow(
+        'Marriage Date',
+        (data.previousMarriageDate as string) || family?.marriageDate,
+        data.marriageDate as string
+      ));
+      rows.push(renderDiffRow(
+        'Marriage Place',
+        (data.previousMarriagePlace as string) || family?.marriagePlace,
+        data.marriagePlace as string
+      ));
+      if (data.childCount != null) {
+        rows.push(renderDiffRow('Children in family', undefined, String(data.childCount)));
+      }
     }
 
     if (['add_person', 'add_child', 'add_spouse'].includes(edit.edit_type)) {
       const ind = (data.individual ?? data.child ?? data.spouse) as GedcomIndividual | undefined;
       if (ind) {
         rows.push(renderDiffRow('Name', undefined, ind.name));
+        rows.push(renderDiffRow('Given name', undefined, ind.givenName));
+        rows.push(renderDiffRow('Surname', undefined, ind.surname));
         rows.push(renderDiffRow('Birth Date', undefined, ind.birthDate));
         rows.push(renderDiffRow('Birth Place', undefined, ind.birthPlace));
+        rows.push(renderDiffRow('Death Date', undefined, ind.deathDate));
+        rows.push(renderDiffRow('Death Place', undefined, ind.deathPlace));
         if (edit.edit_type !== 'add_child') {
           rows.push(renderDiffRow('Sex', undefined, ind.sex));
         }
+        rows.push(renderDiffRow('Occupation', undefined, ind.occupation));
+        rows.push(renderDiffRow('Note', undefined, ind.note));
+        rows.push(renderDiffRow('ID', undefined, ind.id));
       }
       if (edit.edit_type === 'add_child') {
         const parentId = data.parentId as string | undefined;
         const spouseId = data.spouseId as string | undefined;
         const familyId = data.familyId as string | undefined;
-        if (parentId) rows.push(renderDiffRow('Parent', undefined, getPerson(parentId)?.name ?? parentId));
-        if (spouseId) rows.push(renderDiffRow('Spouse', undefined, getPerson(spouseId)?.name ?? spouseId));
-        if (familyId) rows.push(renderDiffRow('Family ID', undefined, familyId));
+        const parentName = (data.parentName as string) || (parentId ? getPerson(parentId)?.name : undefined);
+        const spouseName = (data.spouseName as string) || (spouseId ? getPerson(spouseId)?.name : undefined);
+        if (parentName) rows.push(renderDiffRow('Parent', undefined, parentName));
+        if (parentId) rows.push(renderDiffRow('Parent ID', undefined, parentId));
+        if (spouseName) rows.push(renderDiffRow('Other parent', undefined, spouseName));
+        if (spouseId) rows.push(renderDiffRow('Other parent ID', undefined, spouseId));
+        rows.push(renderDiffRow(
+          'Family',
+          undefined,
+          (data.familyLabel as string) || familyLabelFromIds(familyId, treeData, getPerson) || (data.createNewFamily ? 'Create new family' : undefined)
+        ));
+        if (typeof data.createNewFamily === 'boolean') {
+          rows.push(renderDiffRow('New family?', undefined, data.createNewFamily ? 'Yes' : 'No — existing'));
+        }
       }
       if (edit.edit_type === 'add_spouse') {
         const personId = data.personId as string | undefined;
-        if (personId) rows.push(renderDiffRow('Target Person', undefined, getPerson(personId)?.name ?? personId));
+        rows.push(renderDiffRow(
+          'Target Person',
+          undefined,
+          (data.personName as string) || (personId ? getPerson(personId)?.name : undefined) || personId
+        ));
+        if (personId) rows.push(renderDiffRow('Target ID', undefined, personId));
         rows.push(renderDiffRow('Marriage Date', undefined, data.marriageDate as string));
         rows.push(renderDiffRow('Marriage Place', undefined, data.marriagePlace as string));
       }
     }
 
     if (edit.edit_type === 'link_spouses') {
-      rows.push(renderDiffRow('Person 1', undefined, data.person1Name as string));
-      rows.push(renderDiffRow('Person 2', undefined, data.person2Name as string));
+      const p1 = (data.person1Name as string) || (data.person1Id ? getPerson(data.person1Id as string)?.name : undefined);
+      const p2 = (data.person2Name as string) || (data.person2Id ? getPerson(data.person2Id as string)?.name : undefined);
+      rows.push(renderDiffRow('Person 1', undefined, p1 ?? (data.person1Id as string)));
+      rows.push(renderDiffRow('Person 1 birth', undefined, data.person1BirthDate as string));
+      rows.push(renderDiffRow('Person 1 sex', undefined, data.person1Sex as string));
+      rows.push(renderDiffRow('Person 1 ID', undefined, data.person1Id as string));
+      rows.push(renderDiffRow('Person 2', undefined, p2 ?? (data.person2Id as string)));
+      rows.push(renderDiffRow('Person 2 birth', undefined, data.person2BirthDate as string));
+      rows.push(renderDiffRow('Person 2 sex', undefined, data.person2Sex as string));
+      rows.push(renderDiffRow('Person 2 ID', undefined, data.person2Id as string));
       rows.push(renderDiffRow('Marriage Date', undefined, data.marriageDate as string));
       rows.push(renderDiffRow('Marriage Place', undefined, data.marriagePlace as string));
     }
 
-    return rows;
+    if (edit.edit_type === 'link_child') {
+      const childId = data.childId as string | undefined;
+      const parentId = data.parentId as string | undefined;
+      const spouseId = data.spouseId as string | undefined;
+      const familyId = data.familyId as string | undefined;
+      rows.push(renderDiffRow('Child', undefined, (data.childName as string) || (childId ? getPerson(childId)?.name : undefined) || childId));
+      rows.push(renderDiffRow('Child ID', undefined, childId));
+      rows.push(renderDiffRow('Birth Date', undefined, data.childBirthDate as string));
+      rows.push(renderDiffRow('Birth Place', undefined, data.childBirthPlace as string));
+      rows.push(renderDiffRow('Sex', undefined, data.childSex as string));
+      rows.push(renderDiffRow('Parent', undefined, (data.parentName as string) || (parentId ? getPerson(parentId)?.name : undefined) || parentId));
+      rows.push(renderDiffRow('Parent ID', undefined, parentId));
+      rows.push(renderDiffRow('Other parent', undefined, (data.spouseName as string) || (spouseId ? getPerson(spouseId)?.name : undefined)));
+      rows.push(renderDiffRow('Other parent ID', undefined, spouseId));
+      rows.push(renderDiffRow('Family', undefined, familyLabelFromIds(familyId, treeData, getPerson)));
+      if (typeof data.createNewFamily === 'boolean') {
+        rows.push(renderDiffRow('New family?', undefined, data.createNewFamily ? 'Yes' : 'No — existing'));
+      }
+    }
+
+    if (edit.edit_type === 'edit_parent' || edit.edit_type === 'remove_child') {
+      const childId = data.childId as string | undefined;
+      const familyId = data.familyId as string | undefined;
+      rows.push(renderDiffRow('Child', undefined, (data.childName as string) || (childId ? getPerson(childId)?.name : undefined) || childId));
+      rows.push(renderDiffRow('Child ID', undefined, childId));
+      const parentNames = data.parentNames as string[] | undefined;
+      if (parentNames?.length) {
+        rows.push(renderDiffRow('Parents', undefined, parentNames.join(' & ')));
+      } else {
+        rows.push(renderDiffRow('Husband', undefined, data.husbandName as string));
+        rows.push(renderDiffRow('Wife', undefined, data.wifeName as string));
+      }
+      rows.push(renderDiffRow('Family', undefined, familyLabelFromIds(familyId, treeData, getPerson)));
+    }
+
+    if (edit.edit_type === 'unlink_spouses') {
+      const familyId = data.familyId as string | undefined;
+      rows.push(renderDiffRow('Person 1', undefined, (data.person1Name as string) || (data.person1Id ? getPerson(data.person1Id as string)?.name : undefined)));
+      rows.push(renderDiffRow('Person 1 ID', undefined, data.person1Id as string));
+      rows.push(renderDiffRow('Person 2', undefined, (data.person2Name as string) || (data.person2Id ? getPerson(data.person2Id as string)?.name : undefined)));
+      rows.push(renderDiffRow('Person 2 ID', undefined, data.person2Id as string));
+      rows.push(renderDiffRow('Marriage Date', undefined, data.marriageDate as string));
+      rows.push(renderDiffRow('Marriage Place', undefined, data.marriagePlace as string));
+      rows.push(renderDiffRow('Children in family', undefined, data.childCount != null ? String(data.childCount) : undefined));
+      rows.push(renderDiffRow('Family', undefined, familyLabelFromIds(familyId, treeData, getPerson)));
+    }
+
+    if (edit.edit_type === 'delete_person') {
+      const person = (data.person as GedcomIndividual | undefined) || (edit.target_id ? getPerson(edit.target_id) : undefined);
+      if (person) {
+        rows.push(renderDiffRow('Name', undefined, person.name));
+        rows.push(renderDiffRow('Given name', undefined, person.givenName));
+        rows.push(renderDiffRow('Surname', undefined, person.surname));
+        rows.push(renderDiffRow('Sex', undefined, person.sex));
+        rows.push(renderDiffRow('Birth Date', undefined, person.birthDate));
+        rows.push(renderDiffRow('Birth Place', undefined, person.birthPlace));
+        rows.push(renderDiffRow('Death Date', undefined, person.deathDate));
+        rows.push(renderDiffRow('Death Place', undefined, person.deathPlace));
+        rows.push(renderDiffRow('Occupation', undefined, person.occupation));
+        rows.push(renderDiffRow('Note', undefined, person.note));
+        rows.push(renderDiffRow('ID', undefined, person.id));
+      }
+      const parents = data.parentNames as string[] | undefined;
+      const spouses = data.spouseNames as string[] | undefined;
+      const kids = data.childNames as string[] | undefined;
+      if (parents?.length) rows.push(renderDiffRow('Parents', undefined, parents.join(', ')));
+      if (spouses?.length) rows.push(renderDiffRow('Spouses', undefined, spouses.join(', ')));
+      if (kids?.length) rows.push(renderDiffRow('Children', undefined, kids.join(', ')));
+      if (data.reason) rows.push(renderDiffRow('Reason', undefined, data.reason as string));
+    }
+
+    if (edit.edit_type === 'merge_people') {
+      const keep = (data.keepPerson as GedcomIndividual | undefined) || (data.keepId ? getPerson(data.keepId as string) : undefined);
+      const merge = (data.mergePerson as GedcomIndividual | undefined) || (data.mergeId ? getPerson(data.mergeId as string) : undefined);
+      rows.push(renderDiffRow('Keep', undefined, (data.keepName as string) || keep?.name || (data.keepId as string)));
+      rows.push(renderDiffRow('Keep birth', undefined, keep?.birthDate));
+      rows.push(renderDiffRow('Keep birth place', undefined, keep?.birthPlace));
+      rows.push(renderDiffRow('Keep death', undefined, keep?.deathDate));
+      rows.push(renderDiffRow('Keep death place', undefined, keep?.deathPlace));
+      rows.push(renderDiffRow('Keep sex', undefined, keep?.sex));
+      rows.push(renderDiffRow('Keep occupation', undefined, keep?.occupation));
+      rows.push(renderDiffRow('Keep note', undefined, keep?.note));
+      rows.push(renderDiffRow('Keep ID', undefined, keep?.id || (data.keepId as string)));
+      rows.push(renderDiffRow('Merge away', undefined, (data.mergeName as string) || merge?.name || (data.mergeId as string)));
+      rows.push(renderDiffRow('Merge birth', undefined, merge?.birthDate));
+      rows.push(renderDiffRow('Merge birth place', undefined, merge?.birthPlace));
+      rows.push(renderDiffRow('Merge death', undefined, merge?.deathDate));
+      rows.push(renderDiffRow('Merge death place', undefined, merge?.deathPlace));
+      rows.push(renderDiffRow('Merge sex', undefined, merge?.sex));
+      rows.push(renderDiffRow('Merge occupation', undefined, merge?.occupation));
+      rows.push(renderDiffRow('Merge note', undefined, merge?.note));
+      rows.push(renderDiffRow('Merge ID', undefined, merge?.id || (data.mergeId as string)));
+      rows.push(renderDiffRow('Reason', undefined, (data.reason as string) || (data.note as string)));
+    }
+
+    return rows.filter(Boolean);
   }, [getPerson, treeData]);
 
-  const renderEditSummary = (edit: PendingEdit) => {
-    const data = edit.data as Record<string, unknown>;
-    if (edit.edit_type === 'update_person') return (data.individual as GedcomIndividual)?.name ?? edit.target_id;
-    if (edit.edit_type === 'add_person') return (data.individual as GedcomIndividual)?.name ?? 'New person';
-    if (edit.edit_type === 'add_child') return (data.child as GedcomIndividual)?.name ?? 'New child';
-    if (edit.edit_type === 'add_spouse') return (data.spouse as GedcomIndividual)?.name ?? 'New spouse';
-    if (edit.edit_type === 'link_spouses') {
-      const p1 = data.person1Name as string;
-      const p2 = data.person2Name as string;
-      return p1 && p2 ? `${p1} & ${p2}` : 'Link spouses';
-    }
-    if (edit.edit_type === 'edit_marriage') {
-      const p1 = data.person1Name as string;
-      const p2 = data.person2Name as string;
-      return p1 && p2 ? `${p1} & ${p2}` : 'Edit marriage';
-    }
-    return edit.target_id;
-  };
+  const renderEditSummary = (edit: PendingEdit) => pendingEditSummary(edit);
 
   const submitterLabel = (edit: PendingEdit) => {
     const data = edit.data as Record<string, unknown>;
@@ -527,6 +721,7 @@ export default function PendingEditsScreen() {
     { key: 'edits', label: 'Edits' },
     { key: 'adds', label: 'Adds' },
     { key: 'links', label: 'Links' },
+    { key: 'danger', label: 'Danger' },
   ];
 
   return (
@@ -601,11 +796,17 @@ export default function PendingEditsScreen() {
                 const isProcessing = processingId === edit.id;
                 const issues = validateEdit(edit, treeData);
                 const hasBlocking = issues.some((i) => i.blocking);
-                const personId = edit.edit_type === 'update_person'
-                  ? (edit.data as Record<string, unknown>).individual
-                    ? ((edit.data as Record<string, unknown>).individual as GedcomIndividual).id
-                    : edit.target_id
-                  : null;
+                const editData = edit.data as Record<string, unknown>;
+                const personId =
+                  edit.edit_type === 'update_person'
+                    ? ((editData.individual as GedcomIndividual | undefined)?.id ?? edit.target_id)
+                    : edit.edit_type === 'delete_person'
+                      ? ((editData.personId as string | undefined) ?? edit.target_id)
+                      : edit.edit_type === 'merge_people'
+                        ? (editData.keepId as string | undefined)
+                        : edit.edit_type === 'link_child' || edit.edit_type === 'remove_child'
+                          ? (editData.childId as string | undefined)
+                          : null;
 
                 return (
                   <View key={edit.id} style={styles.editCard}>
@@ -723,7 +924,8 @@ export default function PendingEditsScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(Colors: ColorPalette) {
+  return StyleSheet.create({
   container: { flex: 1, backgroundColor: Colors.background },
   scrollContent: { paddingBottom: 40 },
   centered: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 40, gap: 12 },
@@ -760,7 +962,7 @@ const styles = StyleSheet.create({
   editSummary: { fontSize: 15, fontWeight: '600' as const, color: Colors.text, marginTop: 2 },
   submitterText: { fontSize: 11, color: Colors.textLight, marginTop: 4 },
   submitterBanner: {
-    backgroundColor: 'rgba(200, 149, 108, 0.1)',
+    backgroundColor: Colors.accentMuted,
     borderRadius: 10,
     padding: 12,
     marginBottom: 12,
@@ -769,12 +971,12 @@ const styles = StyleSheet.create({
   submitterBannerLabel: { fontSize: 11, fontWeight: '600' as const, color: Colors.textSecondary, textTransform: 'uppercase' as const },
   submitterBannerValue: { fontSize: 15, fontWeight: '600' as const, color: Colors.text },
   submitterBannerMeta: { fontSize: 12, color: Colors.textSecondary, marginTop: 2 },
-  warningBanner: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 14, paddingVertical: 8, backgroundColor: 'rgba(196, 92, 74, 0.08)' },
+  warningBanner: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 14, paddingVertical: 8, backgroundColor: Colors.dangerMuted },
   warningText: { flex: 1, fontSize: 11, color: Colors.danger },
   refreshLink: { fontSize: 11, fontWeight: '600' as const, color: Colors.accent },
   editDetails: { borderTopWidth: 1, borderTopColor: Colors.divider, padding: 14 },
   diffRow: { paddingVertical: 6 },
-  diffRowChanged: { backgroundColor: 'rgba(74, 124, 89, 0.06)', borderRadius: 6, paddingHorizontal: 8, marginVertical: 2 },
+  diffRowChanged: { backgroundColor: Colors.successMuted, borderRadius: 6, paddingHorizontal: 8, marginVertical: 2 },
   diffLabel: { fontSize: 11, color: Colors.textSecondary, fontWeight: '600' as const },
   diffOld: { fontSize: 12, color: Colors.danger, textDecorationLine: 'line-through' },
   diffNew: { fontSize: 13, color: Colors.text, fontWeight: '500' as const },
@@ -784,9 +986,10 @@ const styles = StyleSheet.create({
   rejectInput: { borderWidth: 1, borderColor: Colors.cardBorder, borderRadius: 8, padding: 10, fontSize: 14, color: Colors.text, minHeight: 60, textAlignVertical: 'top' },
   editActions: { flexDirection: 'row', gap: 10, marginTop: 12 },
   actionBtn: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', paddingVertical: 11, borderRadius: 10, gap: 6 },
-  rejectBtn: { backgroundColor: 'rgba(196, 92, 74, 0.1)', borderWidth: 1, borderColor: 'rgba(196, 92, 74, 0.2)' },
+  rejectBtn: { backgroundColor: Colors.dangerMuted, borderWidth: 1, borderColor: Colors.danger },
   rejectBtnText: { fontSize: 14, fontWeight: '600' as const, color: Colors.danger },
   approveBtn: { backgroundColor: Colors.success },
   approveBtnDisabled: { opacity: 0.5 },
   approveBtnText: { fontSize: 14, fontWeight: '600' as const, color: Colors.white },
 });
+}

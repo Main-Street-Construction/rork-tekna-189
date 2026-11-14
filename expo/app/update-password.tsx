@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect, useRef } from 'react';
+import React, {useState, useCallback, useEffect, useRef, useMemo} from 'react';
 import {
   View,
   Text,
@@ -15,11 +15,14 @@ import { Stack, useRouter } from 'expo-router';
 import { ShieldCheck, Lock, Eye, EyeOff, CheckCircle, ArrowLeft, AlertTriangle } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import { useMutation } from '@tanstack/react-query';
-import Colors from '@/constants/colors';
+import { useColors, type ColorPalette } from '@/contexts/ThemeContext';
 import { supabase } from '@/lib/supabase';
 import { useAndroidKeyboardScroll } from '@/lib/keyboard-scroll';
 
 export default function UpdatePasswordScreen() {
+  const Colors = useColors();
+  const styles = useMemo(() => createStyles(Colors), [Colors]);
+
   const router = useRouter();
 
   const [newPassword, setNewPassword] = useState<string>('');
@@ -311,7 +314,8 @@ export default function UpdatePasswordScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(Colors: ColorPalette) {
+  return StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: Colors.background,
@@ -486,3 +490,4 @@ const styles = StyleSheet.create({
     borderRadius: 2,
   },
 });
+}

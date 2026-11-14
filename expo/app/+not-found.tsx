@@ -1,9 +1,13 @@
+import { useMemo } from 'react';
 import { Link, Stack } from "expo-router";
 import { StyleSheet, Text, View } from "react-native";
 import { TreePine } from "lucide-react-native";
-import Colors from "@/constants/colors";
+import { useColors, type ColorPalette } from '@/contexts/ThemeContext';
 
 export default function NotFoundScreen() {
+  const Colors = useColors();
+  const styles = useMemo(() => createStyles(Colors), [Colors]);
+
   return (
     <>
       <Stack.Screen options={{ title: "Not Found" }} />
@@ -21,7 +25,8 @@ export default function NotFoundScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(Colors: ColorPalette) {
+  return StyleSheet.create({
   container: {
     flex: 1,
     alignItems: "center",
@@ -53,3 +58,4 @@ const styles = StyleSheet.create({
     fontWeight: "600" as const,
   },
 });
+}

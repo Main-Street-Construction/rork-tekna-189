@@ -16,11 +16,12 @@ import {
 import { useLocalSearchParams, useRouter, Stack } from 'expo-router';
 import { UserPlus, User, Calendar, MapPin, Search, Check, Users } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
-import Colors from '@/constants/colors';
+import { useColors, type ColorPalette } from '@/contexts/ThemeContext';
 import { useFamilyTree } from '@/contexts/FamilyTreeContext';
 import { GedcomIndividual } from '@/types/genealogy';
 import { getSpouses } from '@/utils/gedcom-parser';
 import { findSimilarIndividuals } from '@/utils/name-utils';
+import { findFamilyForParents } from '@/utils/family-admin';
 import { modalScreenOptions } from '@/utils/navigation';
 import ModalCloseButton from '@/components/ModalCloseButton';
 
@@ -31,6 +32,9 @@ function safeFamiliesAsSpouse(arr: string[] | undefined | null): string[] {
 type SexType = 'M' | 'F' | 'U';
 
 export default function AddChildScreen() {
+  const Colors = useColors();
+  const styles = useMemo(() => createStyles(Colors), [Colors]);
+
   const { parentId } = useLocalSearchParams<{ parentId: string }>();
   const router = useRouter();
   const {
@@ -81,9 +85,28 @@ export default function AddChildScreen() {
   }, [parent, treeData]);
 
   const [selectedFamilyId, setSelectedFamilyId] = useState<string | null>(null);
-  const [selectedSpouseId, setSelectedSpouseId] = useState<string | null>(
-    spouses.length === 1 ? spouses[0].id : null
-  );
+  const [selectedSpouseId, setSelectedSpouseId] = useState<string | null>(null);
+  const [familyInitialized, setFamilyInitialized] = useState(false);
+
+  // Prefer the existing family for this parent (auto-select sole family / sole spouse pair).
+  useEffect(() => {
+    if (!parentId || !treeData || familyInitialized) return;
+    if (existingFamilies.length === 1) {
+      setSelectedFamilyId(existingFamilies[0].id);
+      setFamilyInitialized(true);
+      return;
+    }
+    if (spouses.length === 1) {
+      const match = findFamilyForParents(treeData, parentId, spouses[0].id);
+      setSelectedSpouseId(spouses[0].id);
+      if (match) setSelectedFamilyId(match.id);
+      setFamilyInitialized(true);
+      return;
+    }
+    if (existingFamilies.length === 0 && spouses.length === 0) {
+      setFamilyInitialized(true);
+    }
+  }, [parentId, treeData, existingFamilies, spouses, familyInitialized]);
 
   const [givenName, setGivenName] = useState<string>('');
   const [middleName, setMiddleName] = useState<string>('');
@@ -149,14 +172,29 @@ export default function AddChildScreen() {
         familyAsChild: undefined,
       };
 
+      // Resolve family up front: selected family, or existing family for parent/spouse pair.
+      let resolvedFamilyId = selectedFamilyId;
+      if (!resolvedFamilyId && treeData) {
+        const match = findFamilyForParents(treeData, parentId, selectedSpouseId);
+        if (match) resolvedFamilyId = match.id;
+      }
+
+      const parentName = parent.name;
+      const spouseName = selectedSpouseId ? getPerson(selectedSpouseId)?.name : undefined;
+      const familyLabel = resolvedFamilyId ? getFamilyLabel(resolvedFamilyId) : undefined;
+
       const needsApproval = !isAdmin;
 
       if (needsApproval) {
         const editData: Record<string, unknown> = {
           child: newChild,
           parentId,
-          familyId: selectedFamilyId ?? undefined,
+          parentName,
+          familyId: resolvedFamilyId ?? undefined,
+          familyLabel,
           spouseId: selectedSpouseId ?? undefined,
+          spouseName,
+          createNewFamily: !resolvedFamilyId,
         };
         const result = await submitEdit('add_child', newChild.id, editData);
         if (result.success) {
@@ -172,8 +210,8 @@ export default function AddChildScreen() {
       } else {
         let result: { success: boolean; error?: string };
 
-        if (selectedFamilyId) {
-          result = await addChildToFamily(newChild, selectedFamilyId);
+        if (resolvedFamilyId) {
+          result = await addChildToFamily(newChild, resolvedFamilyId);
         } else {
           const famResult = await createFamilyAndAddChild(
             newChild,
@@ -196,7 +234,7 @@ export default function AddChildScreen() {
     } finally {
       setIsSaving(false);
     }
-  }, [parent, parentId, givenName, middleName, surname, sex, birthDate, birthPlace, selectedFamilyId, selectedSpouseId, allocateGedcomId, addChildToFamily, createFamilyAndAddChild, router, isAdmin, submitEdit]);
+  }, [parent, parentId, treeData, givenName, middleName, surname, sex, birthDate, birthPlace, selectedFamilyId, selectedSpouseId, allocateGedcomId, addChildToFamily, createFamilyAndAddChild, router, isAdmin, submitEdit, getPerson, getFamilyLabel]);
 
   const handleSave = useCallback(async () => {
     if (!parent || !parentId || !treeData) return;
@@ -323,6 +361,7 @@ export default function AddChildScreen() {
                     ]}
                     onPress={() => {
                       setSelectedFamilyId(fam.id);
+                      setFamilyInitialized(true);
                       Haptics.selectionAsync();
                     }}
                   >
@@ -344,6 +383,7 @@ export default function AddChildScreen() {
                   ]}
                   onPress={() => {
                     setSelectedFamilyId(null);
+                    setFamilyInitialized(true);
                     Haptics.selectionAsync();
                   }}
                 >
@@ -351,7 +391,7 @@ export default function AddChildScreen() {
                     styles.familyOptionText,
                     selectedFamilyId === null && styles.familyOptionTextSelected,
                   ]}>
-                    Create new family
+                    Create new family (different co-parent)
                   </Text>
                   {selectedFamilyId === null && (
                     <Check size={18} color={Colors.accent} />
@@ -366,7 +406,9 @@ export default function AddChildScreen() {
                   <Users size={16} color={Colors.accent} />
                   <Text style={styles.sectionTitle}>Other Parent</Text>
                 </View>
-                <Text style={styles.hint}>Select the co-parent for this new family.</Text>
+                <Text style={styles.hint}>
+                  Select the co-parent. If a family already exists for that pair, the child is added there instead of creating a duplicate.
+                </Text>
                 {spouses.map((sp) => (
                   <TouchableOpacity
                     key={sp.id}
@@ -376,6 +418,10 @@ export default function AddChildScreen() {
                     ]}
                     onPress={() => {
                       setSelectedSpouseId(sp.id);
+                      if (treeData && parentId) {
+                        const match = findFamilyForParents(treeData, parentId, sp.id);
+                        if (match) setSelectedFamilyId(match.id);
+                      }
                       Haptics.selectionAsync();
                     }}
                   >
@@ -519,7 +565,8 @@ export default function AddChildScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(Colors: ColorPalette) {
+  return StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: Colors.background,
@@ -616,7 +663,7 @@ const styles = StyleSheet.create({
   },
   familyOptionSelected: {
     borderColor: Colors.accent,
-    backgroundColor: 'rgba(200, 149, 108, 0.08)',
+    backgroundColor: Colors.accentMuted,
   },
   familyOptionText: {
     fontSize: 14,
@@ -715,3 +762,4 @@ const styles = StyleSheet.create({
     borderColor: Colors.cardBorder,
   },
 });
+}

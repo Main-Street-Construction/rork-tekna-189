@@ -1,7 +1,7 @@
-import React, { useCallback, useEffect, useRef } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Animated, Platform } from 'react-native';
 import { Crown, ChevronDown as DownArrow, Sparkles } from 'lucide-react-native';
-import Colors from '@/constants/colors';
+import { useColors, type ColorPalette } from '@/contexts/ThemeContext';
 import { GedcomIndividual, FamilyTreeData } from '@/types/genealogy';
 import { CommonAncestorResult } from '@/utils/relationship';
 
@@ -37,6 +37,8 @@ export default React.memo(function RelationshipPathView({
   onPersonPress,
   isCapture = false,
 }: RelationshipPathViewProps) {
+  const Colors = useColors();
+  const styles = useMemo(() => createStyles(Colors), [Colors]);
   const handlePress = useCallback(
     (personId: string) => {
       const person = data.individuals.get(personId);
@@ -298,7 +300,8 @@ export default React.memo(function RelationshipPathView({
   );
 });
 
-const styles = StyleSheet.create({
+function createStyles(Colors: ColorPalette) {
+  return StyleSheet.create({
   container: {
     flex: 1,
   },
@@ -674,3 +677,4 @@ const styles = StyleSheet.create({
     fontStyle: 'italic' as const,
   },
 });
+}
