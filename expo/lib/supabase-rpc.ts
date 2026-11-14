@@ -117,8 +117,8 @@ export async function registerPushToken(
   platform: string
 ): Promise<{ success: boolean; error?: string }> {
   const { data, error } = await supabase.rpc('register_push_token', {
-    expo_push_token: expoPushToken,
-    platform,
+    p_expo_push_token: expoPushToken,
+    p_platform: platform,
   });
   if (error) return { success: false, error: error.message };
   const result = data as { success: boolean; error?: string };
@@ -155,7 +155,7 @@ export async function getNextGedcomId(
 }
 
 export async function unregisterPushToken(expoPushToken: string): Promise<void> {
-  await supabase.rpc('unregister_push_token', { expo_push_token: expoPushToken });
+  await supabase.rpc('unregister_push_token', { p_expo_push_token: expoPushToken });
 }
 
 export interface AdminUserRow {

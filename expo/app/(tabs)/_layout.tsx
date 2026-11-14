@@ -1,7 +1,8 @@
 import { Tabs } from 'expo-router';
 import { Search, Clock, User, GitFork } from 'lucide-react-native';
-import React, { useMemo } from 'react';
-import { useColors, type ColorPalette } from '@/contexts/ThemeContext';
+import React from 'react';
+import { DeviceEventEmitter } from 'react-native';
+import { useColors } from '@/contexts/ThemeContext';
 import { useFamilyTree } from '@/contexts/FamilyTreeContext';
 
 export default function TabLayout() {
@@ -38,6 +39,11 @@ export default function TabLayout() {
         options={{
           title: 'Relations',
           tabBarIcon: ({ color, size }) => <GitFork size={size} color={color} />,
+        }}
+        listeners={{
+          tabPress: () => {
+            DeviceEventEmitter.emit('tekna-relationship-tab-press');
+          },
         }}
       />
       <Tabs.Screen

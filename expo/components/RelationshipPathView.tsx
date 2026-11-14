@@ -15,8 +15,8 @@ interface RelationshipPathViewProps {
 }
 
 const BRANCH_COLORS = {
-  left: { start: '#3B6B4A', mid: '#5B8A6A', end: '#5B7FA6' },
-  right: { start: '#3B6B4A', mid: '#7A6B5A', end: '#B06A8F' },
+  left: { start: '#5A7A64', mid: '#6A8574', end: '#5B7FA6' },
+  right: { start: '#5A7A64', mid: '#7A6B5A', end: '#B06A8F' },
 };
 
 function getConnectorColor(index: number, total: number, side: 'left' | 'right'): string {
@@ -125,7 +125,7 @@ export default React.memo(function RelationshipPathView({
           <View
             style={[
               styles.nodeAvatar,
-              { backgroundColor: isAncestor ? '#3B6B4A' : genderColor },
+              { backgroundColor: isAncestor ? Colors.success : genderColor },
               isAncestor && styles.ancestorAvatar,
               isCapture && isAncestor && styles.captureAncestorAvatar,
               isCapture && isEndpoint && styles.captureEndpointAvatar,
@@ -336,7 +336,7 @@ function createStyles(Colors: ColorPalette) {
     backgroundColor: Colors.cardBorder,
   },
   captureSectionLabelLine: {
-    backgroundColor: '#D5CCC2',
+    backgroundColor: Colors.divider,
   },
   sectionLabel: {
     fontSize: 11,
@@ -347,7 +347,7 @@ function createStyles(Colors: ColorPalette) {
   },
   captureSectionLabel: {
     fontSize: 10,
-    color: '#3B6B4A',
+    color: Colors.success,
     letterSpacing: 1.5,
   },
 
@@ -380,7 +380,7 @@ function createStyles(Colors: ColorPalette) {
     width: 10,
     height: 10,
     borderRadius: 5,
-    backgroundColor: 'rgba(59, 107, 74, 0.15)',
+    backgroundColor: Colors.successMuted,
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -388,7 +388,7 @@ function createStyles(Colors: ColorPalette) {
     width: 4,
     height: 4,
     borderRadius: 2,
-    backgroundColor: '#3B6B4A',
+    backgroundColor: Colors.success,
   },
   forkHorizontalRight: {
     flex: 1,
@@ -441,7 +441,7 @@ function createStyles(Colors: ColorPalette) {
     marginBottom: 4,
     paddingVertical: 4,
     paddingHorizontal: 8,
-    backgroundColor: 'rgba(44, 57, 48, 0.04)',
+    backgroundColor: Colors.overlay,
     borderRadius: 12,
   },
   branchDot: {
@@ -457,7 +457,7 @@ function createStyles(Colors: ColorPalette) {
   captureBranchLabel: {
     fontSize: 11,
     fontWeight: '700' as const,
-    color: '#6B6158',
+    color: Colors.textSecondary,
   },
   branchDivider: {
     width: 1,
@@ -467,7 +467,7 @@ function createStyles(Colors: ColorPalette) {
   },
   captureBranchDivider: {
     width: 1,
-    backgroundColor: '#D5CCC2',
+    backgroundColor: Colors.divider,
     marginTop: 36,
   },
 
@@ -517,17 +517,17 @@ function createStyles(Colors: ColorPalette) {
     }),
   },
   ancestorNode: {
-    borderColor: '#3B6B4A',
+    borderColor: Colors.success,
     borderWidth: 2,
-    backgroundColor: 'rgba(59, 107, 74, 0.06)',
+    backgroundColor: Colors.successMuted,
     maxWidth: 280,
     paddingVertical: 10,
     paddingHorizontal: 12,
     ...Platform.select({
       ios: {
-        shadowColor: '#3B6B4A',
+        shadowColor: Colors.success,
         shadowOffset: { width: 0, height: 3 },
-        shadowOpacity: 0.15,
+        shadowOpacity: 0.12,
         shadowRadius: 8,
       },
       android: {
@@ -543,9 +543,9 @@ function createStyles(Colors: ColorPalette) {
     right: -6,
     bottom: -6,
     borderRadius: 18,
-    backgroundColor: 'rgba(59, 107, 74, 0.06)',
+    backgroundColor: Colors.successMuted,
     borderWidth: 1,
-    borderColor: 'rgba(59, 107, 74, 0.08)',
+    borderColor: Colors.successMuted,
   },
   ancestorAvatar: {
     width: 30,
@@ -606,7 +606,7 @@ function createStyles(Colors: ColorPalette) {
     fontWeight: '700' as const,
   },
   ancestorName: {
-    color: '#3B6B4A',
+    color: Colors.success,
     fontWeight: '700' as const,
     fontSize: 13,
   },
@@ -623,7 +623,7 @@ function createStyles(Colors: ColorPalette) {
   },
   captureNodeDate: {
     fontSize: 10,
-    color: '#8A8078',
+    color: Colors.textSecondary,
   },
   genBadge: {
     position: 'absolute',

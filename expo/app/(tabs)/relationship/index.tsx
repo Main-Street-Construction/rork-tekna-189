@@ -14,6 +14,7 @@ import {
   Platform,
   UIManager,
   Alert,
+  DeviceEventEmitter,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import {
@@ -101,7 +102,9 @@ function RelationshipScreenContent() {
         searchTimerRef.current = setTimeout(() => {
           try {
             const found = search(text);
-            console.log('[RelationshipScreen] Search for', text, 'found', found.length, 'results');
+            if (__DEV__) {
+              console.log('[RelationshipScreen] Search for', text, 'found', found.length, 'results');
+            }
             setResults(found.slice(0, 50));
           } catch (e) {
             console.error('[RelationshipScreen] Search error:', e);
@@ -170,10 +173,12 @@ function RelationshipScreenContent() {
       if (td && p1) {
         const p1Id = p1.id;
         const p2Id = p2.id;
-        console.log('[RelationshipScreen] Will calculate relationship between', p1Id, '(', p1.name, ') and', p2Id, '(', p2.name, ')');
+        if (__DEV__) {
+          console.log('[RelationshipScreen] Will calculate relationship between', p1Id, '(', p1.name, ') and', p2Id, '(', p2.name, ')');
+        }
         setTimeout(() => {
           try {
-            console.log('[RelationshipScreen] Starting multi-calculation...');
+            if (__DEV__) console.log('[RelationshipScreen] Starting multi-calculation...');
             const result = calculateAllRelationships(p1Id, p2Id, td);
 
             setMultiResult(result);
@@ -272,9 +277,16 @@ function RelationshipScreenContent() {
     })();
   }, [hasClaimed, profile?.rootPersonId, resolveClaimedPerson, selectingSlot, treeData, person1, addRelationshipEntry, animateTransition]);
 
-  const handleReset = useCallback(() => {
-    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    animateTransition(() => {
+  const resetToNewCalculation = useCallback((withHaptics: boolean) => {
+    if (withHaptics) {
+      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    }
+    if (searchTimerRef.current) {
+      clearTimeout(searchTimerRef.current);
+      searchTimerRef.current = null;
+    }
+    Keyboard.dismiss();
+    const apply = () => {
       setPerson1(null);
       setPerson2(null);
       setMultiResult(null);
@@ -284,8 +296,25 @@ function RelationshipScreenContent() {
       setIsCalculating(false);
       setExpandedIndex(null);
       setSelectingSlot(1);
-    });
+    };
+    if (withHaptics) {
+      animateTransition(apply);
+    } else {
+      apply();
+    }
   }, [animateTransition]);
+
+  const handleReset = useCallback(() => {
+    resetToNewCalculation(true);
+  }, [resetToNewCalculation]);
+
+  // Bottom-bar Relations tap always returns to a fresh calculation.
+  useEffect(() => {
+    const sub = DeviceEventEmitter.addListener('tekna-relationship-tab-press', () => {
+      resetToNewCalculation(false);
+    });
+    return () => sub.remove();
+  }, [resetToNewCalculation]);
 
   const _handleSwapAndRecalculate = useCallback(() => {
     if (!person1 || !person2 || !treeData) return;
@@ -878,7 +907,7 @@ const RelationshipEntryCard = React.memo(function RelationshipEntryCard({
                   <Text style={styles.capturePersonName} numberOfLines={1}>{person1.name}</Text>
                 </View>
                 <View style={styles.captureArrowWrap}>
-                  <ArrowRight size={12} color="#A49A8E" />
+                  <ArrowRight size={12} color={Colors.textLight} />
                 </View>
                 <View style={styles.capturePersonPill}>
                   <View style={[styles.capturePersonDot, { backgroundColor: person2.sex === 'F' ? Colors.female : Colors.male }]} />
@@ -1340,13 +1369,13 @@ function createStyles(Colors: ColorPalette) {
     color: Colors.white,
   },
   captureContainer: {
-    backgroundColor: '#FAF7F4',
+    backgroundColor: Colors.card,
     borderRadius: 20,
     marginHorizontal: 8,
     marginTop: 8,
     overflow: 'hidden' as const,
     borderWidth: 1,
-    borderColor: '#E8DED4',
+    borderColor: Colors.cardBorder,
   },
   captureTopBar: {
     height: 4,
@@ -1369,12 +1398,12 @@ function createStyles(Colors: ColorPalette) {
   capturePersonPill: {
     flexDirection: 'row' as const,
     alignItems: 'center' as const,
-    backgroundColor: '#fff',
+    backgroundColor: Colors.searchBar,
     paddingHorizontal: 12,
     paddingVertical: 8,
     borderRadius: 20,
     borderWidth: 1,
-    borderColor: '#E8DED4',
+    borderColor: Colors.cardBorder,
     gap: 7,
     maxWidth: 160,
   },
@@ -1387,14 +1416,14 @@ function createStyles(Colors: ColorPalette) {
     width: 24,
     height: 24,
     borderRadius: 12,
-    backgroundColor: '#EDE5DD',
+    backgroundColor: Colors.backgroundDark,
     justifyContent: 'center' as const,
     alignItems: 'center' as const,
   },
   capturePersonName: {
     fontSize: 13,
     fontWeight: '600' as const,
-    color: '#2D2A26',
+    color: Colors.text,
   },
   captureBadge: {
     flexDirection: 'row' as const,
@@ -1408,11 +1437,11 @@ function createStyles(Colors: ColorPalette) {
   captureBadgeText: {
     fontSize: 16,
     fontWeight: '700' as const,
-    color: '#fff',
+    color: Colors.white,
   },
   captureReverseLabel: {
     fontSize: 11,
-    color: '#8A8078',
+    color: Colors.textSecondary,
     marginTop: 8,
     fontStyle: 'italic' as const,
   },
@@ -1427,12 +1456,12 @@ function createStyles(Colors: ColorPalette) {
   captureFooterLine: {
     flex: 1,
     height: 1,
-    backgroundColor: '#E0D8D0',
+    backgroundColor: Colors.divider,
   },
   captureFooter: {
     fontSize: 10,
     fontWeight: '600' as const,
-    color: '#B8AFA5',
+    color: Colors.textLight,
     textTransform: 'uppercase' as const,
     letterSpacing: 1.5,
   },

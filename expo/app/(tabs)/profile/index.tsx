@@ -34,7 +34,6 @@ import {
   LogOut,
   FileText,
   BookOpen,
-  Moon,
 } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import { submitFeedback } from '@/lib/supabase-db';
@@ -674,39 +673,37 @@ export default function ProfileScreen() {
         </View>
 
         <View style={styles.accountSection}>
-          <Text style={styles.sectionTitle}>Appearance</Text>
-          <View style={styles.appearanceCard}>
-            <View style={styles.appearanceHeader}>
-              <Moon size={16} color={Colors.accent} />
-              <Text style={styles.appearanceLabel}>Theme</Text>
-            </View>
-            <View style={styles.appearanceRow}>
+          <Text style={styles.sectionTitle}>Account</Text>
+
+          <View style={styles.themeQuietRow}>
+            <Text style={styles.themeQuietLabel}>Theme</Text>
+            <View style={styles.themeQuietOptions}>
               {([
-                { key: 'system' as ThemePreference, label: 'System' },
+                { key: 'system' as ThemePreference, label: 'Auto' },
                 { key: 'light' as ThemePreference, label: 'Light' },
                 { key: 'dark' as ThemePreference, label: 'Dark' },
-              ]).map((opt) => {
+              ]).map((opt, i) => {
                 const active = preference === opt.key;
                 return (
-                  <TouchableOpacity
-                    key={opt.key}
-                    style={[styles.appearanceChip, active && styles.appearanceChipActive]}
-                    onPress={() => {
-                      setPreference(opt.key);
-                      void Haptics.selectionAsync();
-                    }}
-                    activeOpacity={0.7}
-                  >
-                    <Text style={[styles.appearanceChipText, active && styles.appearanceChipTextActive]}>
-                      {opt.label}
-                    </Text>
-                  </TouchableOpacity>
+                  <React.Fragment key={opt.key}>
+                    {i > 0 ? <Text style={styles.themeQuietSep}>·</Text> : null}
+                    <TouchableOpacity
+                      onPress={() => {
+                        setPreference(opt.key);
+                        void Haptics.selectionAsync();
+                      }}
+                      hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}
+                      activeOpacity={0.6}
+                    >
+                      <Text style={[styles.themeQuietOption, active && styles.themeQuietOptionActive]}>
+                        {opt.label}
+                      </Text>
+                    </TouchableOpacity>
+                  </React.Fragment>
                 );
               })}
             </View>
           </View>
-
-          <Text style={[styles.sectionTitle, { marginTop: 20 }]}>Account</Text>
 
           {isSignedIn ? (
             <View style={styles.accountCard}>
@@ -1796,50 +1793,35 @@ function createStyles(Colors: ColorPalette) {
   legalSection: {
     paddingTop: 24,
   },
-  appearanceCard: {
+  themeQuietRow: {
     marginHorizontal: 16,
-    marginTop: 8,
-    backgroundColor: Colors.card,
-    borderRadius: 14,
-    padding: 16,
-    borderWidth: 1,
-    borderColor: Colors.cardBorder,
-    gap: 12,
-  },
-  appearanceHeader: {
+    marginBottom: 12,
+    paddingHorizontal: 4,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
+    justifyContent: 'space-between',
   },
-  appearanceLabel: {
-    fontSize: 15,
-    fontWeight: '600' as const,
-    color: Colors.text,
-  },
-  appearanceRow: {
-    flexDirection: 'row',
-    gap: 8,
-  },
-  appearanceChip: {
-    flex: 1,
-    paddingVertical: 10,
-    borderRadius: 10,
-    backgroundColor: Colors.background,
-    borderWidth: 1,
-    borderColor: Colors.cardBorder,
-    alignItems: 'center',
-  },
-  appearanceChipActive: {
-    backgroundColor: Colors.accent,
-    borderColor: Colors.accent,
-  },
-  appearanceChipText: {
+  themeQuietLabel: {
     fontSize: 13,
-    fontWeight: '600' as const,
     color: Colors.textSecondary,
   },
-  appearanceChipTextActive: {
-    color: Colors.white,
+  themeQuietOptions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  themeQuietSep: {
+    fontSize: 13,
+    color: Colors.textLight,
+  },
+  themeQuietOption: {
+    fontSize: 13,
+    color: Colors.textLight,
+    fontWeight: '500' as const,
+  },
+  themeQuietOptionActive: {
+    color: Colors.text,
+    fontWeight: '600' as const,
   },
 });
 }

@@ -5,8 +5,11 @@
 type BackCapableRouter = {
   canDismiss?: () => boolean;
   dismiss: (count?: number) => void;
+  dismissAll?: () => void;
+  dismissTo?: (href: '/(tabs)/(search)' | '/(tabs)/profile') => void;
   canGoBack: () => boolean;
   back: () => void;
+  replace?: (href: '/(tabs)/(search)' | '/(tabs)/profile') => void;
   navigate: (href: '/(tabs)/(search)' | '/(tabs)/profile') => void;
 };
 
@@ -33,6 +36,39 @@ export function navigateBack(
   }
 
   router.navigate(fallbackRoute);
+}
+
+/** Jump to Search tab and clear any person/modal stack above tabs. */
+export function navigateHome(router: BackCapableRouter) {
+  const home: '/(tabs)/(search)' = '/(tabs)/(search)';
+
+  try {
+    if (typeof router.dismissTo === 'function') {
+      router.dismissTo(home);
+      return;
+    }
+  } catch {
+    // fall through
+  }
+
+  try {
+    if (typeof router.dismissAll === 'function' && typeof router.canDismiss === 'function' && router.canDismiss()) {
+      router.dismissAll();
+    }
+  } catch {
+    // fall through
+  }
+
+  try {
+    if (typeof router.replace === 'function') {
+      router.replace(home);
+      return;
+    }
+  } catch {
+    // fall through
+  }
+
+  router.navigate(home);
 }
 
 export const modalScreenOptions = {

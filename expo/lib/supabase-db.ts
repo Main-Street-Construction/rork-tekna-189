@@ -333,9 +333,19 @@ export async function loadDeltaFromSupabase(
   }
 
   if (delta.rows.length === 0) {
-    // Watermark/counts can move from family_members-only edits with no individual
-    // field changes — fall back to full reload so links aren't missed.
-    console.log('[Supabase] Delta: no individual updates since', sinceWatermark, '— full reload needed');
+    // Nothing changed on individuals. If tree_meta also hasn't moved, stay local —
+    // do NOT force a full 69k reload just because the delta is empty.
+    const cloudWm = await getCloudDataWatermark();
+    if (cloudWm && cloudWm <= sinceWatermark) {
+      if (__DEV__) {
+        console.log('[Supabase] Delta: up to date (no individual changes, watermark unchanged)');
+      }
+      return { data: base, watermark: sinceWatermark };
+    }
+    // Meta moved without individual field updates (e.g. family link edits) — full reload.
+    if (__DEV__) {
+      console.log('[Supabase] Delta: no individual updates but watermark moved — full reload needed');
+    }
     return { data: null, needsFullReload: true };
   }
 

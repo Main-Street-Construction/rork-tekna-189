@@ -40,11 +40,13 @@ export default function AuthGate({ children }: AuthGateProps) {
     return <SignInPrompt />;
   }
 
+  // Only block on "Checking account..." when we have no last-known enablement
+  // snapshot. Offline / stale access should still enter the app.
   if (profileLoading) {
     return (
       <View style={styles.center}>
         <ActivityIndicator size="large" color={Colors.accent} />
-        <Text style={styles.loadingText}>Checking account...</Text>
+        <Text style={styles.loadingText}>Loading account...</Text>
       </View>
     );
   }

@@ -6,7 +6,8 @@ import { ColorPalette, darkColors, lightColors } from '@/constants/colors';
 export type ThemePreference = 'system' | 'light' | 'dark';
 export type ColorScheme = 'light' | 'dark';
 
-const STORAGE_KEY = 'theme_preference';
+/** v2: default is follow the device; old theme_preference values are ignored. */
+const STORAGE_KEY = 'theme_preference_v2';
 
 type ThemeContextValue = {
   preference: ThemePreference;
@@ -35,7 +36,7 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
           setPreferenceState(stored);
         }
       } catch {
-        // keep default
+        // keep default: system (follow phone)
       }
     })();
     return () => { cancelled = true; };

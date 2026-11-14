@@ -290,7 +290,7 @@ async function safeGetItemWithFileCache(key: string): Promise<string | null> {
 }
 
 export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
-  const { isAdmin, user, isSignedIn, isEnabled, profileRow } = useAuth();
+  const { isAdmin, user, isSignedIn, isEnabled, profileRow, profileLoading } = useAuth();
   const [treeData, setTreeData] = useState<FamilyTreeData | null>(null);
   const treeDataRef = useRef<FamilyTreeData | null>(null);
   const nextIdRef = useRef<{ I: number; F: number }>({ I: 0, F: 0 });
@@ -308,6 +308,8 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
   const cloudRetryCountRef = useRef<number>(0);
   const MAX_AUTO_RETRIES = 3;
 
+  // Allow local/offline tree when signed in and last-known access was enabled.
+  // Don't require a live enablement ping on every open.
   const canLoadData = isSignedIn && isEnabled;
 
   const applyTreeData = useCallback((data: FamilyTreeData | null) => {
@@ -357,6 +359,15 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
 
       // Prefer cheap incremental sync when we already have a full local tree
       if (current && current.individuals.size > 0 && localWatermark) {
+        // Cheap first: if cloud watermark hasn't moved, skip network-heavy work.
+        const cloudWatermark = await getCloudDataWatermark();
+        if (cloudWatermark && cloudWatermark <= localWatermark) {
+          await safeSetItem(LAST_CLOUD_SYNC_KEY, String(Date.now()));
+          cloudRetryCountRef.current = 0;
+          if (__DEV__) console.log('[FamilyTree] Background sync skipped — watermark unchanged');
+          return;
+        }
+
         const delta = await loadDeltaFromSupabase(localWatermark, current, handleProgress);
         if (delta.data && !delta.needsFullReload) {
           if (delta.data.individuals !== current.individuals) {
@@ -578,12 +589,22 @@ export const [FamilyTreeProvider, useFamilyTree] = createContextHook(() => {
   }, [loadQuery.error, treeData]);
 
   useEffect(() => {
-    if (!canLoadData) {
+    // Only clear in-memory tree when signed out, or when the server/snapshot
+    // explicitly says the account is not enabled. Never wipe on a failed/
+    // in-flight profile check (offline-friendly stale access).
+    if (!isSignedIn) {
+      applyTreeData(null);
+      setIsReady(false);
+      setLastSyncResult(null);
+      return;
+    }
+    if (profileLoading) return;
+    if (profileRow && !profileRow.is_enabled) {
       applyTreeData(null);
       setIsReady(false);
       setLastSyncResult(null);
     }
-  }, [canLoadData, applyTreeData]);
+  }, [isSignedIn, profileLoading, profileRow, applyTreeData]);
 
   const importMutation = useMutation({
     mutationFn: async (gedcomContent: string) => {

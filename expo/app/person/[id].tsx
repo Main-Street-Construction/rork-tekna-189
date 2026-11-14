@@ -46,7 +46,27 @@ import PersonCard from '@/components/PersonCard';
 import SectionHeader from '@/components/SectionHeader';
 import FamilyTreePreview from '@/components/FamilyTreePreview';
 import { GedcomIndividual, GedcomFamily } from '@/types/genealogy';
-import { navigateBack } from '@/utils/navigation';
+import { navigateBack, navigateHome } from '@/utils/navigation';
+
+function PersonHomeButton() {
+  const Colors = useColors();
+  const router = useRouter();
+  return (
+    <TouchableOpacity
+      onPress={() => {
+        void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+        navigateHome(router);
+      }}
+      style={{ paddingVertical: 6, paddingHorizontal: 8 }}
+      hitSlop={{ top: 16, bottom: 16, left: 16, right: 16 }}
+      accessibilityRole="button"
+      accessibilityLabel="Home"
+      testID="person-home-button"
+    >
+      <Home size={18} color={Colors.accent} />
+    </TouchableOpacity>
+  );
+}
 
 export default function PersonDetailScreen() {
   const Colors = useColors();
@@ -162,19 +182,6 @@ export default function PersonDetailScreen() {
   const handleGoBack = useCallback(() => {
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     navigateBack(router);
-  }, [router]);
-
-  const handleGoHome = useCallback(() => {
-    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    // Prefer navigate over replace so search tab state/history survives.
-    if (typeof router.dismissAll === 'function') {
-      try {
-        router.dismissAll();
-      } catch {
-        // fall through
-      }
-    }
-    router.navigate('/(tabs)/(search)');
   }, [router]);
 
   const handlePersonPress = useCallback(
@@ -400,11 +407,7 @@ export default function PersonDetailScreen() {
           headerBackVisible: true,
           headerBackButtonDisplayMode: 'minimal',
           headerLeft: undefined,
-          headerRight: () => (
-            <TouchableOpacity onPress={handleGoHome} style={styles.editHeaderBtn} hitSlop={16}>
-              <Home size={18} color={Colors.accent} />
-            </TouchableOpacity>
-          ),
+          headerRight: () => <PersonHomeButton />,
         }}
       />
       <Animated.View style={{ flex: 1, opacity: fadeAnim }}>

@@ -37,7 +37,7 @@ export const [SearchHistoryProvider, useSearchHistory] = createContextHook(() =>
       const newEntry: SearchHistoryItem = {
         ...entry,
         type: entry.type ?? 'search',
-        id: Date.now().toString(),
+        id: `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
         timestamp: Date.now(),
       };
       setHistory((prev) => {
@@ -59,7 +59,7 @@ export const [SearchHistoryProvider, useSearchHistory] = createContextHook(() =>
       pathCount: number;
     }) => {
       const newEntry: SearchHistoryItem = {
-        id: Date.now().toString(),
+        id: `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
         type: 'relationship',
         query: `${params.person1Name} ↔ ${params.person2Name}`,
         resultCount: params.pathCount,

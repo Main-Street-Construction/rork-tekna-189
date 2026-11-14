@@ -362,7 +362,7 @@ function createStyles(Colors: ColorPalette) {
   searchBarOuter: {
     flexDirection: 'row' as const,
     alignItems: 'center' as const,
-    backgroundColor: '#fff',
+    backgroundColor: Colors.searchBar,
     borderRadius: 14,
     paddingHorizontal: 14,
     height: 52,
@@ -433,7 +433,7 @@ function createStyles(Colors: ColorPalette) {
     flexDirection: 'row' as const,
     alignItems: 'center' as const,
     gap: 5,
-    backgroundColor: '#fff',
+    backgroundColor: Colors.card,
     paddingHorizontal: 10,
     paddingVertical: 6,
     borderRadius: 10,

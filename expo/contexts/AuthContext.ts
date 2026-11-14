@@ -1,5 +1,5 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
-import { Platform } from 'react-native';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { AppState, AppStateStatus, Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import createContextHook from '@nkzw/create-context-hook';
@@ -25,6 +25,11 @@ import * as Linking from 'expo-linking';
 import type { Session, User } from '@supabase/supabase-js';
 
 const PENDING_FULL_NAME_KEY = 'pending_signup_full_name';
+const AUTH_PROFILE_SNAPSHOT_KEY = 'auth_profile_snapshot_v1';
+/** How often to re-verify enablement with the server (security). Not on every open. */
+const PROFILE_SECURITY_TTL_MS = 24 * 60 * 60 * 1000;
+/** Tick while app is open to notice TTL expiry without waiting for next cold start. */
+const PROFILE_SECURITY_TICK_MS = 60 * 60 * 1000;
 
 export interface UserProfileRow {
   id: string;
@@ -35,7 +40,44 @@ export interface UserProfileRow {
   claimed_at: string | null;
 }
 
+type ProfileSnapshot = {
+  userId: string;
+  profile: UserProfileRow;
+  verifiedAt: number;
+};
+
 const PROFILE_COLUMNS = 'id, is_enabled, is_admin, full_name, claimed_gedcom_id, claimed_at';
+
+async function loadProfileSnapshot(userId: string): Promise<ProfileSnapshot | null> {
+  try {
+    const raw = await AsyncStorage.getItem(AUTH_PROFILE_SNAPSHOT_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as ProfileSnapshot;
+    if (!parsed?.userId || parsed.userId !== userId || !parsed.profile) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+async function saveProfileSnapshot(userId: string, profile: UserProfileRow): Promise<number> {
+  const verifiedAt = Date.now();
+  const payload: ProfileSnapshot = { userId, profile, verifiedAt };
+  try {
+    await AsyncStorage.setItem(AUTH_PROFILE_SNAPSHOT_KEY, JSON.stringify(payload));
+  } catch (e) {
+    console.warn('[Auth] Failed to persist profile snapshot:', e);
+  }
+  return verifiedAt;
+}
+
+async function clearProfileSnapshot(): Promise<void> {
+  try {
+    await AsyncStorage.removeItem(AUTH_PROFILE_SNAPSHOT_KEY);
+  } catch {
+    // best-effort
+  }
+}
 
 async function applyPendingFullName(userId: string, email: string): Promise<void> {
   try {
@@ -121,22 +163,60 @@ export const [AuthProvider, useAuth] = createContextHook(() => {
   const [session, setSession] = useState<Session | null>(null);
   const [sessionLoading, setSessionLoading] = useState<boolean>(true);
   const [profileRow, setProfileRow] = useState<UserProfileRow | null>(null);
+  const [profileVerifiedAt, setProfileVerifiedAt] = useState<number>(0);
+  const [profileHydrated, setProfileHydrated] = useState<boolean>(false);
+  /** Gate live profile fetches: only when no snapshot, TTL expired, login, or manual refresh. */
+  const [allowProfileFetch, setAllowProfileFetch] = useState<boolean>(false);
+  const securityCheckInFlight = useRef(false);
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session: s } }) => {
-      setSession(s);
-      setSessionLoading(false);
-    }).catch(() => {
-      setSessionLoading(false);
-    });
+    let cancelled = false;
+
+    const bootstrap = async () => {
+      try {
+        const { data: { session: s } } = await supabase.auth.getSession();
+        if (cancelled) return;
+
+        if (s?.user?.id) {
+          const snap = await loadProfileSnapshot(s.user.id);
+          if (!cancelled && snap) {
+            setProfileRow(snap.profile);
+            setProfileVerifiedAt(snap.verifiedAt);
+            const stale = Date.now() - snap.verifiedAt >= PROFILE_SECURITY_TTL_MS;
+            // Fresh snapshot → skip network on this open. Stale → schedule security check.
+            setAllowProfileFetch(stale);
+          } else if (!cancelled) {
+            // First time / cleared cache: need a live profile read.
+            setAllowProfileFetch(true);
+          }
+        }
+        if (!cancelled) {
+          setSession(s);
+          setProfileHydrated(true);
+          setSessionLoading(false);
+        }
+      } catch {
+        if (!cancelled) {
+          setProfileHydrated(true);
+          setSessionLoading(false);
+        }
+      }
+    };
+
+    void bootstrap();
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, s) => {
       setSession(s);
       if (!s) {
         setProfileRow(null);
+        setProfileVerifiedAt(0);
+        setAllowProfileFetch(false);
+        void clearProfileSnapshot();
         void unregisterAdminPushNotifications();
         queryClient.removeQueries({ queryKey: ['authProfile'] });
-      } else {
+      } else if (event === 'SIGNED_IN') {
+        // Fresh login: verify with server. TOKEN_REFRESHED / INITIAL_SESSION do not ping.
+        setAllowProfileFetch(true);
         void queryClient.invalidateQueries({ queryKey: ['authProfile'] });
       }
       if (event === 'PASSWORD_RECOVERY') {
@@ -175,6 +255,7 @@ export const [AuthProvider, useAuth] = createContextHook(() => {
     });
 
     return () => {
+      cancelled = true;
       subscription.unsubscribe();
       linkSub.remove();
     };
@@ -184,13 +265,27 @@ export const [AuthProvider, useAuth] = createContextHook(() => {
     queryKey: ['authProfile', session?.user?.id],
     queryFn: async (): Promise<UserProfileRow | null> => {
       if (!session?.user?.id) return null;
-      return ensureProfileExists(session.user.id, session.user.email ?? undefined);
+      const remote = await ensureProfileExists(session.user.id, session.user.email ?? undefined);
+      if (remote) {
+        const verifiedAt = await saveProfileSnapshot(session.user.id, remote);
+        setProfileVerifiedAt(verifiedAt);
+        // Successful verify — close the gate until the next TTL / login / manual refresh.
+        setAllowProfileFetch(false);
+        return remote;
+      }
+      // Network/transient failure: keep last known snapshot for offline use.
+      const snap = await loadProfileSnapshot(session.user.id);
+      setAllowProfileFetch(false);
+      return snap?.profile ?? null;
     },
-    enabled: !!session?.user?.id,
-    staleTime: 10 * 60 * 1000,
-    gcTime: 30 * 60 * 1000,
-    retry: 2,
-    retryDelay: 1000,
+    enabled: !!session?.user?.id && profileHydrated && allowProfileFetch,
+    staleTime: PROFILE_SECURITY_TTL_MS,
+    gcTime: 7 * 24 * 60 * 60 * 1000,
+    retry: 1,
+    retryDelay: 1500,
+    refetchOnMount: false,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
   });
 
   useEffect(() => {
@@ -199,6 +294,41 @@ export const [AuthProvider, useAuth] = createContextHook(() => {
       setProfileRow(profileQuery.data);
     }
   }, [profileQuery.data]);
+
+  const maybeSecurityRefresh = useCallback(() => {
+    if (!session?.user?.id) return;
+    if (securityCheckInFlight.current) return;
+    const age = profileVerifiedAt > 0 ? Date.now() - profileVerifiedAt : Number.POSITIVE_INFINITY;
+    if (age < PROFILE_SECURITY_TTL_MS) return;
+    securityCheckInFlight.current = true;
+    setAllowProfileFetch(true);
+    void queryClient
+      .invalidateQueries({ queryKey: ['authProfile', session.user.id] })
+      .finally(() => {
+        securityCheckInFlight.current = false;
+      });
+  }, [session?.user?.id, profileVerifiedAt, queryClient]);
+
+  // Periodic + foreground security re-check (TTL), not a blocking ping on every open.
+  useEffect(() => {
+    if (!session?.user?.id || !profileHydrated) return;
+
+    maybeSecurityRefresh();
+
+    const interval = setInterval(() => {
+      maybeSecurityRefresh();
+    }, PROFILE_SECURITY_TICK_MS);
+
+    const onAppState = (next: AppStateStatus) => {
+      if (next === 'active') maybeSecurityRefresh();
+    };
+    const sub = AppState.addEventListener('change', onAppState);
+
+    return () => {
+      clearInterval(interval);
+      sub.remove();
+    };
+  }, [session?.user?.id, profileHydrated, maybeSecurityRefresh]);
 
   useEffect(() => {
     if (!profileRow?.is_admin || !session?.user?.id) return;
@@ -219,7 +349,12 @@ export const [AuthProvider, useAuth] = createContextHook(() => {
       const { data, error } = await supabase.auth.signInWithPassword({ email, password });
       if (error) throw error;
       if (data.user) {
-        await ensureProfileExists(data.user.id, data.user.email ?? email);
+        const profile = await ensureProfileExists(data.user.id, data.user.email ?? email);
+        if (profile) {
+          const verifiedAt = await saveProfileSnapshot(data.user.id, profile);
+          setProfileRow(profile);
+          setProfileVerifiedAt(verifiedAt);
+        }
       }
       return data;
     },
@@ -257,9 +392,16 @@ export const [AuthProvider, useAuth] = createContextHook(() => {
       }
       const needsEmailConfirmation = !data.session && !!data.user;
       if (data.session && data.user) {
-        await ensureProfileExists(data.user.id, data.user.email ?? email);
+        const profile = await ensureProfileExists(data.user.id, data.user.email ?? email);
         if (trimmedName) {
           await setProfileFullName(trimmedName);
+        }
+        if (profile) {
+          const refreshed = await ensureProfileExists(data.user.id, data.user.email ?? email);
+          const toSave = refreshed ?? profile;
+          const verifiedAt = await saveProfileSnapshot(data.user.id, toSave);
+          setProfileRow(toSave);
+          setProfileVerifiedAt(verifiedAt);
         }
         await notifyAdminsAccessRequest(data.user.id);
       } else if (data.user) {
@@ -280,6 +422,8 @@ export const [AuthProvider, useAuth] = createContextHook(() => {
     onSuccess: () => {
       setSession(null);
       setProfileRow(null);
+      setProfileVerifiedAt(0);
+      void clearProfileSnapshot();
     },
   });
 
@@ -293,6 +437,7 @@ export const [AuthProvider, useAuth] = createContextHook(() => {
       try {
         await AsyncStorage.multiRemove([
           PENDING_FULL_NAME_KEY,
+          AUTH_PROFILE_SNAPSHOT_KEY,
           'user_profile',
           'identity_claimed',
         ]);
@@ -308,6 +453,7 @@ export const [AuthProvider, useAuth] = createContextHook(() => {
     onSuccess: () => {
       setSession(null);
       setProfileRow(null);
+      setProfileVerifiedAt(0);
       queryClient.clear();
     },
   });
@@ -363,6 +509,8 @@ export const [AuthProvider, useAuth] = createContextHook(() => {
   );
 
   const refreshProfile = useCallback(() => {
+    // Manual / PendingApproval "Check Status" — force a live verify.
+    setAllowProfileFetch(true);
     void queryClient.invalidateQueries({ queryKey: ['authProfile'] });
   }, [queryClient]);
 
@@ -370,6 +518,14 @@ export const [AuthProvider, useAuth] = createContextHook(() => {
   const isSignedIn = !!session;
   const isEnabled = profileRow?.is_enabled ?? false;
   const isAdmin = profileRow?.is_admin ?? false;
+  // Don't block the app on a network profile check when we already have a snapshot.
+  const profileLoading =
+    !!session?.user?.id && !profileRow && (profileQuery.isLoading || !profileHydrated);
+  const isProfileStale =
+    isSignedIn &&
+    !!profileRow &&
+    profileVerifiedAt > 0 &&
+    Date.now() - profileVerifiedAt >= PROFILE_SECURITY_TTL_MS;
 
   return useMemo(() => ({
     user,
@@ -379,7 +535,9 @@ export const [AuthProvider, useAuth] = createContextHook(() => {
     isEnabled,
     isAdmin,
     sessionLoading,
-    profileLoading: profileQuery.isLoading,
+    profileLoading,
+    isProfileStale,
+    profileVerifiedAt,
     signIn,
     signUp,
     signOut,
@@ -398,7 +556,7 @@ export const [AuthProvider, useAuth] = createContextHook(() => {
     resetPasswordError: resetPasswordMutation.error,
   }), [
     user, session, profileRow, isSignedIn, isEnabled, isAdmin,
-    sessionLoading, profileQuery.isLoading,
+    sessionLoading, profileLoading, isProfileStale, profileVerifiedAt,
     signIn, signUp, signOut, deleteAccount, resetPassword, resendConfirmation, refreshProfile,
     signInMutation.isPending, signUpMutation.isPending, signOutMutation.isPending,
     deleteAccountMutation.isPending,
