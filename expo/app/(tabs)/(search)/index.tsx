@@ -11,7 +11,7 @@ import {
   Platform,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useRouter } from 'expo-router';
+import { useRouter, useLocalSearchParams } from 'expo-router';
 import { Search, TreePine, X, Users, AlertCircle } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import { useColors, type ColorPalette } from '@/contexts/ThemeContext';
@@ -20,7 +20,7 @@ import { useProfile } from '@/contexts/ProfileContext';
 import { useSearchHistory } from '@/contexts/SearchHistoryContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { GedcomIndividual } from '@/types/genealogy';
-import { calculateRelationship } from '@/utils/relationship';
+import { prewarmSearchIndex } from '@/utils/gedcom-parser';
 import PersonCard from '@/components/PersonCard';
 import AuthGate from '@/components/AuthGate';
 
@@ -39,6 +39,7 @@ function SearchScreenContent() {
   const styles = useMemo(() => createStyles(Colors), [Colors]);
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const params = useLocalSearchParams<{ q?: string }>();
   const { hasData, search, individualCount, familyCount, isReady, treeData, isBackgroundSyncing, isLoadingFromCloud, loadProgress, cloudError, isDataIncomplete, lastSyncResult, refreshFromCloud } = useFamilyTree();
   const { profile, hasClaimed } = useProfile();
   const { addEntry } = useSearchHistory();
@@ -48,9 +49,28 @@ function SearchScreenContent() {
   const [isFocused, setIsFocused] = useState<boolean>(false);
   const inputRef = useRef<TextInput>(null);
   const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const searchGenRef = useRef(0);
+  const warmedSearchRef = useRef(false);
 
   const isLoading = !isReady && !hasData;
   const canSearch = hasData;
+
+  const runSearch = useCallback(
+    (text: string) => {
+      try {
+        let found = search(text);
+        if (hasClaimed && profile?.rootPersonId) {
+          found = found.filter((p) => p.id !== profile.rootPersonId);
+        }
+        setResults(found);
+        setHasSearched(true);
+      } catch {
+        setResults([]);
+        setHasSearched(true);
+      }
+    },
+    [search, hasClaimed, profile?.rootPersonId]
+  );
 
   const handleSearch = useCallback(
     (text: string) => {
@@ -58,33 +78,55 @@ function SearchScreenContent() {
       if (searchTimerRef.current) {
         clearTimeout(searchTimerRef.current);
       }
-      if (text.trim().length >= 2 && canSearch) {
+      const trimmed = text.trim();
+      if (trimmed.length >= 2 && canSearch) {
+        const gen = ++searchGenRef.current;
+        // Short debounce + rAF: keep typing smooth without waiting on InteractionManager.
         searchTimerRef.current = setTimeout(() => {
-          // Defer off the keystroke frame so typing stays responsive on large trees.
           requestAnimationFrame(() => {
-            try {
-              let found = search(text);
-              if (hasClaimed && profile?.rootPersonId) {
-                found = found.filter((p) => p.id !== profile.rootPersonId);
-              }
-              setResults(found);
-              setHasSearched(true);
-            } catch {
-              setResults([]);
-              setHasSearched(true);
-            }
+            if (gen !== searchGenRef.current) return;
+            runSearch(text);
           });
-        }, 220);
+        }, 80);
       } else {
         searchTimerRef.current = null;
+        searchGenRef.current += 1;
         setResults([]);
-        if (text.trim().length === 0) {
+        if (trimmed.length === 0) {
           setHasSearched(false);
         }
       }
     },
-    [search, canSearch, hasClaimed, profile?.rootPersonId]
+    [canSearch, runSearch]
   );
+
+  // Restore a query from History (search-only entries).
+  useEffect(() => {
+    const q = typeof params.q === 'string' ? params.q : '';
+    if (!q.trim() || !canSearch) return;
+    handleSearch(q);
+    inputRef.current?.focus();
+  }, [params.q, canSearch]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Warm search index only when Search is used — avoid launch RAM spike on old devices.
+  useEffect(() => {
+    warmedSearchRef.current = false;
+  }, [treeData?.individuals]);
+
+  useEffect(() => {
+    if (!treeData || !hasData || warmedSearchRef.current) return;
+    if (!isFocused && !hasSearched) return;
+    warmedSearchRef.current = true;
+    // Defer past first paint; don't build parent/spouse indexes here (lazy on person open).
+    const t = setTimeout(() => {
+      try {
+        prewarmSearchIndex(treeData);
+      } catch {
+        warmedSearchRef.current = false;
+      }
+    }, 300);
+    return () => clearTimeout(t);
+  }, [treeData, hasData, isFocused, hasSearched]);
 
   useEffect(() => {
     return () => {
@@ -117,58 +159,11 @@ function SearchScreenContent() {
     [query, results.length, addEntry, router]
   );
 
-  const [relationshipMap, setRelationshipMap] = useState<Map<string, string>>(new Map());
-  const relationshipTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const relationshipBatchRef = useRef<number>(0);
-
-  useEffect(() => {
-    if (relationshipTimerRef.current) {
-      clearTimeout(relationshipTimerRef.current);
-    }
-
-    if (!hasClaimed || !profile?.rootPersonId || !treeData || results.length === 0) {
-      setRelationshipMap(new Map());
-      return;
-    }
-
-    const myId = profile.rootPersonId;
-    const currentResults = results;
-    const batchId = ++relationshipBatchRef.current;
-
-    relationshipTimerRef.current = setTimeout(() => {
-      const map = new Map<string, string>();
-      const batch = currentResults.slice(0, 10);
-      for (const person of batch) {
-        if (batchId !== relationshipBatchRef.current) return;
-        if (person.id === myId) {
-          map.set(person.id, 'You');
-          continue;
-        }
-        try {
-          const rel = calculateRelationship(myId, person.id, treeData);
-          if (rel && rel.relationship && rel.relationship !== 'No blood relation found') {
-            map.set(person.id, `Your ${rel.relationship}`);
-          }
-        } catch {
-        }
-      }
-      if (batchId === relationshipBatchRef.current) {
-
-        setRelationshipMap(map);
-      }
-    }, 600);
-
-    return () => {
-      if (relationshipTimerRef.current) {
-        clearTimeout(relationshipTimerRef.current);
-      }
-    };
-  }, [hasClaimed, profile?.rootPersonId, treeData, results]);
-
+  // Relationship labels on every autocomplete hit were freezing large trees
+  // (full parent-index rebuilds per person). Show plain results while typing.
   const renderItem = useCallback(({ item }: { item: GedcomIndividual }) => {
-    const relSubtitle = relationshipMap.get(item.id);
-    return <PersonCard person={item} onPress={handlePersonPress} subtitle={relSubtitle} />;
-  }, [handlePersonPress, relationshipMap]);
+    return <PersonCard person={item} onPress={handlePersonPress} />;
+  }, [handlePersonPress]);
 
   const keyExtractor = useCallback((item: GedcomIndividual) => item.id, []);
 
@@ -216,10 +211,10 @@ function SearchScreenContent() {
           keyboardShouldPersistTaps="handled"
           keyboardDismissMode="on-drag"
           showsVerticalScrollIndicator={false}
-          initialNumToRender={12}
-          maxToRenderPerBatch={12}
-          windowSize={7}
-          removeClippedSubviews
+          initialNumToRender={8}
+          maxToRenderPerBatch={8}
+          windowSize={5}
+          removeClippedSubviews={Platform.OS !== 'web'}
           ListHeaderComponent={
             <Text style={styles.resultCount}>
               {results.length} result{results.length !== 1 ? 's' : ''}

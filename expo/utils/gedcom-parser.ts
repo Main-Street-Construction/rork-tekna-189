@@ -849,7 +849,7 @@ function getSearchableNames(person: GedcomIndividual): {
   };
 }
 
-const MAX_SEARCH_RESULTS = 60;
+const MAX_SEARCH_RESULTS = 40;
 
 function normalizeSearchText(value: string): string {
   return value
@@ -872,14 +872,33 @@ type SearchIndexEntry = {
   idLower: string;
 };
 
-/** Rebuild only when the individuals map identity changes. */
-const searchIndexCache = new WeakMap<Map<string, GedcomIndividual>, SearchIndexEntry[]>();
+type SearchIndex = {
+  entries: SearchIndexEntry[];
+  /** 2-char token prefixes → entry indices (prunes ~69k scans on typing). */
+  byPrefix: Map<string, number[]>;
+};
 
-function getSearchIndex(data: FamilyTreeData): SearchIndexEntry[] {
+/** Rebuild only when the individuals map identity changes. */
+const searchIndexCache = new WeakMap<Map<string, GedcomIndividual>, SearchIndex>();
+
+function getSearchIndex(data: FamilyTreeData): SearchIndex {
   const cached = searchIndexCache.get(data.individuals);
   if (cached) return cached;
 
   const entries: SearchIndexEntry[] = [];
+  const byPrefix = new Map<string, number[]>();
+
+  const addPrefix = (token: string, idx: number) => {
+    if (token.length < 2) return;
+    const key = token.slice(0, 2);
+    const bucket = byPrefix.get(key);
+    if (bucket) {
+      if (bucket[bucket.length - 1] !== idx) bucket.push(idx);
+    } else {
+      byPrefix.set(key, [idx]);
+    }
+  };
+
   for (const person of data.individuals.values()) {
     if (!hasDisplayableName(person)) continue;
     const { firstName, surname, fullGiven, fullName } = getSearchableNames(person);
@@ -889,17 +908,42 @@ function getSearchIndex(data: FamilyTreeData): SearchIndexEntry[] {
     for (const t of tokenizeSearch(fullName)) tokenSet.add(t);
     if (firstName) tokenSet.add(firstName);
     if (surname) tokenSet.add(surname);
+    const idx = entries.length;
+    const tokens = Array.from(tokenSet);
     entries.push({
       person,
       firstName,
       surname,
       fullName,
-      tokens: Array.from(tokenSet),
+      tokens,
       idLower: person.id.toLowerCase(),
     });
+    for (let t = 0; t < tokens.length; t++) addPrefix(tokens[t], idx);
   }
-  searchIndexCache.set(data.individuals, entries);
-  return entries;
+
+  const built: SearchIndex = { entries, byPrefix };
+  searchIndexCache.set(data.individuals, built);
+  return built;
+}
+
+/** Build search index after tree load so the first keystroke stays snappy. */
+export function prewarmSearchIndex(data: FamilyTreeData): void {
+  getSearchIndex(data);
+}
+
+function candidateIndices(index: SearchIndex, queryTokens: string[]): number[] | null {
+  // Use the longest token's 2-char prefix — usually the most selective.
+  let best: number[] | null = null;
+  for (let i = 0; i < queryTokens.length; i++) {
+    const qt = queryTokens[i];
+    if (qt.length < 2) continue;
+    const bucket = index.byPrefix.get(qt.slice(0, 2));
+    if (!bucket) return []; // prefix miss → no candidates
+    if (!best || bucket.length < best.length) best = bucket;
+  }
+  // Only use the bucket if it meaningfully prunes the scan.
+  if (best && best.length < index.entries.length * 0.55) return best;
+  return null;
 }
 
 /** Fast token score — no edit-distance on the hot path. */
@@ -926,9 +970,13 @@ export function searchIndividuals(
   const index = getSearchIndex(data);
   const scored: { person: GedcomIndividual; score: number }[] = [];
   let lowestKept = -1;
+  const candidates = candidateIndices(index, queryTokens);
+  const totalEntries = index.entries.length;
+  const scanCount = candidates ? candidates.length : totalEntries;
 
-  for (let i = 0; i < index.length; i++) {
-    const entry = index[i];
+  for (let c = 0; c < scanCount; c++) {
+    const i = candidates ? candidates[c] : c;
+    const entry = index.entries[i];
     let totalScore = 0;
     let allMatched = true;
 
@@ -943,8 +991,10 @@ export function searchIndividuals(
           if (best >= 100) break;
         }
       }
+      // Skip expensive fullName/id includes when we already have a token miss on short queries —
+      // prefix bucket already scoped candidates.
       if (best === 0 && entry.fullName.includes(qt)) best = 40;
-      if (best === 0 && entry.idLower.includes(qt)) best = 12;
+      if (best === 0 && qt.length >= 3 && entry.idLower.includes(qt)) best = 12;
       if (best === 0) {
         allMatched = false;
         break;
@@ -976,7 +1026,10 @@ export function searchIndividuals(
         }
       }
       scored[weakIdx] = { person: entry.person, score: totalScore };
-      lowestKept = scored.reduce((m, row) => Math.min(m, row.score), Infinity);
+      lowestKept = Infinity;
+      for (let s = 0; s < scored.length; s++) {
+        if (scored[s].score < lowestKept) lowestKept = scored[s].score;
+      }
     }
   }
 

@@ -82,11 +82,21 @@ function HistoryScreenContent() {
   const handleItemPress = useCallback(
     (item: SearchHistoryItem) => {
       void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-      if (item.type === 'relationship' && item.person1Id) {
-        router.push(`/person/${item.person1Id}`);
-      } else if (item.selectedPersonId) {
-        router.push(`/person/${item.selectedPersonId}`);
-      }
+      // Defer navigation so the press returns immediately (avoids freeze on large trees).
+      requestAnimationFrame(() => {
+        if (item.type === 'relationship' && item.person1Id) {
+          router.push(`/person/${item.person1Id}`);
+          return;
+        }
+        if (item.selectedPersonId) {
+          router.push(`/person/${item.selectedPersonId}`);
+          return;
+        }
+        // Search-only history: restore the query on the Search tab.
+        if (item.query?.trim()) {
+          router.push(`/(tabs)/(search)?q=${encodeURIComponent(item.query.trim())}`);
+        }
+      });
     },
     [router]
   );

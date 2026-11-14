@@ -21,6 +21,32 @@ export interface RelationshipResult {
 
 const MAX_GENERATIONS = 25;
 
+/** Rebuild only when the individuals map identity changes (same pattern as search index). */
+const parentIndexCache = new WeakMap<Map<string, GedcomIndividual>, Map<string, string[]>>();
+const spouseIndexCache = new WeakMap<Map<string, GedcomIndividual>, Map<string, string[]>>();
+
+function getCachedParentIndex(data: FamilyTreeData): Map<string, string[]> {
+  const cached = parentIndexCache.get(data.individuals);
+  if (cached) return cached;
+  const built = buildParentIndex(data);
+  parentIndexCache.set(data.individuals, built);
+  return built;
+}
+
+function getCachedSpouseIndex(data: FamilyTreeData): Map<string, string[]> {
+  const cached = spouseIndexCache.get(data.individuals);
+  if (cached) return cached;
+  const built = buildSpouseIndex(data);
+  spouseIndexCache.set(data.individuals, built);
+  return built;
+}
+
+/** Warm relationship indexes off the critical path after a tree load. */
+export function prewarmRelationshipIndexes(data: FamilyTreeData): void {
+  getCachedParentIndex(data);
+  getCachedSpouseIndex(data);
+}
+
 function buildParentIndex(data: FamilyTreeData): Map<string, string[]> {
   const parentIndex = new Map<string, string[]>();
 
@@ -159,7 +185,7 @@ export function findCommonAncestors(
   if (!data.individuals.has(person1Id) || !data.individuals.has(person2Id)) return [];
   if (person1Id === person2Id) return [];
 
-  const parentIndex = buildParentIndex(data);
+  const parentIndex = getCachedParentIndex(data);
   const ancestors1 = getAncestorMap(person1Id, data, parentIndex);
   const ancestors2 = getAncestorMap(person2Id, data, parentIndex);
 
@@ -203,7 +229,7 @@ export function findAllCommonAncestors(
   if (!data.individuals.has(person1Id) || !data.individuals.has(person2Id)) return [];
   if (person1Id === person2Id) return [];
 
-  const parentIndex = buildParentIndex(data);
+  const parentIndex = getCachedParentIndex(data);
   const ancestors1 = getAncestorMap(person1Id, data, parentIndex);
   const ancestors2 = getAncestorMap(person2Id, data, parentIndex);
 
@@ -485,8 +511,8 @@ export function calculateRelationship(
     };
   }
 
-  const parentIndex = buildParentIndex(data);
-  const spouseIndex = buildSpouseIndex(data);
+  const parentIndex = getCachedParentIndex(data);
+  const spouseIndex = getCachedSpouseIndex(data);
   const inLaw = findInLawRelationship(person1Id, person2Id, data, spouseIndex, parentIndex);
   if (inLaw) {
     return {
@@ -573,8 +599,8 @@ export function calculateAllRelationships(
     closestRel = getSpouseLabel(p2Gender);
     closestRevRel = getSpouseLabel(p1Gender);
   } else {
-    const parentIndex = buildParentIndex(data);
-    const spouseIndex = buildSpouseIndex(data);
+    const parentIndex = getCachedParentIndex(data);
+    const spouseIndex = getCachedSpouseIndex(data);
     const inLaw = findInLawRelationship(person1Id, person2Id, data, spouseIndex, parentIndex);
     if (inLaw) {
       closestRel = inLaw.relationship;

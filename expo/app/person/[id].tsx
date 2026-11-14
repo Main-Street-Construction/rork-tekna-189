@@ -126,14 +126,41 @@ export default function PersonDetailScreen() {
     return getSiblings(id, treeData);
   }, [id, treeData]);
 
-  const relationToRoot = useMemo(() => {
-    if (!id || !treeData || !profile?.rootPersonId) return null;
-    if (id === profile.rootPersonId) return { relationship: 'This is you', reverseRelationship: 'Self' };
-    const result = calculateRelationship(profile.rootPersonId, id, treeData);
-    if (!result) return null;
-    return {
-      relationship: result.relationship,
-      reverseRelationship: result.reverseRelationship,
+  // Defer relationship calc so History/Search → Person doesn't freeze the open animation.
+  // Parent/spouse indexes are WeakMap-cached after the first run (not prebuilt at launch).
+  const [relationToRoot, setRelationToRoot] = useState<{
+    relationship: string;
+    reverseRelationship: string;
+  } | null>(null);
+
+  useEffect(() => {
+    if (!id || !treeData || !profile?.rootPersonId) {
+      setRelationToRoot(null);
+      return;
+    }
+    if (id === profile.rootPersonId) {
+      setRelationToRoot({ relationship: 'This is you', reverseRelationship: 'Self' });
+      return;
+    }
+
+    let cancelled = false;
+    const t = setTimeout(() => {
+      if (cancelled) return;
+      try {
+        const result = calculateRelationship(profile.rootPersonId!, id, treeData);
+        if (cancelled || !result) return;
+        setRelationToRoot({
+          relationship: result.relationship,
+          reverseRelationship: result.reverseRelationship,
+        });
+      } catch {
+        if (!cancelled) setRelationToRoot(null);
+      }
+    }, 50);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(t);
     };
   }, [id, treeData, profile?.rootPersonId]);
 
