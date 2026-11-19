@@ -2,6 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Stack, useRouter } from "expo-router";
 import { Platform, StatusBar } from "react-native";
 import * as SplashScreen from "expo-splash-screen";
+import * as SystemUI from "expo-system-ui";
 import React, { useEffect, useMemo, useState } from "react";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { AuthProvider } from "@/contexts/AuthContext";
@@ -64,6 +65,11 @@ function RootLayoutNav() {
     headerShadowVisible: false,
     contentStyle: { backgroundColor: colors.background },
   }), [colors]);
+
+  // Keep Android system bars in sync with theme (status + navigation / edge-to-edge).
+  useEffect(() => {
+    void SystemUI.setBackgroundColorAsync(colors.background);
+  }, [colors.background]);
 
   return (
     <>

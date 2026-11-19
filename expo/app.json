@@ -67,12 +67,30 @@
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/adaptive-icon.png",
-        "backgroundColor": "#ffffff"
+        "backgroundColor": "#F5F0EB"
       },
       "package": "app.rork.family_tree_research_app",
-      "versionCode": 7,
-      "permissions": ["android.permission.POST_NOTIFICATIONS"],
-      "softwareKeyboardLayoutMode": "pan"
+      "versionCode": 8,
+      "permissions": [
+        "android.permission.POST_NOTIFICATIONS",
+        "android.permission.VIBRATE",
+        "android.permission.RECEIVE_BOOT_COMPLETED"
+      ],
+      "softwareKeyboardLayoutMode": "pan",
+      "userInterfaceStyle": "automatic",
+      "allowBackup": true,
+      "predictiveBackGestureEnabled": true,
+      "intentFilters": [
+        {
+          "action": "VIEW",
+          "category": ["BROWSABLE", "DEFAULT"],
+          "data": [
+            {
+              "scheme": "rork-app"
+            }
+          ]
+        }
+      ]
     },
     "web": {
       "favicon": "./assets/images/favicon.png",
