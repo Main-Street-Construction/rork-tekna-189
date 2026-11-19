@@ -2,7 +2,6 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Stack, useRouter } from "expo-router";
 import { Platform, StatusBar } from "react-native";
 import * as SplashScreen from "expo-splash-screen";
-import * as SystemUI from "expo-system-ui";
 import React, { useEffect, useMemo, useState } from "react";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { AuthProvider } from "@/contexts/AuthContext";
@@ -17,7 +16,9 @@ import {
   getLastNotificationResponse,
 } from "@/lib/push-notifications";
 
-void SplashScreen.preventAutoHideAsync();
+if (Platform.OS !== "web") {
+  void SplashScreen.preventAutoHideAsync().catch(() => {});
+}
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -68,7 +69,10 @@ function RootLayoutNav() {
 
   // Keep Android system bars in sync with theme (status + navigation / edge-to-edge).
   useEffect(() => {
-    void SystemUI.setBackgroundColorAsync(colors.background);
+    if (Platform.OS === "web") return;
+    void import("expo-system-ui")
+      .then((SystemUI) => SystemUI.setBackgroundColorAsync(colors.background))
+      .catch(() => {});
   }, [colors.background]);
 
   return (
@@ -171,17 +175,23 @@ function OnboardingOverlay() {
 }
 
 function RootLayoutInner() {
-  const [splashReady, setSplashReady] = useState<boolean>(false);
+  const [splashReady, setSplashReady] = useState<boolean>(Platform.OS === "web");
   const { onboardingChecked } = useOnboarding();
 
   useEffect(() => {
-    if (onboardingChecked) {
-      void SplashScreen.hideAsync();
+    if (!onboardingChecked) return;
+    if (Platform.OS === "web") {
       setSplashReady(true);
+      return;
     }
+    void SplashScreen.hideAsync()
+      .catch(() => {})
+      .finally(() => setSplashReady(true));
   }, [onboardingChecked]);
 
-  if (!onboardingChecked || !splashReady) return null;
+  // Never block the web shell on native splash APIs — that yields a blank page.
+  if (Platform.OS !== "web" && (!onboardingChecked || !splashReady)) return null;
+  if (Platform.OS === "web" && !onboardingChecked) return null;
 
   return (
     <ThemeProvider>

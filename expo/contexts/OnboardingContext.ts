@@ -9,16 +9,32 @@ export const [OnboardingProvider, useOnboarding] = createContextHook(() => {
   const [onboardingChecked, setOnboardingChecked] = useState<boolean>(false);
 
   useEffect(() => {
+    let cancelled = false;
+    const finish = (value: string | null) => {
+      if (cancelled) return;
+      if (value !== 'true') {
+        setShowOnboarding(true);
+      }
+      setOnboardingChecked(true);
+    };
+
+    // Web can hang on storage in some browsers; never block first paint forever.
+    const timeout = setTimeout(() => finish(null), 1500);
+
     AsyncStorage.getItem(ONBOARDING_KEY)
       .then((value) => {
-        if (value !== 'true') {
-          setShowOnboarding(true);
-        }
-        setOnboardingChecked(true);
+        clearTimeout(timeout);
+        finish(value);
       })
       .catch(() => {
-        setOnboardingChecked(true);
+        clearTimeout(timeout);
+        finish(null);
       });
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timeout);
+    };
   }, []);
 
   const replayTutorial = useCallback(() => {
