@@ -248,6 +248,31 @@ export default function AddChildScreen() {
 
     const similar = findSimilarIndividuals(trimmedGiven, trimmedSurname, birthDate.trim() || undefined, treeData);
     if (similar.length > 0) {
+      const candidateFamilies = selectedFamilyId
+        ? [selectedFamilyId]
+        : existingFamilies.map((f) => f.id);
+      const alreadySibling = similar.find((p) =>
+        candidateFamilies.some((fid) => {
+          const fam = treeData.families.get(fid);
+          return fam?.childrenIds?.includes(p.id) ?? false;
+        })
+      );
+
+      if (alreadySibling) {
+        Alert.alert(
+          'Already a Child',
+          `${alreadySibling.name} is already linked to this family. Creating another person with the same name and birth date is blocked.`,
+          [
+            { text: 'Cancel', style: 'cancel' },
+            {
+              text: 'View Existing',
+              onPress: () => router.replace(`/person/${alreadySibling.id}`),
+            },
+          ]
+        );
+        return;
+      }
+
       Alert.alert(
         'Similar Person Found',
         `A similar person already exists: ${similar[0].name}. Link them as a child instead of creating a duplicate?`,
@@ -264,7 +289,7 @@ export default function AddChildScreen() {
     }
 
     await saveChild();
-  }, [parent, parentId, treeData, givenName, surname, birthDate, saveChild, router]);
+  }, [parent, parentId, treeData, givenName, surname, birthDate, selectedFamilyId, existingFamilies, saveChild, router]);
 
   if ((!isReady || isLoadingFromCloud || isResolvingParent) && !parent) {
     return (

@@ -305,3 +305,114 @@ export async function adminUpdateFamily(params: {
   const result = data as { success: boolean; error?: string };
   return result.success ? { success: true } : { success: false, error: result.error };
 }
+
+// --- Data integrity (v13) -------------------------------------------------
+
+export type AuditIntegritySummary = {
+  success: boolean;
+  error?: string;
+  generated_at?: string;
+  counts?: Record<string, number>;
+};
+
+export async function adminAuditIntegritySummary(): Promise<AuditIntegritySummary> {
+  const { data, error } = await supabase.rpc('admin_audit_integrity_summary');
+  if (error) return { success: false, error: error.message };
+  return data as AuditIntegritySummary;
+}
+
+async function adminJsonRpc(
+  fn: string,
+  args: Record<string, unknown> = {}
+): Promise<{ success: boolean; error?: string; raw?: Record<string, unknown> }> {
+  const { data, error } = await supabase.rpc(fn, args);
+  if (error) return { success: false, error: error.message };
+  const result = (data ?? {}) as { success?: boolean; error?: string };
+  if (result.success === false) {
+    return { success: false, error: result.error ?? 'Unknown error', raw: data as Record<string, unknown> };
+  }
+  return { success: true, raw: data as Record<string, unknown> };
+}
+
+export async function adminUnlinkChild(childGedcomId: string, familyGedcomId: string) {
+  return adminJsonRpc('admin_unlink_child', {
+    child_gedcom_id: childGedcomId,
+    family_gedcom_id: familyGedcomId,
+  });
+}
+
+export async function adminLinkChild(childGedcomId: string, familyGedcomId: string) {
+  return adminJsonRpc('admin_link_child', {
+    child_gedcom_id: childGedcomId,
+    family_gedcom_id: familyGedcomId,
+  });
+}
+
+export async function adminMoveChild(
+  childGedcomId: string,
+  fromFamilyGedcomId: string,
+  toFamilyGedcomId: string
+) {
+  return adminJsonRpc('admin_move_child', {
+    child_gedcom_id: childGedcomId,
+    from_family_gedcom_id: fromFamilyGedcomId,
+    to_family_gedcom_id: toFamilyGedcomId,
+  });
+}
+
+export async function adminKeepOnlyChildFamily(childGedcomId: string, keepFamilyGedcomId: string) {
+  return adminJsonRpc('admin_keep_only_child_family', {
+    child_gedcom_id: childGedcomId,
+    keep_family_gedcom_id: keepFamilyGedcomId,
+  });
+}
+
+export async function adminSetNotes(gedcomId: string, notes: string) {
+  return adminJsonRpc('admin_set_notes', {
+    target_gedcom_id: gedcomId,
+    new_notes: notes,
+  });
+}
+
+export async function adminMoveNotes(
+  fromGedcomId: string,
+  toGedcomId: string,
+  clearSource = true,
+  appendIfTargetHasNotes = true
+) {
+  return adminJsonRpc('admin_move_notes', {
+    from_gedcom_id: fromGedcomId,
+    to_gedcom_id: toGedcomId,
+    clear_source: clearSource,
+    append_if_target_has_notes: appendIfTargetHasNotes,
+  });
+}
+
+export async function adminDedupeFamilyMembers() {
+  return adminJsonRpc('admin_dedupe_family_members');
+}
+
+export async function adminCollapseAllParallelFamilies() {
+  return adminJsonRpc('admin_collapse_all_parallel_families');
+}
+
+/** Name+birth+last-name groups. Flag at-vs-bare collisions for manual review — do not auto-merge. */
+export async function adminAuditDuplicatePeopleStrong() {
+  const { data, error } = await supabase.rpc('admin_audit_duplicate_people_strong');
+  if (error) return { success: false as const, error: error.message, rows: [] as unknown[] };
+  return { success: true as const, rows: (data ?? []) as unknown[] };
+}
+
+/** Same-number @I123@ vs I123 pairs. Usually DIFFERENT people (Tekna recycled the number). */
+export async function adminAuditGedcomIdCollisions() {
+  const { data, error } = await supabase.rpc('admin_audit_gedcom_id_collisions');
+  if (error) return { success: false as const, error: error.message, rows: [] as unknown[] };
+  return { success: true as const, rows: (data ?? []) as unknown[] };
+}
+
+/** True-dupe candidates: same name+birth AND shared spouse / parent family / child. */
+export async function adminAuditLikelyTrueDuplicates() {
+  const { data, error } = await supabase.rpc('admin_audit_likely_true_duplicates');
+  if (error) return { success: false as const, error: error.message, rows: [] as unknown[] };
+  return { success: true as const, rows: (data ?? []) as unknown[] };
+}

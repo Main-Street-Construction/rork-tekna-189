@@ -133,7 +133,9 @@ function addFamilyToSpouseList(list: string[] | undefined | null, familyId: stri
 
 function maxNumericGedcomId(keys: Iterable<string>, prefix: string): number {
   let maxNum = 0;
-  const pattern = new RegExp('^' + prefix + '(\\d+)$');
+  // Match bare I123 and GEDCOM-wrapped @I123@ so local allocation
+  // never recycles a number already used by an imported person.
+  const pattern = new RegExp('^@?' + prefix + '(\\d+)@?$', 'i');
   for (const key of keys) {
     const match = key.match(pattern);
     if (match) {

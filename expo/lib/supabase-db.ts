@@ -1052,9 +1052,9 @@ export async function upsertFamilyInSupabase(
 
           if (fmError) {
             console.error('[Supabase] FAILED to create family_member link: child', childGedcomId, 'in family', family.id, '-', fmError.message);
-          } else {
-            console.log('[Supabase] Linked child', childGedcomId, 'to family', family.id);
+            return { success: false, error: fmError.message };
           }
+          console.log('[Supabase] Linked child', childGedcomId, 'to family', family.id);
         }
       }
 
