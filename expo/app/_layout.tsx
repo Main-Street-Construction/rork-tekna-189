@@ -36,6 +36,8 @@ function NotificationDeepLinkHandler() {
   const router = useRouter();
 
   useEffect(() => {
+    if (Platform.OS === 'web') return;
+
     const navigateFromNotification = (data: Record<string, unknown>) => {
       if (data.type === 'access_request') {
         router.push('/admin');

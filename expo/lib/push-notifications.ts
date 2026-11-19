@@ -145,7 +145,10 @@ export async function unregisterAdminPushNotifications(): Promise<void> {
 
 export function addNotificationResponseListener(
   handler: (data: Record<string, unknown>) => void
-): Notifications.EventSubscription {
+): { remove: () => void } {
+  if (Platform.OS === 'web') {
+    return { remove: () => {} };
+  }
   return Notifications.addNotificationResponseReceivedListener((response) => {
     const data = response.notification.request.content.data as Record<string, unknown>;
     handler(data);
@@ -153,5 +156,11 @@ export function addNotificationResponseListener(
 }
 
 export function getLastNotificationResponse(): Notifications.NotificationResponse | null {
-  return Notifications.getLastNotificationResponse();
+  if (Platform.OS === 'web') return null;
+  try {
+    return Notifications.getLastNotificationResponse();
+  } catch {
+    // SDK 58+ throws UnavailabilityError on web for this native-only API.
+    return null;
+  }
 }
